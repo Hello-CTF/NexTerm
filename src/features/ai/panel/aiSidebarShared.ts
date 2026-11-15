@@ -3,6 +3,7 @@ import { type ChatItem, type ConfirmItem, type StatusLine } from "../conversatio
 import type { AiRunDto } from "../../../ipc/types";
 import { useUi, GLOBAL_AI_BOARD_KEY } from "../../../app/store";
 import { formatBytes } from "../../../ui/format";
+import { describeErrorSource } from "../../../ui/errorText";
 import { t } from "../../../i18n";
 
 export { CONFIRM_HELP, CONFIRM_RESOLUTION, confirmTitle, toolLabel } from "./aiConfirmLabels";
@@ -57,6 +58,17 @@ export const AI_RESYNC_BACKOFF_MS = 1000;
 export const AI_RESYNC_MAX_ATTEMPTS = 2;
 export const AI_SYNC_NOTICE_DISMISS_MS = 2400;
 export const AI_HITL_EXPIRY_GRACE_MS = 500;
+// A run whose channel delivered nothing for this long is caught up from its
+// persisted events by the terminal poll.
+export const AI_LIVE_DELIVERY_WINDOW_MS = 10_000;
+
+// isStaleInteractionError recognizes the backend's refusal of a confirmation or
+// answer that no longer matches a pending request: another client handled it,
+// it expired, or its run ended.
+export function isStaleInteractionError(e: unknown): boolean {
+  const source = describeErrorSource(e);
+  return source.includes("确认已过期、重复或不属于当前工具调用") || source.includes("AI 任务不存在或已结束");
+}
 
 export function latestPlanApproved(items: ChatItem[]): boolean {
   for (let i = items.length - 1; i >= 0; i--) {

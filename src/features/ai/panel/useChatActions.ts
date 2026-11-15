@@ -4,21 +4,21 @@ import { createAiChannel, onChannelReopen, disposeChannel } from "../../../ipc/e
 import { aiApi } from "../../../ipc/commands";
 import { describeError } from "../../../ui/errorText";
 import { useRef, useCallback, useState, useMemo, useEffect } from "react";
-import { type ChatItem, type ConfirmItem, pendingInteraction, type ToolItem } from "../conversation";
+import { type ChatItem, type ConfirmItem, type InteractionItem, INTERACTION_HANDLED_ELSEWHERE, pendingInteraction, type ToolItem } from "../conversation";
 import { confirmationInput, answerInput } from "../aiWire";
 import { useAuth } from "../../auth/store";
 import type { AgentApprovalDecision, AgentRosterEntry, AgentToolCall } from "../agentTypes";
 import { createAgentRosterApi } from "../agentProduction";
 import { useAgentRosterSnapshot, refreshAgentRosterSnapshot } from "../agentRosterSnapshot";
 import { runSummaryFromAttempt, buildAgentToolCall, approvalFromConfirmCard } from "../agentToolData";
-import { type RefChip, splitUserRefs, latestPlanApproved, PLAN_EXECUTE_MESSAGE, CONFIRM_RESOLUTION, type AiChatBase } from "./aiSidebarShared";
+import { type RefChip, splitUserRefs, latestPlanApproved, isStaleInteractionError, PLAN_EXECUTE_MESSAGE, CONFIRM_RESOLUTION, type AiChatBase } from "./aiSidebarShared";
 import type { UseChatRunSessionOut } from "./useChatRunSession";
 import type { UseChatPanelStateOut } from "./useChatPanelState";
 import type { UseChatRunRecoveryOut } from "./useChatRunRecovery";
 import { t } from "../../../i18n";
 
 export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPanelStateOut & UseChatRunRecoveryOut) {
-  const { input, images, refs, planMode, busyRef, tabKey, activeRunRef, permOpen, setPermOpen, beginRun, requestSnapshotsRef, setBusy, setInput, setRefs, setAtOpen, setImages, stream, isLifecycleActive, clearResyncState, pushAgentEvent, resyncRun, maybeOpenAiCreatedTerminal, settleRestoredRun, pushToast, runChannelRef, conversationId, aiScope, composeMessage, deletedConversationIdsRef, updateConversationId, setActiveRun, driveCancellation, hydrateMessageIds, unconfirmCancellation, conv, setPlanMode, busy, conversationRuns, inputRef, conversationIdRef, disposeRestoredChannel, submittingCardIdRef, setSubmittingCardId, restoredChannelRef, replayHitl, replayRestoredIfBound, confirmCard, submittingCardId, currentProductionConfirm, questionCard, questionInput, productionConfirmRef, toolHandleVersion, lastRefreshedHandleVersionRef, toolHandlesRef } = p;
+  const { input, images, refs, planMode, busyRef, tabKey, activeRunRef, permOpen, setPermOpen, beginRun, requestSnapshotsRef, setBusy, setInput, setRefs, setAtOpen, setImages, stream, isLifecycleActive, clearResyncState, pushAgentEvent, resyncRun, maybeOpenAiCreatedTerminal, settleRestoredRun, pushToast, runChannelRef, conversationId, aiScope, composeMessage, deletedConversationIdsRef, updateConversationId, setActiveRun, driveCancellation, hydrateMessageIds, unconfirmCancellation, conv, setPlanMode, busy, conversationRuns, inputRef, conversationIdRef, disposeRestoredChannel, submittingCardIdRef, setSubmittingCardId, restoredChannelRef, replayHitl, replayRestoredIfBound, confirmCard, submittingCardId, currentProductionConfirm, questionCard, questionInput, productionConfirmRef, toolHandleVersion, lastRefreshedHandleVersionRef, toolHandlesRef, clearExpiryWatch, noteLiveDelivery } = p;
 
   const send = async (override?: {
     message?: string;
@@ -65,6 +65,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
         }
         return;
       }
+      noteLiveDelivery(run.generation);
       const result = pushAgentEvent(run.generation, ev);
       if (result.gap && current.jobId) resyncRun(run.generation, current.jobId);
       maybeOpenAiCreatedTerminal(run.generation, ev, result);
@@ -87,6 +88,8 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
       disposeChannel(channel);
     };
     runChannelRef.current = { channel, dispose, generation: run.generation };
+    // The backend streams a run it starts to this channel from the first event.
+    noteLiveDelivery(run.generation);
 
     try {
       const payloadRefs = sentRefs.map((r) => ({
@@ -300,10 +303,23 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     }
   };
 
+  // A card answered elsewhere (another client, expiry, or the end of its run) is
+  // closed with a calm notice instead of an error.
+  const settleStaleInteraction = useCallback(
+    (generation: number, card: InteractionItem) => {
+      pushToast("info", t("此请求已在其他地方处理或已失效，无需再操作"));
+      if (isCurrentAiRun(activeRunRef.current, generation)) {
+        stream.resolveInteraction(generation, card.id, card.nonce, INTERACTION_HANDLED_ELSEWHERE);
+      }
+    },
+    [activeRunRef, pushToast, stream],
+  );
+
   // One formal confirmation path shared by the card buttons and the agent
   // approval delegate: the busy guard, takeover/restored-channel routing,
   // failure replay/resync and interaction resolution are never a reduced
-  // copy. Returns whether the decision reached the backend.
+  // copy. Returns whether the card is settled: the decision reached the
+  // backend, or the request was already handled elsewhere.
   const submitConfirmCard = useCallback(
     async (
       card: ConfirmItem,
@@ -333,21 +349,27 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
           await aiApi.confirm(input);
         }
       } catch (e) {
-        pushToast("error", t("未能提交选择：{value}", { value: describeError(e) }));
+        const stale = isStaleInteractionError(e);
+        if (stale) {
+          settleStaleInteraction(run.generation, card);
+        } else {
+          pushToast("error", t("未能提交选择：{value}", { value: describeError(e) }));
+        }
         if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
           void replayHitl(run.generation, id);
         }
         replayRestoredIfBound(id);
-        return false;
+        return stale;
       } finally {
         setSubmittingCardId(null);
       }
+      clearExpiryWatch(id);
       if (isCurrentAiRun(activeRunRef.current, run.generation)) {
         stream.resolveInteraction(run.generation, card.id, card.nonce, CONFIRM_RESOLUTION[decision]);
       }
       return true;
     },
-    [activeRunRef, submittingCardIdRef, setSubmittingCardId, pushToast, restoredChannelRef, replayRestoredIfBound, replayHitl, stream],
+    [activeRunRef, submittingCardIdRef, setSubmittingCardId, pushToast, restoredChannelRef, replayRestoredIfBound, replayHitl, stream, clearExpiryWatch, settleStaleInteraction],
   );
 
   const confirm = async (decision: "allow" | "allow_session" | "allow_persistent" | "deny") => {
@@ -396,7 +418,11 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
         await aiApi.answer(input);
       }
     } catch (e) {
-      pushToast("error", t("未能提交回答：{value}", { value: describeError(e) }));
+      if (isStaleInteractionError(e)) {
+        settleStaleInteraction(run.generation, card);
+      } else {
+        pushToast("error", t("未能提交回答：{value}", { value: describeError(e) }));
+      }
       if (run.kind === "chat" && isCurrentAiRun(activeRunRef.current, run.generation)) {
         void replayHitl(run.generation, id);
       }
@@ -405,6 +431,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     } finally {
       setSubmittingCardId(null);
     }
+    clearExpiryWatch(id);
     if (isCurrentAiRun(activeRunRef.current, run.generation)) {
       stream.resolveInteraction(run.generation, card.id, card.nonce, t("已回答：{text}", { text }));
     }

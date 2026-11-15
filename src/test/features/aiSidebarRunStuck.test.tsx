@@ -226,7 +226,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
     expect(useUi.getState().aiBusy).toBe(false);
   });
 
-  it("settles the busy state after a permanent replay failure so the tab can be closed directly", async () => {
+  it("keeps the run active after a permanent replay failure and applies later events and the final answer", async () => {
     vi.useFakeTimers();
     await flush();
     await send(view!, "Hello");
@@ -244,13 +244,24 @@ describe("AiSidebar stuck busy-state fixes", () => {
     }
 
     expect(textOf(view!)).toContain("补齐失败");
-    expect(useUi.getState().aiBusy).toBe(false);
+    expect(textOf(view!)).toContain("重新补齐");
+    expect(useUi.getState().aiBusy).toBe(true);
 
-    const stuckTabId = useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id;
-    click(stripTabs(view!)[0].querySelector("button")!);
-    await flush();
-    expect(mocks.ask).not.toHaveBeenCalled();
-    expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).not.toBe(stuckTabId);
+    // The terminal poll catches up the missing event even while live events arrive.
+    mocks.runEvents.mockResolvedValue([{ type: "delta", text: "two", seq: 2 }]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    await flushReplay();
+    act(runFrames);
+    expect(textOf(view!)).toContain("onetwothree");
+    expect(textOf(view!)).not.toContain("补齐失败");
+
+    emit({ type: "delta", text: " four", seq: 4 });
+    act(runFrames);
+    emit({ type: "done", answer: "完整答案", seq: 5 });
+    await flushReplay();
+    expect(textOf(view!)).toContain("完整答案");
+    expect(textOf(view!)).toContain("回答已完成");
+    expect(useUi.getState().aiBusy).toBe(false);
   });
 
   it("manually replaying after a permanent failure still recovers the final outcome", async () => {
@@ -270,22 +281,25 @@ describe("AiSidebar stuck busy-state fixes", () => {
       await flushReplay();
     }
     expect(textOf(view!)).toContain("补齐失败");
-    expect(useUi.getState().aiBusy).toBe(false);
+    expect(useUi.getState().aiBusy).toBe(true);
 
     mocks.runEvents.mockResolvedValue([
       { type: "delta", text: "two", seq: 2 },
       { type: "delta", text: "three", seq: 3 },
-      { type: "done", answer: "完整答案", seq: 4 },
     ]);
     clickButton(view!.container, "重新补齐");
     await flushReplay();
+    expect(textOf(view!)).not.toContain("补齐失败");
 
+    // Events after the manual replay still apply on the live channel.
+    emit({ type: "done", answer: "完整答案", seq: 4 });
+    await flushReplay();
     expect(textOf(view!)).toContain("回答已完成");
     expect(textOf(view!)).toContain("完整答案");
-    expect(textOf(view!)).not.toContain("补齐失败");
+    expect(useUi.getState().aiBusy).toBe(false);
   });
 
-  it("settles the busy state after the restored pending-answer run watchdog expires so the tab can be closed", async () => {
+  it("leaves a restored pending-answer run to the terminal poll after its expiry watch runs out", async () => {
     vi.useFakeTimers();
     mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "Old conversation", updatedAt: 0 }]);
     mocks.messages.mockResolvedValue([]);
@@ -347,6 +361,13 @@ describe("AiSidebar stuck busy-state fixes", () => {
       await flushReplay();
     }
 
+    // No terminal event and no terminal run row: the run is not settled locally.
+    expect(useUi.getState().aiBusy).toBe(true);
+
+    mocks.run.mockResolvedValue({ id: "job-old", conversationId: "conv-1", status: "expired", error: "等待回答已过期", finishedAt: 2 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    await flushReplay();
+    expect(textOf(view!)).toContain("等待回答已过期");
     expect(useUi.getState().aiBusy).toBe(false);
     const restoredTabId = useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id;
     click(stripTabs(view!)[0].querySelector("button")!);
