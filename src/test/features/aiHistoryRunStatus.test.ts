@@ -207,13 +207,28 @@ describe("AiSidebar history conversation run status", () => {
     expect(text()).not.toContain("空闲会话");
   });
 
-  it("treats conversations as idle when run-status loading fails and does not block deletion", async () => {
+  it("keeps a conversation and says so when its runs cannot be checked before deletion", async () => {
     mocks.runs.mockRejectedValue(new Error("Network jitter"));
     await openHistory();
     await flush();
 
     click(mounted!.container.querySelector('button[title="删除「在途会话」"]')!);
-    await flushUntil(() => mocks.ask.mock.calls.length > 0);
-    expect(mocks.ask).toHaveBeenCalled();
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("暂未删除"));
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.conversationDelete).not.toHaveBeenCalled();
+    expect(text()).toContain("在途会话");
+  });
+
+  it("shows the backend's refusal to delete a conversation with an active run", async () => {
+    mocks.conversationDelete.mockRejectedValueOnce({ code: "forbidden", message: "该对话仍有任务在运行或等待确认，请在任务结束后再删除" });
+    await openHistory();
+    await flushUntil(() => text().includes("运行中"));
+
+    click(mounted!.container.querySelector('button[title="删除「空闲会话」"]')!);
+    await flushUntil(() => mocks.conversationDelete.mock.calls.length > 0);
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("仍有任务在运行"));
+    expect(text()).toContain("空闲会话");
   });
 });

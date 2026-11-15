@@ -348,4 +348,17 @@ describe("AiSidebar run-state sync", () => {
     expect(text()).not.toContain("等待你回答后继续");
     expect(text()).toContain("提问 · 已在其他地方处理");
   });
+
+  it("shows a busy-conversation refusal and keeps the typed message", async () => {
+    mountSidebar();
+    await flush();
+    mocks.chat.mockRejectedValueOnce({ code: "forbidden", message: "该对话仍有任务在运行或等待确认，请在任务结束后再发送" });
+    await send("重启服务");
+    await flush();
+
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("仍有任务在运行"));
+    expect(text()).toContain("仍有任务在运行");
+    expect(view!.container.querySelector("textarea")!.value).toBe("重启服务");
+    expect(useUi.getState().aiBusy).toBe(false);
+  });
 });

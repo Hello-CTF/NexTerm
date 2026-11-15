@@ -3,6 +3,7 @@ import {
   applyAiEvent,
   beginRun,
   createConversation,
+  historyToItems,
   pendingInteraction,
   type ChatItem,
   type ConversationState,
@@ -91,3 +92,30 @@ describe("interaction resolution from the run stream", () => {
   });
 });
 
+describe("interim assistant text in history", () => {
+  const messages = [
+    { id: "m1", role: "user", content: { role: "user", content: "查看磁盘", jobId: "job-1" } },
+    { id: "m2", role: "assistant", content: { role: "assistant", content: "先看一下分区。", jobId: "job-1", interim: true } },
+    { id: "m3", role: "toolCall", content: { type: "toolCall", jobId: "job-1", id: "c1", name: "exec_commands" } },
+    { id: "m4", role: "toolResult", content: { type: "toolResult", jobId: "job-1", id: "c1", tool: "exec_commands", ok: true, summary: "df 完成" } },
+    { id: "m5", role: "assistant", content: { role: "assistant", content: "磁盘空间充足。", jobId: "job-1" } },
+  ];
+
+  function shape(items: ChatItem[]): string[] {
+    return items.map((item) => (item.role === "tool" ? `tool:${item.callId}` : `${item.role}:${"text" in item ? item.text : ""}`));
+  }
+
+  it("renders a completed run's interim text before its tool cards", () => {
+    expect(shape(historyToItems(createConversation(), messages))).toEqual([
+      "user:查看磁盘",
+      "assistant:先看一下分区。",
+      "tool:c1",
+      "assistant:磁盘空间充足。",
+    ]);
+  });
+
+  it("skips interim rows of a replayable run, whose text comes back from its events", () => {
+    const unfinished = messages.slice(0, 4);
+    expect(shape(historyToItems(createConversation(), unfinished, new Set(["job-1"])))).toEqual(["user:查看磁盘"]);
+  });
+});

@@ -1083,6 +1083,13 @@ export function historyToItems(
     }
     const text = historyTextOf(raw);
     if (!text) continue;
+    if (historyField(raw, "interim") === true) {
+      // Assistant text written before a turn's tool calls. An unfinished run is
+      // rebuilt from its events, which carry the same text, so its rows are skipped.
+      if (jobSkipped(raw)) continue;
+      items.push({ id: `h${seq++}`, attempt: null, role: "assistant", text });
+      continue;
+    }
     if (m.role === "user") {
       const n = Number(historyField(raw, "imageCount") ?? 0);
       const jobId = historyString(raw, "jobId");

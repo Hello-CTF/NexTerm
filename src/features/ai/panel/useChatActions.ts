@@ -25,7 +25,11 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     images?: string[];
     refs?: RefChip[];
     planMode?: boolean;
+    // The override text was typed in the composer (edit and resend), so a start
+    // that fails puts it back like a normal send.
+    fromComposer?: boolean;
   }) => {
+    const fromComposer = override?.message === undefined || override.fromComposer === true;
     const message = (override?.message ?? input).trim();
     const sentImages = override?.images ?? images;
     const sentRefs = override?.refs ?? refs;
@@ -141,6 +145,13 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
         setBusy(false);
         if (current.cancellation !== "idle") unconfirmCancellation(run.generation, e);
         clearResyncState(run.generation);
+        // The run never started (for example the conversation is still busy with a
+        // task elsewhere): put what was typed back so nothing is lost.
+        if (fromComposer) {
+          setInput((prev) => (prev.trim() ? `${message}\n${prev}` : message));
+          if (sentImages.length > 0) setImages((prev) => (prev.length > 0 ? prev : [...sentImages]));
+          if (sentRefs.length > 0) setRefs((prev) => (prev.length > 0 ? prev : [...sentRefs]));
+        }
       }
       dispose();
     }
@@ -296,7 +307,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
       disposeRestoredChannel();
       stream.truncateAfterItem(edit.itemId);
       setEditing(null);
-      await send({ message: text });
+      await send({ message: text, fromComposer: true });
     } finally {
       editSubmittingRef.current = false;
       setEditSubmitting(false);
