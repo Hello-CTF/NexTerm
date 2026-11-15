@@ -294,7 +294,10 @@ type Execution struct {
 	Permission     guard.Config
 	Memory         *guard.Memory
 	PlanMode       bool
-	Subagents      *SubagentConfig
+	// Subagent marks the tool execution of a spawned subagent. It cannot pause
+	// for the user, so a call that would ask for confirmation fails instead.
+	Subagent  bool
+	Subagents *SubagentConfig
 
 	SubagentManager *subagent.Manager
 
@@ -671,9 +674,26 @@ func (s spawnOutputTool) InvokableRun(ctx context.Context, arguments string, opt
 	}()
 	result, err := s.InvokableTool.InvokableRun(ctx, arguments, opts...)
 	if err != nil {
-		return "", err
+		// A subagent failure must not end the parent run; only the parent's
+		// own cancellation propagates as an error.
+		if ctx.Err() != nil {
+			return "", err
+		}
+		encoded, marshalErr := json.Marshal(Fail(err))
+		if marshalErr != nil {
+			return "", marshalErr
+		}
+		return string(encoded), nil
 	}
-	encoded, err := json.Marshal(OK(result))
+	current := OK(result)
+	var spawned subagent.SpawnOutput
+	if json.Unmarshal([]byte(result), &spawned) == nil {
+		current = Output{OK: spawned.OK, Text: spawned.Text, ModelText: spawned.ModelText, ExitCode: spawned.ExitCode}
+		if !current.OK && current.ExitCode == 0 {
+			current.ExitCode = 1
+		}
+	}
+	encoded, err := json.Marshal(current)
 	if err != nil {
 		return "", err
 	}
@@ -681,7 +701,7 @@ func (s spawnOutputTool) InvokableRun(ctx context.Context, arguments string, opt
 }
 
 func (e *Execution) scopedSubagentTools(ctx context.Context, manager *subagent.Manager) ([]tool.BaseTool, error) {
-	child := &Execution{JobID: e.JobID, ConversationID: e.ConversationID, Registry: e.Registry, Scope: e.Scope, Permission: e.Permission, Memory: e.Memory, PlanMode: e.PlanMode}
+	child := &Execution{JobID: e.JobID, ConversationID: e.ConversationID, Registry: e.Registry, Scope: e.Scope, Permission: e.Permission, Memory: e.Memory, PlanMode: e.PlanMode, Subagent: true}
 	available, err := child.Tools()
 	if err != nil {
 		return nil, err
@@ -923,6 +943,9 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 	if decision.Action == guard.ActionDeny {
 		return Fail(errors.New("权限策略已拒绝: " + decision.Ruling.Reason)), nil
 	}
+	if decision.Action == guard.ActionAsk && e.Subagent {
+		return Fail(subagentConfirmationError(ruling.Reason)), nil
+	}
 	preparation, err := e.Registry.Prepare(ctx, e.JobID, e.Scope, call)
 	if err != nil {
 		return Fail(err), nil
@@ -971,6 +994,9 @@ func (e *Execution) executionResult(ctx context.Context, call Call, result Outpu
 		if e.Permission.Mode == guard.Unattended {
 			return Fail(errors.New("生产环境多主机执行需要用户确认，无人值守运行禁止此操作")), nil
 		}
+		if e.Subagent {
+			return Fail(subagentConfirmationError(result.Text)), nil
+		}
 		targets := make([]string, 0, len(challenge.Detail.ProductionTargets))
 		for _, target := range challenge.Detail.ProductionTargets {
 			targets = append(targets, target.SessionName+" ("+target.Environment+")")
@@ -995,6 +1021,16 @@ func (e *Execution) executionResult(ctx context.Context, call Call, result Outpu
 		return Output{}, tool.StatefulInterrupt(ctx, info, state)
 	}
 	return result, nil
+}
+
+// subagentConfirmationError tells a subagent model that a call needing user
+// confirmation was not run, so it hands the action back to the parent agent,
+// which can ask the user.
+func subagentConfirmationError(reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		reason = "未说明原因"
+	}
+	return errors.New("此操作需要用户确认（" + reason + "），但子代理内无法请求确认，操作未执行。不要重试；请在结果中说明需要执行的操作，由主代理执行（主代理可以请求用户确认）")
 }
 
 // SessionRuling rebuilds the ordinary confirmation a session approval records.

@@ -24,6 +24,7 @@ var (
 	ErrTooManyActive          = errors.New("too many active subagent tasks")
 	ErrManagerClosed          = errors.New("subagent manager is closed")
 	ErrInteractionUnsupported = errors.New("subagent tasks cannot request user interaction")
+	ErrIterationLimit         = errors.New("subagent reached its step limit")
 )
 
 type ModelFactory func(context.Context) (model.BaseChatModel, error)

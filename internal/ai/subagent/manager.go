@@ -286,7 +286,7 @@ func (m *Manager) lookupLocked(handle Handle) (*task, error) {
 
 func (m *Manager) run(current *task, request Request, scope Scope, allowed map[string]struct{}) {
 	defer m.wg.Done()
-	output, turns, total, err := m.execute(current, request, scope, allowed)
+	output, turns, total, err := m.safeExecute(current, request, scope, allowed)
 	current.recorder.discardIncomplete()
 	status := StatusCompleted
 	if err != nil {
@@ -340,6 +340,17 @@ func (m *Manager) run(current *task, request Request, scope Scope, allowed map[s
 	m.mu.Unlock()
 }
 
+// safeExecute turns a panic in the subagent loop into a task failure so it
+// is reported to the caller instead of crashing the process.
+func (m *Manager) safeExecute(current *task, request Request, scope Scope, allowed map[string]struct{}) (output string, turns int, total usage.Usage, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("subagent panicked: %v", recovered)
+		}
+	}()
+	return m.execute(current, request, scope, allowed)
+}
+
 func (m *Manager) execute(current *task, request Request, scope Scope, allowed map[string]struct{}) (string, int, usage.Usage, error) {
 	chatModel, err := m.modelFor(current, request)
 	if err != nil {
@@ -377,6 +388,9 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 	runner := adk.NewRunner(current.ctx, adk.RunnerConfig{Agent: agent, EnableStreaming: true})
 	iterator := runner.Run(current.ctx, []*schema.Message{schema.UserMessage(request.Task)})
 	var output string
+	// partial keeps the latest assistant text so a failed run can still report
+	// what the subagent produced before it stopped.
+	var partial string
 	var turns int
 	var total usage.Usage
 	var firstErr error
@@ -443,18 +457,24 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 			if len(message.ToolCalls) == 0 {
 				output = message.Content
 			}
+			if strings.TrimSpace(message.Content) != "" {
+				partial = message.Content
+			}
 		case schema.Tool:
 			emitToolResult(current, message)
 		}
 	}
 	if forcedErr != nil {
-		return "", turns, total, forcedErr
+		return partial, turns, total, forcedErr
 	}
 	if err := current.ctx.Err(); err != nil {
-		return "", turns, total, err
+		return partial, turns, total, err
+	}
+	if errors.Is(firstErr, adk.ErrExceedMaxIterations) {
+		return partial, turns, total, fmt.Errorf("%w (%d steps)", ErrIterationLimit, m.config.MaxIterations)
 	}
 	if firstErr != nil {
-		return "", turns, total, firstErr
+		return partial, turns, total, firstErr
 	}
 	return output, turns, total, nil
 }

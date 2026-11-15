@@ -2,6 +2,7 @@ package subagent_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -358,10 +359,15 @@ func TestSpawnToolDispatchPermissionIntersection(t *testing.T) {
 	var assetCalls atomic.Int64
 	chat := &wireModel{}
 	chat.step = func(_ context.Context, input []*schema.Message) (*schema.Message, error) {
-		if lastUserText(input) == "parent task" && toolResultText(input) == "" {
-			return wireToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`), nil
+		switch lastUserText(input) {
+		case "parent task":
+			if toolResultText(input) == "" {
+				return wireToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`), nil
+			}
+			return schema.AssistantMessage("parent recovered", nil), nil
+		default:
+			return wireToolCall("ex-1", "exec_commands", `{"commands":["id"]}`), nil
 		}
-		return wireToolCall("ex-1", "exec_commands", `{"commands":["id"]}`), nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -369,14 +375,118 @@ func TestSpawnToolDispatchPermissionIntersection(t *testing.T) {
 	deps.Transport = func(context.Context, string) (base.Transport, error) { return nil, errors.New("unreachable") }
 	execution := wireExecution(chat, []string{"exec_commands", "list_assets"}, deps)
 	result := runWireAgent(ctx, t, execution, chat, "parent task")
-	if result.err == nil {
-		t.Fatal("child reached exec_commands despite the missing session scope")
+	if result.err != nil || result.interrupted {
+		t.Fatalf("subagent failure ended the parent run: err=%v interrupted=%v", result.err, result.interrupted)
 	}
-	if !strings.Contains(result.err.Error(), "exec_commands") {
-		t.Fatalf("error should name the intersected tool: %v", result.err)
+	if result.answer != "parent recovered" {
+		t.Fatalf("parent did not continue after the failed spawn: %q", result.answer)
+	}
+	spawned := parentSpawnResult(t, chat)
+	if spawned.OK || !strings.Contains(spawned.Text, "exec_commands") {
+		t.Fatalf("spawn result should fail and name the intersected tool: %+v", spawned)
 	}
 	if assetCalls.Load() != 0 {
 		t.Fatalf("unexpected scoped tool calls: %d", assetCalls.Load())
+	}
+}
+
+type spawnResult struct {
+	OK   bool   `json:"ok"`
+	Text string `json:"text"`
+}
+
+// parentSpawnResult returns the spawn_subagent result the parent model read
+// on its last turn.
+func parentSpawnResult(t *testing.T, chat *wireModel) spawnResult {
+	t.Helper()
+	parent := childInputs(chat, "parent task")
+	if len(parent) == 0 {
+		t.Fatal("parent model was never called")
+	}
+	last := parent[len(parent)-1]
+	for i := len(last) - 1; i >= 0; i-- {
+		if last[i].Role != schema.Tool || last[i].ToolCallID != "sp-1" {
+			continue
+		}
+		var result spawnResult
+		if err := json.Unmarshal([]byte(last[i].Content), &result); err != nil {
+			t.Fatalf("spawn result %q: %v", last[i].Content, err)
+		}
+		return result
+	}
+	t.Fatal("parent model did not receive the spawn result")
+	return spawnResult{}
+}
+
+func TestSpawnToolDispatchChildModelErrorLetsParentContinue(t *testing.T) {
+	chat := &wireModel{}
+	chat.step = func(_ context.Context, input []*schema.Message) (*schema.Message, error) {
+		switch lastUserText(input) {
+		case "parent task":
+			if toolResultText(input) == "" {
+				return wireToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`), nil
+			}
+			return schema.AssistantMessage("parent handled the failure", nil), nil
+		case "child task":
+			return nil, errors.New("child provider overloaded")
+		default:
+			return nil, errors.New("unexpected caller: " + lastUserText(input))
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	result := runWireAgent(ctx, t, wireExecution(chat, nil, tools.Dependencies{}), chat, "parent task")
+	if result.err != nil || result.interrupted {
+		t.Fatalf("child model error ended the parent run: err=%v interrupted=%v", result.err, result.interrupted)
+	}
+	if result.answer != "parent handled the failure" {
+		t.Fatalf("parent did not continue: %q", result.answer)
+	}
+	spawned := parentSpawnResult(t, chat)
+	if spawned.OK || !strings.Contains(spawned.Text, "child provider overloaded") {
+		t.Fatalf("spawn result should fail with the child error: %+v", spawned)
+	}
+}
+
+func TestSpawnToolDispatchIterationLimitReturnsPartialResult(t *testing.T) {
+	var assetCalls atomic.Int64
+	var childTurns atomic.Int64
+	chat := &wireModel{}
+	chat.step = func(_ context.Context, input []*schema.Message) (*schema.Message, error) {
+		switch lastUserText(input) {
+		case "parent task":
+			if toolResultText(input) == "" {
+				return wireToolCall("sp-1", subagent.SpawnToolName, `{"task":"child task"}`), nil
+			}
+			return schema.AssistantMessage("parent used the partial result", nil), nil
+		case "child task":
+			turn := childTurns.Add(1)
+			message := wireToolCall(fmt.Sprintf("ls-%d", turn), "list_assets", `{}`)
+			message.Content = fmt.Sprintf("found server on pass %d", turn)
+			return message, nil
+		default:
+			return nil, errors.New("unexpected caller: " + lastUserText(input))
+		}
+	}
+	execution := wireExecution(chat, []string{"list_assets"}, assetDeps(&assetCalls))
+	execution.Subagents.Limits.MaxIterations = 2
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	result := runWireAgent(ctx, t, execution, chat, "parent task")
+	if result.err != nil || result.interrupted {
+		t.Fatalf("iteration limit ended the parent run: err=%v interrupted=%v", result.err, result.interrupted)
+	}
+	if result.answer != "parent used the partial result" {
+		t.Fatalf("parent did not continue: %q", result.answer)
+	}
+	spawned := parentSpawnResult(t, chat)
+	if spawned.OK {
+		t.Fatalf("iteration limit reported as success: %+v", spawned)
+	}
+	for _, want := range []string{"2 步", "found server on pass 2", "list_assets"} {
+		if !strings.Contains(spawned.Text, want) {
+			t.Fatalf("spawn result missing %q: %s", want, spawned.Text)
+		}
 	}
 }
 

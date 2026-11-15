@@ -503,6 +503,7 @@ func projectMemoryListText(text string) string {
 var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "工具参数无效: %w", target: "invalid tool arguments: %w"},
 	{source: "权限策略已拒绝: %w", target: "permission policy denied: %w"},
+	{source: "此操作需要用户确认（%w），但子代理内无法请求确认，操作未执行。不要重试；请在结果中说明需要执行的操作，由主代理执行（主代理可以请求用户确认）", target: "this operation needs user confirmation (%w), but confirmation is not available inside a subagent, so it was not executed. Do not retry it; state the needed action in your result so the parent agent can perform it (the parent agent can ask the user to confirm)"},
 	{source: "用户回答：%s", target: "user answer: %s"},
 	{source: "未知参数 %s", target: "unknown argument %s"},
 	{source: "缺少必填参数 %s", target: "missing required argument %s"},
@@ -970,6 +971,7 @@ var modelStaticText = map[string]string{
 }
 
 var modelAdditionalStaticText = map[string]string{
+	"未说明原因":                                                      "no reason given",
 	"设备授权至少需要一个种类":                                               "device grant requires at least one kind",
 	"设备授权种类仅支持 terminal_write/session_exec":                      "device grant kinds only support terminal_write/session_exec",
 	"设备授权缺少设备 ID":                                                "device grant requires a device ID",
