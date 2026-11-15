@@ -116,3 +116,76 @@ describe("file editor language detection", () => {
     expect(ensureSyntaxTree(state, state.doc.length, 1000)).not.toBeNull();
   });
 });
+
+describe("extended server file formats", () => {
+  it.each([
+    ["/a.md", "markdown"], ["/a.MARKDOWN", "markdown"], ["/a.mdown", "markdown"], ["/a.mkd", "markdown"],
+    ["/etc/systemd/system/a.service", "systemd"], ["/a.socket", "systemd"], ["/a.timer", "systemd"],
+    ["/a.mount", "systemd"], ["/a.target", "systemd"], ["/a.path", "systemd"], ["/a.slice", "systemd"],
+    ["/repo/.gitignore", "shell"], ["/repo/.dockerignore", "shell"], ["/repo/.npmrc", "properties"],
+    ["/ci/Jenkinsfile", "groovy"], ["/a.groovy", "groovy"], ["/build.gradle", "groovy"],
+    ["/a.j2", "jinja2"], ["/a.jinja", "jinja2"], ["/a.jinja2", "jinja2"], ["/a.http", "http"],
+    ["/a.scala", "scala"], ["/a.sc", "scala"], ["/a.dart", "dart"],
+    ["/a.m", "objectivec"], ["/a.mm", "objectivecpp"], ["/a.hs", "haskell"],
+    ["/a.erl", "erlang"], ["/a.hrl", "erlang"],
+    ["/a.clj", "clojure"], ["/a.cljs", "clojure"], ["/a.cljc", "clojure"], ["/a.edn", "clojure"],
+    ["/a.ml", "ocaml"], ["/a.mli", "ocaml"], ["/a.fs", "fsharp"], ["/a.fsx", "fsharp"],
+    ["/a.jl", "julia"], ["/a.f90", "fortran"], ["/a.f95", "fortran"], ["/a.f", "fortran"],
+    ["/a.pas", "pascal"], ["/a.tcl", "tcl"], ["/a.v", "verilog"], ["/a.sv", "verilog"],
+    ["/a.vhd", "vhdl"], ["/a.vhdl", "vhdl"], ["/a.vb", "vb"], ["/a.spec", "rpmspec"],
+    ["/a.pp", "puppet"], ["/a.elm", "elm"], ["/a.cr", "crystal"], ["/a.pug", "pug"],
+    ["/a.coffee", "coffeescript"],
+  ] as const)("detects %s", (path, language) => {
+    expect(detectFileLanguage(path)).toBe(language);
+  });
+
+  it("keeps neighbouring extensions on their existing languages", () => {
+    expect(detectFileLanguage("/a.cljs")).toBe("clojure");
+    expect(detectFileLanguage("/a.spec.ts")).toBe("typescript");
+    expect(detectFileLanguage("/a.pdf")).toBeNull();
+    expect(detectFileLanguage("/README")).toBeNull();
+  });
+
+  it.each([
+    "/etc/nginx/nginx.conf", "/usr/local/nginx/conf/nginx.conf", "/etc/nginx/conf.d/site.conf",
+    "/etc/nginx/sites-available/example.com", "/etc/nginx/sites-enabled/default",
+    "/etc/nginx/mime.types", "/srv/site.nginx",
+  ])("detects nginx config %s", (path) => {
+    expect(detectFileLanguage(path)).toBe("nginx");
+  });
+
+  it.each([
+    ["/var/log/nginx/access.log", null], ["/var/log/nginx/error.log", null],
+    ["/opt/nginx-helper.py", "python"], ["/opt/nginx/reload.sh", "shell"],
+    ["/etc/apache2/sites-enabled/000-default.conf", "properties"], ["/etc/app/app.conf", "properties"],
+    ["/home/u/nginx-notes.md", "markdown"],
+  ] as const)("does not treat %s as nginx", (path, language) => {
+    expect(detectFileLanguage(path)).toBe(language);
+  });
+
+  it.each([
+    ["/a.md", "# Title\n\n```bash\necho hi\n```\n"],
+    ["/a.scala", "object A { val x = 1 }"],
+    ["/a.hs", "main = putStrLn \"x\""],
+    ["/a.service", "[Unit]\nDescription=x\n"],
+    ["/a.ml", "let x = 1"],
+  ])("loads an editor extension for %s", async (path, doc) => {
+    const state = EditorState.create({ doc, extensions: await loadFileLanguageExtension(path) });
+    expect(state.facet(language)).not.toBeNull();
+    expect(ensureSyntaxTree(state, state.doc.length, 1000)).not.toBeNull();
+  });
+
+  it("highlights fenced code in markdown with the existing lazy languages", async () => {
+    const doc = "```json\n{\"a\": 1}\n```\n";
+    const initial = EditorState.create({ doc, extensions: await loadFileLanguageExtension("/a.md") });
+    // The fence language loads lazily while the first parse runs; a later parse picks it up.
+    ensureSyntaxTree(initial, initial.doc.length, 1000);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const state = initial.update({ changes: { from: doc.length, insert: "\n" } }).state;
+    const tree = ensureSyntaxTree(state, state.doc.length, 1000);
+    expect(tree?.toString()).toContain("FencedCode");
+    const inner = tree?.resolveInner(doc.indexOf("{"), 1);
+    expect(inner?.type.name).not.toBe("CodeText");
+    expect(inner?.type.name).not.toBe("FencedCode");
+  });
+});
