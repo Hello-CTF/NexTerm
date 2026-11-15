@@ -19,6 +19,15 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
+func spawnHasTool(request *spawnScriptRequest, name string) bool {
+	for _, tool := range request.Tools {
+		if tool.Function.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // guardProbeScript serves one send_keys tool call carrying a
 // confirmation-worthy write, then completes on the next model turn.
 type guardProbeScript struct {
@@ -39,6 +48,12 @@ func (s *guardProbeScript) ServeHTTP(writer http.ResponseWriter, request *http.R
 	writer.Header().Set("Content-Type", "text/event-stream")
 	if !spawnHasRole(&parsed, "tool") {
 		spawnWriteToolCall(writer, "call-keys-1", "send_keys", `{"keys":`+strconv.Quote(s.keys)+`,"enter":true}`)
+		return
+	}
+	if !spawnHasTool(&parsed, "done") {
+		// The chat agent has no done tool: a plain answer ends its run, while
+		// an unknown tool call would be returned to the model for every turn.
+		spawnWriteContent(writer, "finished")
 		return
 	}
 	spawnWriteToolCall(writer, "call-done-1", "done", `{"summary":"finished","success":true}`)
