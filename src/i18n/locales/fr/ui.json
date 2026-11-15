@@ -2180,6 +2180,7 @@
   "回答": "Réponse",
   "回答 AI 的问题": "Répondre à la question de l'IA",
   "回答出错而中断": "Réponse interrompue par une erreur",
+  "回答已中断": "Réponse interrompue",
   "回答已完成": "Réponse terminée",
   "回答过程中追加的指令不支持引用，请先移除引用，或在回答结束后发送": "Les instructions ajoutées pendant la réponse ne prennent pas en charge les citations. Retirez la citation ou envoyez l'instruction une fois la réponse terminée.",
   "回答过程中追加的指令不支持附带图片，请先移除图片": "Les instructions ajoutées pendant la réponse ne prennent pas en charge les images jointes. Retirez d'abord l'image.",

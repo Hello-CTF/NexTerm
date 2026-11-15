@@ -2174,6 +2174,7 @@
   "回答": "Answer",
   "回答 AI 的问题": "Answer the AI's question",
   "回答出错而中断": "The answer was interrupted by an error",
+  "回答已中断": "Answer interrupted",
   "回答已完成": "Answer complete",
   "回答过程中追加的指令不支持引用，请先移除引用，或在回答结束后发送": "Instructions added while the AI is answering cannot include references. Remove the references first, or send after the answer ends",
   "回答过程中追加的指令不支持附带图片，请先移除图片": "Instructions added while the AI is answering cannot include images. Remove the images first",
