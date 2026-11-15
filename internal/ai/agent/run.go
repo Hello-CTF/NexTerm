@@ -403,7 +403,7 @@ func (r *Runner) assembleInput(current *job, rows []store.MessageRow, compaction
 		if err != nil {
 			return nil, err
 		}
-		injection, err := r.config.Memory.Inject(current.ctx, scope, messages, memory.Selection{}, memory.Budget{})
+		injection, err := r.config.Memory.Inject(current.ctx, scope, messages, memory.Selection{Query: current.args.Message}, memory.Budget{})
 		if err != nil {
 			return nil, err
 		}
