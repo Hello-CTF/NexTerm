@@ -168,6 +168,20 @@ describe("opening a path", () => {
     expect(d.listDirectory).toHaveBeenCalledTimes(1);
   });
 
+  it("opens a symlink to a directory as a directory and rejects a broken link", async () => {
+    const d = deps({
+      listDirectory: vi.fn(async () => [
+        { name: "openjdk.jdk", path: "/home/u/proj/openjdk.jdk", kind: "symlink", targetKind: "dir" },
+        { name: "gone.ts", path: "/home/u/proj/gone.ts", kind: "symlink" },
+      ]),
+    });
+    await openTerminalPath(target("openjdk.jdk"), d);
+    expect(d.openDirectory).toHaveBeenCalledWith("s1", "/home/u/proj/openjdk.jdk");
+    await openTerminalPath(target("gone.ts"), d);
+    expect(d.openFile).not.toHaveBeenCalled();
+    expect(d.notify).toHaveBeenCalledWith("error", expect.stringContaining("/home/u/proj/gone.ts"));
+  });
+
   it("says when the file does not exist", async () => {
     const d = deps();
     await openTerminalPath(target("src/missing.ts", { line: 3 }), d);

@@ -2322,7 +2322,7 @@ describe("delete and discard confirmations (R42 destructive dialogs)", () => {
     );
 
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-    expect(mocks.readRange).toHaveBeenCalledWith(SID, "~/big.log", 0, 1);
+    expect(mocks.readRange).toHaveBeenCalledWith(SID, "~/big.log", 0, 8000);
     expect(mocks.read).not.toHaveBeenCalled();
     expect(
       mocks.askChoice.mock.calls[0]?.[1]?.choices.map((choice: { label: string }) => choice.label),
@@ -2375,6 +2375,61 @@ describe("delete and discard confirmations (R42 destructive dialogs)", () => {
     await waitFor(() => expect(editors.views).toHaveLength(1));
     expect(mocks.read).toHaveBeenCalledOnce();
     expect(mocks.ask).not.toHaveBeenCalled();
+  });
+
+  it("FileEditor oversized file: offers only the chunked viewer and never reads the whole file", async () => {
+    mocks.readRange.mockResolvedValue({
+      path: "~/huge.log",
+      offset: 0,
+      size: 21 * 1024 * 1024,
+      contentBase64: btoa("plain text"),
+      truncated: true,
+    });
+    mocks.askChoice.mockResolvedValue(null);
+    const onClose = vi.fn();
+    mounted = mountWithDialogHost(createElement(FileEditor, { sessionId: SID, path: "~/huge.log", onClose }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(mocks.read).not.toHaveBeenCalled();
+    expect(mocks.askChoice.mock.calls[0]?.[0]).toContain("20MB");
+    expect(
+      mocks.askChoice.mock.calls[0]?.[1]?.choices.map((choice: { label: string }) => choice.label),
+    ).toEqual(["只读分块查看"]);
+  });
+
+  it("FileEditor oversized binary file: refuses without a dialog", async () => {
+    mocks.readRange.mockResolvedValue({
+      path: "~/huge.bin",
+      offset: 0,
+      size: 21 * 1024 * 1024,
+      contentBase64: btoa("ELF\u0000\u0001"),
+      truncated: true,
+    });
+    const onClose = vi.fn();
+    mounted = mountWithDialogHost(createElement(FileEditor, { sessionId: SID, path: "~/huge.bin", onClose }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(mocks.read).not.toHaveBeenCalled();
+    expect(mocks.askChoice).not.toHaveBeenCalled();
+  });
+
+  it("FileEditor binary file: asks before opening it as text", async () => {
+    const binary = btoa("ELF\u0000\u0001");
+    mocks.readRange.mockResolvedValue({ path: "~/tool", offset: 0, size: 5, contentBase64: binary, truncated: false });
+    mocks.read.mockResolvedValue({ path: "~/tool", size: 5, contentBase64: binary });
+    mocks.askChoice.mockResolvedValueOnce(null);
+    const onClose = vi.fn();
+    mounted = mountWithDialogHost(createElement(FileEditor, { sessionId: SID, path: "~/tool", onClose }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(mocks.askChoice.mock.calls[0]?.[1]?.title).toBe("二进制文件");
+    expect(mocks.read).not.toHaveBeenCalled();
+
+    mounted.unmount();
+    mocks.askChoice.mockResolvedValueOnce("open");
+    mounted = mountWithDialogHost(createElement(FileEditor, { sessionId: SID, path: "~/tool" }));
+    await waitFor(() => expect(editors.views).toHaveLength(1));
+    expect(mocks.read).toHaveBeenCalledOnce();
   });
 });
 

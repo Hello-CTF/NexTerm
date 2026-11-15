@@ -98,8 +98,12 @@ export async function openTerminalPath(target: PathTarget, deps: PathOpenDeps): 
     return;
   }
   const path = entry.path || resolved;
-  if (entry.kind === "dir") {
+  if (entry.kind === "dir" || (entry.kind === "symlink" && entry.targetKind === "dir")) {
     deps.openDirectory(deps.sessionId, path);
+    return;
+  }
+  if (entry.kind === "symlink" && !entry.targetKind) {
+    deps.notify("error", t("链接指向的目标不存在或无法访问：{path}", { path: resolved }));
     return;
   }
   if (!deps.isEditableFile(entry.name)) {
