@@ -31,7 +31,10 @@ const (
 // staged or only a world-visible sibling could be staged for content that is not group or other readable, a server that refuses the original's mode or owner, or a server that refuses the rename itself (a
 // bind-mounted file such as /etc/hosts in a container, a sticky directory, a locked Windows file).
 func (f *FS) replaceFile(ctx context.Context, remotePath string, data []byte) error {
-	target, info, ok := f.replaceTarget(remotePath)
+	target, info, ok := f.replaceTarget(ctx, remotePath)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !ok || (info != nil && !info.Mode().IsRegular()) {
 		return f.writeInPlace(ctx, remotePath, data)
 	}
@@ -91,10 +94,12 @@ func (f *FS) renameRefusedWithTargetIntact(err error, target string, existed boo
 // replaceTarget follows symlinks from remotePath to the file a write lands on. info is nil when that file does not
 // exist yet. ok is false when a link cannot be resolved without the server's help: a readlink failure, a link that
 // climbs with "..", whose lexical join can differ from the kernel's walk through a symlinked directory, or a loop.
-func (f *FS) replaceTarget(remotePath string) (target string, info os.FileInfo, ok bool) {
+// Nothing has been written yet, so lookups stop waiting when ctx ends.
+func (f *FS) replaceTarget(ctx context.Context, remotePath string) (target string, info os.FileInfo, ok bool) {
 	target = remotePath
 	for range maxSymlinkHops {
-		stat, err := f.client.Lstat(target)
+		current := target
+		stat, err := await(ctx, func() (os.FileInfo, error) { return f.client.Lstat(current) }, nil)
 		if errors.Is(err, fs.ErrNotExist) {
 			return target, nil, true
 		}
@@ -104,7 +109,7 @@ func (f *FS) replaceTarget(remotePath string) (target string, info os.FileInfo, 
 		if stat.Mode()&fs.ModeSymlink == 0 {
 			return target, stat, true
 		}
-		link, err := f.client.ReadLink(target)
+		link, err := await(ctx, func() (string, error) { return f.client.ReadLink(current) }, nil)
 		if err != nil || link == "" || containsParentSegment(link) {
 			return "", nil, false
 		}
