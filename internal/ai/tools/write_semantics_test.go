@@ -45,7 +45,7 @@ func TestR1IndeterminateWriteIsReconciledOnceWithoutRetry(t *testing.T) {
 }
 
 func TestR1WriteDescriptionsDiscloseBothSemantics(t *testing.T) {
-	if !strings.Contains(einoDescriptions["write_file"], "Create a new file atomically") || !strings.Contains(einoDescriptions["write_file"], "overwriting an existing file requires user authorization") {
+	if !strings.Contains(einoDescriptions["write_file"], "Create a new file atomically") || !strings.Contains(einoDescriptions["write_file"], "overwriting an existing file may need user confirmation depending on the permission mode") {
 		t.Fatalf("write_file description = %q", einoDescriptions["write_file"])
 	}
 	if !strings.Contains(einoDescriptions["edit_file"], "non-transactionally") {

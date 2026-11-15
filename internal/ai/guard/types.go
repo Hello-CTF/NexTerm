@@ -12,6 +12,12 @@ const (
 	ReadWrite  Mode = "read_write"
 	Silent     Mode = "silent"
 	Unattended Mode = "unattended"
+	// FullAccess runs everything short of Forbidden without asking, except hits
+	// on the user's interception rules, and only on ordinary targets: a
+	// production target is decided as Silent, and the cross-asset, multi-host
+	// and remote-history asks outside Decide still apply. Unattended runs are
+	// always forced to Unattended, so it never reaches them.
+	FullAccess Mode = "full_access"
 )
 
 type Risk uint8
@@ -68,6 +74,9 @@ type Ruling struct {
 	Kinds    []Kind   `json:"kinds,omitempty"`
 	Programs []string `json:"programs,omitempty"`
 	Reason   string   `json:"reason"`
+	// CustomRule marks a hit on the user's own interception rules, which keep
+	// asking even in full access mode.
+	CustomRule bool `json:"customRule,omitempty"`
 }
 
 func Allow(reason ...string) Ruling {
@@ -91,6 +100,13 @@ func Dangerous(reason string) Ruling {
 	return Ruling{Risk: Danger, Kind: KindDanger, Kinds: []Kind{KindDanger}, Reason: reason}
 }
 
+// CustomRuleHit is a hit on the user's interception rules.
+func CustomRuleHit(reason string) Ruling {
+	ruling := Dangerous(reason)
+	ruling.CustomRule = true
+	return ruling
+}
+
 func Deny(reason string) Ruling {
 	return Ruling{Risk: Forbidden, Kind: KindDanger, Kinds: []Kind{KindDanger}, Reason: reason}
 }
@@ -108,6 +124,7 @@ func Worst(rulings ...Ruling) Ruling {
 		if ruling.Risk != result.Risk {
 			continue
 		}
+		result.CustomRule = result.CustomRule || ruling.CustomRule
 		for _, kind := range ruling.ApprovalKinds() {
 			seen := false
 			for _, existing := range result.Kinds {
@@ -153,7 +170,7 @@ type Config struct {
 }
 
 func (c Config) Normalized() Config {
-	if c.Mode != ReadOnly && c.Mode != ReadWrite && c.Mode != Silent && c.Mode != Unattended {
+	if !c.Mode.Valid() {
 		c.Mode = ReadWrite
 	}
 	seen := make(map[string]struct{}, len(c.DangerRules))
@@ -203,10 +220,14 @@ type Decision struct {
 // DecideResource layers the path-level grants remembered for this session on top of Decide.
 // Production targets are never auto-authorized from session memory: the remembered kinds
 // and path rules are ignored so every production operation is explicitly confirmed.
+// Full access never reaches a production target: there it is decided as Silent.
 func DecideResource(config Config, ruling Ruling, memory *Memory, resource Resource) Decision {
 	production := resource.ProductionTarget()
 	if production {
 		memory = nil
+		if config.Normalized().Mode == FullAccess {
+			config.Mode = Silent
+		}
 	}
 	decision := Decide(config, ruling, memory)
 	// A path grant only answers a pending confirmation; it never lifts a read-only or unattended denial.
@@ -267,6 +288,9 @@ func Decide(config Config, ruling Ruling, memory *Memory) Decision {
 	}
 	if config.Mode == ReadOnly {
 		return Decision{Action: ActionDeny, Ruling: ruling, Reason: "只读权限模式禁止此操作"}
+	}
+	if config.Mode == FullAccess && !ruling.CustomRule {
+		return Decision{Action: ActionAllow, Ruling: ruling}
 	}
 	if ruling.Risk == NeedsConfirm {
 		if memory.Covers(ruling) {

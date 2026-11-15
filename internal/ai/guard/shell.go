@@ -47,7 +47,7 @@ func ClassifyCommand(command string, rules []string) Ruling {
 func classifyCommandText(command string, rules []string, depth int, nodes *int) (result Ruling) {
 	result = Allow()
 	if matchDangerRule(command, rules) {
-		result = Dangerous("命中自定义危险规则")
+		result = CustomRuleHit("命中自定义危险规则")
 	}
 	if depth > maxClassifyDepth {
 		return Worst(result, Indeterminate("命令嵌套过深，无法安全分析"))
@@ -1051,7 +1051,7 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 		return ruling
 	}
 	if matchDangerRule(strings.Join(argv, " "), c.rules) {
-		return Dangerous("命中自定义危险规则")
+		return CustomRuleHit("命中自定义危险规则")
 	}
 	if ruling, ok := classifyStateChangingBuiltins(name, args); ok {
 		return ruling
@@ -1279,7 +1279,10 @@ func (c *classifier) classifyInterpreter(name string, args []string, stdin pipeI
 }
 
 func dangerousInterpreterText(value string, rules []string) Ruling {
-	if matchDangerRule(value, rules) || containsDestructiveText(value) {
+	if matchDangerRule(value, rules) {
+		return CustomRuleHit("解释器代码包含危险操作")
+	}
+	if containsDestructiveText(value) {
 		return Dangerous("解释器代码包含危险操作")
 	}
 	return Allow()

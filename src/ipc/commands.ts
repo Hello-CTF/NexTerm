@@ -1527,7 +1527,7 @@ export interface ProviderConfig {
   stream: boolean;
 }
 
-export type AiPermissionMode = "read_only" | "read_write" | "silent";
+export type AiPermissionMode = "read_only" | "read_write" | "silent" | "full_access";
 
 export interface AiPermissionConfig {
   mode: AiPermissionMode;

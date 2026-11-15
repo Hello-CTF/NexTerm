@@ -164,7 +164,8 @@ describe("M134 AI copy", () => {
     const readOnly = [...view!.container.querySelectorAll('[role="radio"]')].find((radio) => radio.textContent === "只读");
     expect(readOnly?.getAttribute("title")).toContain("修改一律拒绝");
     expect(readOnly?.getAttribute("title")).not.toContain("除外");
-    expect(text).toContain("高危和无法判断的操作始终询问");
+    expect(text).toContain("禁止的操作始终拒绝，任何模式和授权都不会跳过");
+    expect(text).toContain("除「完全放行」外，高危和无法判断的操作不会自动执行");
   });
 
   it("explains the model selector without BYOK jargon", async () => {

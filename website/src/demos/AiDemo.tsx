@@ -40,7 +40,7 @@ const copy = {
     allowed: "Restart finished. The health check returns ok and memory dropped to 214MiB.",
     denied: "OK, no restart. Looking at the slow /api/reports queries first is another option.",
     tool: "Run commands", confirmTitle: "Your approval is needed", helpLabel: "About approvals",
-    help: "Allow once: this time only. Allow for session: no more prompts in this conversation. Always allow: saved to grants, revocable. Dangerous, unknowable and production actions always ask.",
+    help: "Allow once: this time only. Allow for session: no more prompts in this conversation. Always allow: saved to grants, revocable. Session and permanent approvals never cover dangerous, unknowable or production actions.",
     actions: { allow: "Allow once", allow_session: "Allow for session", allow_persistent: "Always allow", deny: "Deny" } as Record<ConfirmDecision, string>,
     alwaysBlock: "Always block",
     resolution: { allow: "Allowed once", allow_session: "Allowed for this session", allow_persistent: "Always allowed (revocable in grants)", deny: "Denied" } as Record<ConfirmDecision, string>,

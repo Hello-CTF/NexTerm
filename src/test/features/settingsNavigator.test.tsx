@@ -254,7 +254,7 @@ describe("AI interception rule copy", () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const text = document.getElementById("settings-ai-rules")?.textContent ?? "";
-    expect(text).toContain("读写和自动执行模式要求确认");
+    expect(text).toContain("读写、自动执行和完全放行模式要求确认");
     expect(text).toContain("只读和无人值守模式直接拒绝");
     expect(text).toContain("不可逆操作（格式化磁盘、清空系统目录、删除数据库）将被直接拒绝");
     expect(text).not.toContain("规则命中 → 读写/完全静默先确认");

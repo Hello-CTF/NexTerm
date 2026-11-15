@@ -120,7 +120,7 @@ func modeClock(clocks map[string]int64, deviceID string, rowRevision int64) int6
 }
 
 func aiGrantModeValid(mode guard.Mode) bool {
-	return mode == guard.ReadOnly || mode == guard.ReadWrite || mode == guard.Silent || mode == guard.Unattended
+	return mode.Valid()
 }
 
 func aiGrantKindStrings(kinds []guard.GrantKind) []string {

@@ -19,7 +19,7 @@ const DevicePermissionSettingKey = "ai.device_permission"
 // Sentinel validation errors for device permission modes; IPC layers classify
 // them with errors.Is instead of matching error text.
 var (
-	ErrDeviceModeInvalid        = errors.New("权限模式仅支持 read_only/read_write/silent/unattended")
+	ErrDeviceModeInvalid        = errors.New("权限模式仅支持 read_only/read_write/silent/full_access/unattended")
 	ErrDeviceModeDeviceRequired = errors.New("设备权限模式缺少设备 ID")
 )
 
@@ -137,7 +137,7 @@ func loadPermission(ctx context.Context, settings Settings) (permissionState, er
 			return permissionState{}, err
 		}
 		for deviceID, mode := range result.modes {
-			if !mode.valid() {
+			if !mode.Valid() {
 				delete(result.modes, deviceID)
 			}
 		}
@@ -220,8 +220,9 @@ func (m *Manager) Set(ctx context.Context, config Config) error {
 	return nil
 }
 
-func (m Mode) valid() bool {
-	return m == ReadOnly || m == ReadWrite || m == Silent || m == Unattended
+// Valid reports whether the mode is one this build understands.
+func (m Mode) Valid() bool {
+	return m == ReadOnly || m == ReadWrite || m == Silent || m == FullAccess || m == Unattended
 }
 
 func (m *Manager) DeviceMode(ctx context.Context, deviceID string) (Mode, bool, error) {
@@ -266,7 +267,7 @@ func (m *Manager) SetDeviceMode(ctx context.Context, deviceID string, mode Mode)
 	if deviceID == "" {
 		return ErrDeviceModeDeviceRequired
 	}
-	if mode != "" && !mode.valid() {
+	if mode != "" && !mode.Valid() {
 		return ErrDeviceModeInvalid
 	}
 	ownerID, err := owner.ID(ctx, m.shared)

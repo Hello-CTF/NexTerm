@@ -51,13 +51,13 @@ func matrixGrants(t *testing.T, authorization string) *Grants {
 func TestGrantDecisionMatrix(t *testing.T) {
 	ruling := Confirm(KindService, "service change")
 	for _, authorization := range []string{"none", "scoped", "mismatch", "legacy", "unattended", "device_grant"} {
-		for _, mode := range []Mode{ReadOnly, ReadWrite, Silent, Unattended} {
+		for _, mode := range []Mode{ReadOnly, ReadWrite, Silent, FullAccess, Unattended} {
 			for _, production := range []bool{false, true} {
 				want := ActionAsk
 				switch mode {
 				case ReadOnly:
 					want = ActionDeny
-				case Silent:
+				case Silent, FullAccess:
 					want = ActionAllow
 				case Unattended:
 					want = ActionDeny
@@ -84,7 +84,7 @@ func TestGrantDecisionMatrix(t *testing.T) {
 						t.Fatalf("action = %q, want %q (decision %+v)", decision.Action, want, decision)
 					}
 					viaAuthorization := authorization == "scoped" || authorization == "unattended" || authorization == "device_grant"
-					if want == ActionAllow && mode != Silent && viaAuthorization && decision.Authorization == nil {
+					if want == ActionAllow && mode != Silent && mode != FullAccess && viaAuthorization && decision.Authorization == nil {
 						t.Fatal("allowed without authorization binding")
 					}
 				})
@@ -203,13 +203,13 @@ func TestSessionMemoryNeverOverridesModeDecision(t *testing.T) {
 		},
 	}
 	for name, build := range memories {
-		for _, mode := range []Mode{ReadOnly, ReadWrite, Silent, Unattended} {
+		for _, mode := range []Mode{ReadOnly, ReadWrite, Silent, FullAccess, Unattended} {
 			for _, production := range []bool{false, true} {
 				want := ActionAsk
 				switch mode {
 				case ReadOnly, Unattended:
 					want = ActionDeny
-				case Silent:
+				case Silent, FullAccess:
 					want = ActionAllow
 				case ReadWrite:
 					if !production && name != "none" {

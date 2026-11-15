@@ -42,6 +42,9 @@ func TestSilentModeIsNotSessionMemory(t *testing.T) {
 	if decision.Action != ActionAllow {
 		t.Fatalf("silent mode decision = %+v", decision)
 	}
+	if decision := DecideResource(Config{Mode: FullAccess}, ruling, memory, production); decision.Action != ActionAllow {
+		t.Fatalf("full access production decision = %+v", decision)
+	}
 	if decision := DecideResource(Config{Mode: Unattended}, ruling, memory, production); decision.Action != ActionDeny {
 		t.Fatalf("unattended production decision = %+v", decision)
 	}

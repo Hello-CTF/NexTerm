@@ -34,7 +34,7 @@ export function resolutionLabel(resolution: string): string {
 }
 
 export const CONFIRM_HELP =
-  t("允许一次：仅本次；本会话允许：本次对话不再询问；永久允许：存入授权管理，可撤销。高危、无法判断和生产环境的操作每次都询问。");
+  t("允许一次：仅本次；本会话允许：本次对话不再询问；永久允许：存入授权管理，可撤销。本会话允许和永久允许不覆盖高危、无法判断和生产环境的操作。");
 
 // A tool call the user refused: the badge, the screen reader status and the result body.
 export const TOOL_USER_DENIED = {

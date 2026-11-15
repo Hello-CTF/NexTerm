@@ -133,10 +133,18 @@ func TestExecCommandsProductionChallengeMissingEnvironmentNamesRejected(t *testi
 	}
 }
 
+// Full access gets no extra power over other targets: multi-target writes and
+// the typed production challenge still ask, exactly as in silent mode.
 func TestMultiTargetAndProductionGuardsIgnoreSilentCurrentHost(t *testing.T) {
+	for _, mode := range []guard.Mode{guard.Silent, guard.FullAccess} {
+		t.Run(string(mode), func(t *testing.T) { testMultiTargetAndProductionGuards(t, mode) })
+	}
+}
+
+func testMultiTargetAndProductionGuards(t *testing.T, mode guard.Mode) {
 	newExecution := func(service *execbatch.Service, production bool) *Execution {
 		return &Execution{
-			JobID: "job", Scope: Scope{SessionID: "session-current"}, Permission: guard.Config{Mode: guard.Silent}, Memory: guard.NewMemory(),
+			JobID: "job", Scope: Scope{SessionID: "session-current"}, Permission: guard.Config{Mode: mode}, Memory: guard.NewMemory(),
 			Registry: NewRegistry(Dependencies{
 				ResolveExecTargets: func(context.Context, []string, []string) (ExecTargetSet, error) {
 					return ExecTargetSet{SessionIDs: []string{"session-target"}, Production: production}, nil
@@ -154,7 +162,17 @@ func TestMultiTargetAndProductionGuardsIgnoreSilentCurrentHost(t *testing.T) {
 		_, err := harness.invoke("write", "exec_commands", `{"commands":["touch /tmp/x"],"asset_ids":["asset-target"]}`)
 		requireChatGrantInterrupt(t, err)
 		if transport.calls() != 0 {
-			t.Fatalf("silent mode bypassed multi-target confirmation: %v", transport.execCalls)
+			t.Fatalf("%s mode bypassed multi-target confirmation: %v", mode, transport.execCalls)
+		}
+	})
+	t.Run("multi-target high-risk requires confirmation", func(t *testing.T) {
+		transport := successfulBatchTransport()
+		service := batchToolService(map[string]execbatch.Target{"session-target": batchTarget(transport, "asset-target", "")}, nil)
+		harness := &chatGrantHarness{execution: newExecution(service, false)}
+		_, err := harness.invoke("reboot", "exec_commands", `{"commands":["reboot"],"tags":["web"]}`)
+		requireChatGrantInterrupt(t, err)
+		if transport.calls() != 0 {
+			t.Fatalf("%s mode bypassed multi-target confirmation: %v", mode, transport.execCalls)
 		}
 	})
 	t.Run("production challenge requires confirmation", func(t *testing.T) {
@@ -164,26 +182,28 @@ func TestMultiTargetAndProductionGuardsIgnoreSilentCurrentHost(t *testing.T) {
 		_, err := harness.invoke("production", "exec_commands", `{"commands":["echo one"],"asset_ids":["asset-target"]}`)
 		requireChatGrantInterrupt(t, err)
 		if transport.calls() != 0 {
-			t.Fatalf("silent mode bypassed production confirmation: %v", transport.execCalls)
+			t.Fatalf("%s mode bypassed production confirmation: %v", mode, transport.execCalls)
 		}
 	})
 }
 
 func TestTerminalCreateAssetRequiresConfirmationEvenInSilentMode(t *testing.T) {
-	terminal := &fakeTerminal{}
-	execution := &Execution{
-		JobID: "job", Scope: Scope{SessionID: "session-a", TabID: "tab-a"}, Permission: guard.Config{Mode: guard.Silent}, Memory: guard.NewMemory(),
-		Registry: NewRegistry(Dependencies{
-			Terminal: terminal,
-			ResolveAssetSession: func(context.Context, string) (string, error) {
-				return "session-b", nil
-			},
-		}),
-	}
-	harness := &chatGrantHarness{execution: execution}
-	_, err := harness.invoke("create", "terminal_create", `{"asset_id":"asset-b"}`)
-	requireChatGrantInterrupt(t, err)
-	if len(terminal.createCalls) != 0 {
-		t.Fatalf("silent mode bypassed asset terminal confirmation: %v", terminal.createCalls)
+	for _, mode := range []guard.Mode{guard.Silent, guard.FullAccess} {
+		terminal := &fakeTerminal{}
+		execution := &Execution{
+			JobID: "job", Scope: Scope{SessionID: "session-a", TabID: "tab-a"}, Permission: guard.Config{Mode: mode}, Memory: guard.NewMemory(),
+			Registry: NewRegistry(Dependencies{
+				Terminal: terminal,
+				ResolveAssetSession: func(context.Context, string) (string, error) {
+					return "session-b", nil
+				},
+			}),
+		}
+		harness := &chatGrantHarness{execution: execution}
+		_, err := harness.invoke("create", "terminal_create", `{"asset_id":"asset-b"}`)
+		requireChatGrantInterrupt(t, err)
+		if len(terminal.createCalls) != 0 {
+			t.Fatalf("%s mode bypassed asset terminal confirmation: %v", mode, terminal.createCalls)
+		}
 	}
 }

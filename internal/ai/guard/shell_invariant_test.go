@@ -533,5 +533,15 @@ func FuzzClassifyCommand(f *testing.F) {
 		if decision := Decide(Config{Mode: ReadOnly}, ruling, nil); decision.Action == ActionAllow && ruling.Risk != Safe {
 			t.Fatalf("read-only allows %q with risk %s", command, ruling.Risk)
 		}
+		// Full access is the one mode that runs high-risk and undeterminable
+		// commands without asking; Forbidden stays denied, and a production
+		// target is held to the silent decision.
+		if decision := Decide(Config{Mode: FullAccess}, ruling, nil); (decision.Action == ActionAllow) != (ruling.Risk != Forbidden) {
+			t.Fatalf("full access decided %q with risk %s as %s", command, ruling.Risk, decision.Action)
+		}
+		production := Resource{Action: "exec_commands", Environment: "production"}
+		if full, silent := DecideResource(Config{Mode: FullAccess}, ruling, nil, production), DecideResource(Config{Mode: Silent}, ruling, nil, production); full.Action != silent.Action {
+			t.Fatalf("full access on production decided %q as %s, silent as %s", command, full.Action, silent.Action)
+		}
 	})
 }

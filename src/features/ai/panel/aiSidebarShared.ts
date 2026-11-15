@@ -26,13 +26,28 @@ export const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: strin
   { value: "read_only", label: t("只读"), hint: t("AI 只能查看，修改一律拒绝") },
   { value: "read_write", label: t("读写"), hint: t("查看操作直接执行，修改前需要你确认；选择「本会话允许」后，本次对话内同类操作不再询问") },
   { value: "silent", label: t("自动执行"), hint: t("普通修改直接执行，高危和无法判断的操作仍需要你确认") },
+  {
+    value: "full_access",
+    label: t("完全放行"),
+    hint: t("除禁止的操作外直接执行，包括高危和无法判断的操作；命中拦截规则仍需确认。生产环境按「自动执行」处理，跨主机或多主机的修改仍需确认，禁止的操作始终拒绝，定时任务不使用此模式"),
+  },
 ];
 
 export const MODE_LABEL: Record<AiPermissionMode, string> = {
   read_only: t("只读"),
   read_write: t("读写"),
   silent: t("自动执行"),
+  full_access: t("完全放行"),
 };
+
+// Full access is the one mode that skips confirmation for high-risk commands,
+// so choosing it always goes through an explicit confirmation first.
+export function fullAccessConfirmText(perHost: boolean): string {
+  return t(
+    "确定要切换到「完全放行」吗？\n\n{scope}，AI 将直接执行除禁止操作外的所有操作，包括高危和无法判断的命令（例如重启主机、运行解释器代码），执行前不再询问，可能造成数据丢失或服务中断。\n\n仍会询问：命中拦截规则的操作；生产环境中的高危和无法判断的操作；跨主机或多主机的修改。禁止的操作始终拒绝，定时任务不使用此模式。",
+    { scope: perHost ? t("在这台主机上") : t("在所有未单独设置模式的主机上") },
+  );
+}
 
 export const PLAN_MODE_HINT = t("先生成方案，批准后执行");
 
