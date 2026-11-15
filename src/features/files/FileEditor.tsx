@@ -98,6 +98,21 @@ const ENC_LABEL: Record<EncChoice, string> = {
 
 const ZOOM_STEPS = [11, 12, 13, 14.5, 16, 18];
 
+// Above LARGE_FILE_BYTES opening asks first; above MAX_EDIT_BYTES the whole file is never loaded (the transfer and
+// CodeMirror both degrade badly), only the chunked read-only viewer is offered.
+const LARGE_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_EDIT_BYTES = 20 * 1024 * 1024;
+// The first bytes read to tell text from binary, as git does: a NUL byte means binary.
+const SNIFF_BYTES = 8000;
+
+function looksBinary(sample: Uint8Array): boolean {
+  return sample.includes(0);
+}
+
+function formatLimit(bytes: number): string {
+  return `${Math.round(bytes / 1024 / 1024)}MB`;
+}
+
 // A file version as the host stores it: what a conditional save expects to replace.
 export interface FileVersion {
   size: number;
@@ -276,17 +291,24 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     void (async () => {
       try {
         let probedSize: number | null = null;
+        let probedBinary = false;
         try {
           const probeLocator = locatorRef.current;
-          const probe = await fsApi.readRange(probeLocator.sessionId, probeLocator.path, 0, 1);
+          const probe = await fsApi.readRange(probeLocator.sessionId, probeLocator.path, 0, SNIFF_BYTES);
           probedSize = probe.size;
+          probedBinary = looksBinary(bytesFromBase64(probe.contentBase64));
         } catch {
           probedSize = null;
         }
         if (cancelled) return;
-        let largeEditConfirmed = false;
-        if (probedSize !== null && probedSize > 5 * 1024 * 1024) {
-          const choice = await askChoice(t("文件超过 5MB，整文件编辑可能响应缓慢。请选择打开方式。"), {
+        if (probedSize !== null && probedSize > MAX_EDIT_BYTES) {
+          const limit = t("文件超过 {size}，编辑器无法打开整个文件。", { size: formatLimit(MAX_EDIT_BYTES) });
+          if (probedBinary) {
+            pushToast("info", t("{limit}它看起来是二进制文件，请下载到本机后打开", { limit }));
+            onCloseRef.current?.();
+            return;
+          }
+          const choice = await askChoice(limit, {
             title: t("大文件"),
             level: "info",
             choices: [
@@ -296,6 +318,44 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
                 hint: t("使用日志查看器按需读取，不加载整个文件"),
                 primary: true,
               },
+            ],
+          });
+          if (cancelled) return;
+          if (choice === "view") {
+            const current = locatorRef.current;
+            openLogTab(current.sessionId, current.path);
+          }
+          onCloseRef.current?.();
+          return;
+        }
+        if (probedBinary) {
+          const choice = await askChoice(t("文件包含二进制内容，以文本打开会显示乱码，保存会损坏文件。"), {
+            title: t("二进制文件"),
+            level: "warning",
+            choices: [{ key: "open", label: t("仍以文本打开"), hint: t("建议下载到本机后用合适的程序打开") }],
+          });
+          if (cancelled) return;
+          if (choice !== "open") {
+            onCloseRef.current?.();
+            return;
+          }
+        }
+        let largeEditConfirmed = false;
+        if (probedSize !== null && probedSize > LARGE_FILE_BYTES) {
+          const choice = await askChoice(t("文件超过 5MB，整文件编辑可能响应缓慢。请选择打开方式。"), {
+            title: t("大文件"),
+            level: "info",
+            choices: [
+              ...(probedBinary
+                ? []
+                : [
+                    {
+                      key: "view",
+                      label: t("只读分块查看"),
+                      hint: t("使用日志查看器按需读取，不加载整个文件"),
+                      primary: true,
+                    },
+                  ]),
               { key: "edit", label: t("编辑整个文件"), hint: t("读取整个文件并启用编辑与保存") },
             ],
           });
@@ -312,13 +372,14 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           }
           largeEditConfirmed = true;
         }
-        const readMaxBytes = probedSize === null ? undefined : probedSize + 1024;
+        // Without a probe the read itself is capped, so an unknown size cannot load more than the editor handles.
+        const readMaxBytes = probedSize === null ? MAX_EDIT_BYTES : probedSize + 1024;
         const readLocator = locatorRef.current;
         const res = await fsApi.read(readLocator.sessionId, readLocator.path, readMaxBytes);
         if (cancelled) return;
         if (
           !largeEditConfirmed &&
-          res.size > 5 * 1024 * 1024 &&
+          res.size > LARGE_FILE_BYTES &&
           !(await ask(t("文件超过 5MB，确定要编辑？"), { kind: "info" }))
         ) {
           onCloseRef.current?.();

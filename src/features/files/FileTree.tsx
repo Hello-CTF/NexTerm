@@ -869,6 +869,10 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     );
 
   const openFile = (entry: FileEntryDto) => {
+    if (entryIsBrokenLink(entry)) {
+      pushToast("error", t("链接指向的目标不存在或无法访问：{path}", { path: entry.path }));
+      return;
+    }
     if (!isEditableFile(entry.name)) {
       pushToast("info", t("「{name}」不是文本文件，不能在线编辑；可以下载到本机后打开", { name: entry.name }));
       return;
