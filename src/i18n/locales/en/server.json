@@ -546,7 +546,7 @@
   "[显示第 %d-%d 行，共 %d 行]": "[Showing lines %d-%d of %d]",
   "[本机 %s shell 历史，最新 %d 条]\n": "[Local %s shell history, latest %d entries]\n",
   "[注意] 当前会话连接的是远端资产；以下是运行 NexTerm 的本机 shell 历史，不是远端机器的历史。\n": "[Note] The current session is connected to a remote asset; the following is the local shell history of the machine running NexTerm, not the history of the remote machine.\n",
-  "[第 %d 条命令在 %s 上超过 %d 秒超时，可能仍在运行；其后 %d 条命令未在任何主机执行]\n": "[Command %d timed out after %d s on %s and may still be running; the %d commands after it were not run on any host]\n",
+  "[第 %d 条命令在 %s 上超过 %d 秒超时，可能仍在运行；其后 %d 条命令未在任何主机执行]\n": "[Command %d on %s timed out after %d s and may still be running; the %d commands after it were not run on any host]\n",
   "[第 %d 条命令在 asset_id=%s 上最先以非零退出码 %d 结束；exitCode 取第一个非零退出码]\n": "[Command %d on asset_id=%s was the first to exit non-zero (%d); exitCode is the first non-zero exit code]\n",
   "[第 %d 条命令最先以非零退出码 %d 结束；exitCode 取第一个非零退出码]\n": "[Command %d was the first to exit non-zero (%d); exitCode is the first non-zero exit code]\n",
   "[第 %d 条命令超过 %d 秒超时，可能仍在运行；其后 %d 条命令未执行]\n": "[Command %d timed out after %d s and may still be running; the %d commands after it were not run]\n",

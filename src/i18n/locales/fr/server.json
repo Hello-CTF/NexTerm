@@ -546,7 +546,7 @@
   "[显示第 %d-%d 行，共 %d 行]": "[Lignes %d-%d sur %d]",
   "[本机 %s shell 历史，最新 %d 条]\n": "[Historique du shell %s local, %d plus récentes]\n",
   "[注意] 当前会话连接的是远端资产；以下是运行 NexTerm 的本机 shell 历史，不是远端机器的历史。\n": "[Attention] La session actuelle est connectée à une ressource distante ; ce qui suit est l'historique du shell local où NexTerm s'exécute, pas celui de la machine distante.\n",
-  "[第 %d 条命令在 %s 上超过 %d 秒超时，可能仍在运行；其后 %d 条命令未在任何主机执行]\n": "[La commande %d a dépassé le délai de %d s sur %s et peut encore tourner ; les %d commandes suivantes n'ont été exécutées sur aucun hôte]\n",
+  "[第 %d 条命令在 %s 上超过 %d 秒超时，可能仍在运行；其后 %d 条命令未在任何主机执行]\n": "[La commande %d sur %s a dépassé le délai de %d s et peut encore tourner ; les %d commandes suivantes n'ont été exécutées sur aucun hôte]\n",
   "[第 %d 条命令在 asset_id=%s 上最先以非零退出码 %d 结束；exitCode 取第一个非零退出码]\n": "[La commande %d sur asset_id=%s s'est terminée la première avec un code non nul (%d) ; exitCode est le premier code de sortie non nul]\n",
   "[第 %d 条命令最先以非零退出码 %d 结束；exitCode 取第一个非零退出码]\n": "[La commande %d s'est terminée la première avec un code non nul (%d) ; exitCode est le premier code de sortie non nul]\n",
   "[第 %d 条命令超过 %d 秒超时，可能仍在运行；其后 %d 条命令未执行]\n": "[La commande %d a dépassé le délai de %d s et peut encore tourner ; les %d commandes suivantes n'ont pas été exécutées]\n",
