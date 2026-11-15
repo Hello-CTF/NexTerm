@@ -9,7 +9,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.4
 	github.com/UserExistsError/conpty v0.1.4
 	github.com/charmbracelet/x/ansi v0.11.9
-	github.com/cloudwego/eino v0.9.22
+	github.com/cloudwego/eino v0.9.23
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/coder/websocket v1.8.15
 	github.com/containerd/errdefs v1.0.0
