@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -260,6 +261,12 @@ type job struct {
 
 	steer *steer.Queue
 
+	// streamedMu guards streamed: the assistant text of the current model
+	// turn that reached the client but is not saved yet. A run that ends
+	// without a final answer saves it as a partial answer.
+	streamedMu sync.Mutex
+	streamed   strings.Builder
+
 	emitMu         sync.Mutex
 	emitTurn       uint64
 	pendingEmits   []queuedEmit
@@ -308,6 +315,28 @@ func (j *job) emit(ctx context.Context, event Event) error {
 		return errors.New("AI job already finished")
 	}
 	return j.stream.Send(ctx, event)
+}
+
+func (j *job) recordStreamed(text string) {
+	j.streamedMu.Lock()
+	j.streamed.WriteString(text)
+	j.streamedMu.Unlock()
+}
+
+func (j *job) resetStreamed() {
+	j.streamedMu.Lock()
+	j.streamed.Reset()
+	j.streamedMu.Unlock()
+}
+
+// takeStreamed returns the unsaved streamed text and clears it, so it is
+// saved at most once.
+func (j *job) takeStreamed() string {
+	j.streamedMu.Lock()
+	defer j.streamedMu.Unlock()
+	text := j.streamed.String()
+	j.streamed.Reset()
+	return text
 }
 
 func (j *job) queueTurnEmits(events ...Event) {

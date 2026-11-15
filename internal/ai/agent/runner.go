@@ -726,6 +726,11 @@ func (r *Runner) complete(current *job, answer string, turns int, total usage.Us
 			slog.Warn("ai run failed", "job", current.id, "class", string(provider.ClassifyError(terminalErr)),
 				"status", status, "error", tools.RedactText(terminalErr.Error()))
 		}
+		if terminalErr != nil {
+			// Saved before the status and terminal event, so the row is in
+			// place when a client sees the run end and reloads.
+			r.persistPartialAnswer(current)
+		}
 		var statusErr error
 		if err := current.finish(answer, turns, total, terminalErr, func() {
 			statusErr = r.finishRun(current, answer, turns, total, terminalErr, terminal)

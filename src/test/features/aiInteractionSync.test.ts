@@ -119,3 +119,37 @@ describe("interim assistant text in history", () => {
     expect(shape(historyToItems(createConversation(), unfinished, new Set(["job-1"])))).toEqual(["user:查看磁盘"]);
   });
 });
+
+describe("partial assistant answers in history", () => {
+  const messages = [
+    { id: "m1", role: "user", content: { role: "user", content: "查看磁盘", jobId: "job-1" } },
+    { id: "m2", role: "assistant", content: { role: "assistant", content: "先看一下分区。", jobId: "job-1", interim: true } },
+    { id: "m3", role: "toolCall", content: { type: "toolCall", jobId: "job-1", id: "c1", name: "exec_commands" } },
+    { id: "m4", role: "toolResult", content: { type: "toolResult", jobId: "job-1", id: "c1", tool: "exec_commands", ok: true, summary: "df 完成" } },
+    { id: "m5", role: "assistant", content: { role: "assistant", content: "磁盘快满了，", jobId: "job-1", partial: true } },
+  ];
+
+  it("shows the partial answer of an old run as interrupted assistant text after its tools", () => {
+    const items = historyToItems(createConversation(), messages);
+    expect(items.map((item) => item.role === "tool" ? `tool:${item.callId}` : `${item.role}:${"text" in item ? item.text : ""}`)).toEqual([
+      "user:查看磁盘",
+      "assistant:先看一下分区。",
+      "tool:c1",
+      "assistant:磁盘快满了，",
+    ]);
+    const partial = items[items.length - 1];
+    expect(partial.role === "assistant" && partial.interrupted).toBe(true);
+    const interim = items[1];
+    expect(interim.role === "assistant" && interim.interrupted).toBeFalsy();
+  });
+
+  it("skips the partial answer of a replayable run, whose text comes back from its events", () => {
+    const items = historyToItems(createConversation(), messages, new Set(["job-1"]));
+    expect(items.filter((item) => item.role === "assistant")).toEqual([]);
+  });
+
+  it("ignores a blank partial answer", () => {
+    const blank = [messages[0], { id: "m9", role: "assistant", content: { role: "assistant", content: " \n", jobId: "job-1", partial: true } }];
+    expect(historyToItems(createConversation(), blank).map((item) => item.role)).toEqual(["user"]);
+  });
+});

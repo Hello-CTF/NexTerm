@@ -134,7 +134,7 @@ func (r *Runner) consumeResumed(current *job, iterator *adk.AsyncIterator[*adk.A
 			return
 		}
 		if runErr == nil {
-			if err := r.persistAssistant(current.ctx, current.args.ConversationID, current.id, answer, total); err != nil {
+			if err := r.persistFinalAnswer(current, answer, total); err != nil {
 				runErr = err
 			}
 		}
@@ -221,7 +221,7 @@ func (r *Runner) run(current *job) (string, int, usage.Usage, error) {
 	iterator := runtime.runner.Run(current.ctx, runtime.input, cancelOption, adk.WithCheckPointID(current.id))
 	answer, turns, total, err := r.consume(current, iterator)
 	if err == nil {
-		if err := r.persistAssistant(current.ctx, current.args.ConversationID, current.id, answer, total); err != nil {
+		if err := r.persistFinalAnswer(current, answer, total); err != nil {
 			return "", turns, total, err
 		}
 	}
@@ -537,6 +537,7 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 		if variant.Role == schema.Assistant {
 			started = time.Now()
 			current.assistantTurn++
+			current.resetStreamed()
 			if err := r.flushPendingEvents(current, current.assistantTurn, false); err != nil {
 				return runtime.failure(err)
 			}
@@ -575,7 +576,7 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 				return runtime.failure(err)
 			}
 			if len(message.ToolCalls) > 0 {
-				if err := r.persistToolCallRows(current.ctx, current.args.ConversationID, current.id, message.Content, message.ToolCalls); err != nil {
+				if err := r.persistToolCallRows(current.ctx, current, message.Content, message.ToolCalls); err != nil {
 					if ctxErr := current.ctx.Err(); ctxErr != nil {
 						return runtime.failure(ctxErr)
 					}
@@ -656,6 +657,7 @@ func emitAssistantText(current *job, message *schema.Message) error {
 		if err := current.emit(current.ctx, Event{Type: "delta", Text: message.Content}); err != nil {
 			return err
 		}
+		current.recordStreamed(message.Content)
 	}
 	return nil
 }
@@ -893,6 +895,33 @@ func interactionValue(value any) (tools.Interaction, bool) {
 		}
 	}
 	return tools.Interaction{}, false
+}
+
+// persistFinalAnswer saves a finished run's answer; the streamed text it
+// covers is then saved and must not come back as a partial answer.
+func (r *Runner) persistFinalAnswer(current *job, answer string, total usage.Usage) error {
+	if err := r.persistAssistant(current.ctx, current.args.ConversationID, current.id, answer, total); err != nil {
+		return err
+	}
+	current.resetStreamed()
+	return nil
+}
+
+// persistPartialAnswer saves the assistant text a run streamed in its last
+// model turn before it ended without a final answer, so a reopened
+// conversation and the next run keep what the user already saw. It uses the
+// finish context of the run status, which outlives cancellation and shutdown.
+func (r *Runner) persistPartialAnswer(current *job) {
+	text := current.takeStreamed()
+	if strings.TrimSpace(text) == "" || r.store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(current.ctx), 5*time.Second)
+	defer cancel()
+	row := map[string]any{"role": "assistant", "content": text, "jobId": current.id, "partial": true}
+	if err := r.store.MsgInsert(ctx, current.args.ConversationID, "assistant", row, nil, nil); err != nil {
+		slog.Warn("AI 部分回答保存失败", "job", current.id, "error", err)
+	}
 }
 
 func (r *Runner) persistAssistant(ctx context.Context, conversationID, jobID, answer string, total usage.Usage) error {

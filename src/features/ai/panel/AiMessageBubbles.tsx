@@ -86,6 +86,9 @@ export const ChatBubble = memo(function ChatBubble({
     return (
       <div className="mr-2 rounded-[10px] rounded-bl-[3px] border border-neutral-800 bg-neutral-800 px-3 py-2 text-[12.3px] leading-relaxed text-neutral-200">
         <Markdown text={item.text} streaming={streaming} />
+        {item.interrupted ? (
+          <div className="mt-1 text-[10.5px] text-[var(--nx-fg-tertiary)]">{t("回答已中断")}</div>
+        ) : null}
       </div>
     );
   }

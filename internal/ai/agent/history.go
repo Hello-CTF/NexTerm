@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"slices"
+	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -45,13 +46,16 @@ type historyRow struct {
 // persistToolCallRows saves one assistant turn's tool calls. Text the model
 // wrote alongside the calls is saved first as an interim assistant row, and
 // rebuildHistory joins it with the calls into one assistant message.
-func (r *Runner) persistToolCallRows(ctx context.Context, conversationID, jobID, text string, calls []schema.ToolCall) error {
+func (r *Runner) persistToolCallRows(ctx context.Context, current *job, text string, calls []schema.ToolCall) error {
+	conversationID, jobID := current.args.ConversationID, current.id
 	if text != "" {
 		interim := map[string]any{"role": "assistant", "content": text, "jobId": jobID, "interim": true}
 		if err := r.store.MsgInsert(ctx, conversationID, "assistant", interim, nil, nil); err != nil {
 			return err
 		}
 	}
+	// The turn's text is saved, so it is no longer a partial answer.
+	current.resetStreamed()
 	for _, call := range calls {
 		row := map[string]any{
 			"type":  historyTypeToolCall,
@@ -126,8 +130,14 @@ func historyMessages(rows []store.MessageRow, jobID string) []*schema.Message {
 type parsedHistoryRow struct {
 	historyRow
 	Interim     bool   `json:"interim"`
+	Partial     bool   `json:"partial"`
 	BeforeJobID string `json:"beforeJobId"`
 }
+
+// partialAnswerNote follows a partial answer in the model input so the model
+// knows the user saw an answer that was cut off; the stored text stays as
+// streamed.
+const partialAnswerNote = "\n\n[answer interrupted]"
 
 // orderHistoryRows keeps each run's rows together, in the order the runs
 // started. Two runs that wrote into one conversation at the same time
@@ -243,7 +253,14 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 			case "user":
 				messages = append(messages, schema.UserMessage(persisted.Content))
 			case "assistant":
-				messages = append(messages, schema.AssistantMessage(persisted.Content, nil))
+				content := persisted.Content
+				if persisted.Partial {
+					if strings.TrimSpace(content) == "" {
+						continue
+					}
+					content += partialAnswerNote
+				}
+				messages = append(messages, schema.AssistantMessage(content, nil))
 				if persisted.Interim {
 					// The turn's tool calls follow and join this message.
 					carrying = true

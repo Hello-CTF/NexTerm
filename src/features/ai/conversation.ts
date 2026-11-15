@@ -48,7 +48,13 @@ export type ChatItem =
       jobId?: string;
       steered?: boolean;
     })
-  | (ItemBase & { role: "assistant"; text: string })
+  | (ItemBase & {
+      role: "assistant";
+      text: string;
+      // interrupted marks a saved partial answer: text streamed before the run
+      // failed or was stopped.
+      interrupted?: boolean;
+    })
   | (ItemBase & { role: "reasoning"; text: string })
   | (ItemBase & {
       role: "tool";
@@ -1103,6 +1109,13 @@ export function historyToItems(
       // rebuilt from its events, which carry the same text, so its rows are skipped.
       if (jobSkipped(raw)) continue;
       items.push({ id: `h${seq++}`, attempt: null, role: "assistant", text });
+      continue;
+    }
+    if (historyField(raw, "partial") === true) {
+      // Text a run streamed before it failed or was stopped. A replayed run
+      // shows the same text from its events, so its row is skipped.
+      if (jobSkipped(raw) || !text.trim()) continue;
+      items.push({ id: `h${seq++}`, attempt: null, role: "assistant", text, interrupted: true });
       continue;
     }
     if (m.role === "user") {
