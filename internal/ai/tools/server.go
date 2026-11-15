@@ -70,16 +70,8 @@ func (r *Registry) execCommandsCurrent(ctx context.Context, scope Scope, args Ex
 	if err != nil {
 		return Fail(err)
 	}
-	capOutput := func(text string) (string, string, bool) {
-		display, cut := capText(text)
-		model := display
-		if cut {
-			model = strings.TrimSuffix(display, "\n[输出已截断]") + "\n[output truncated]"
-		}
-		return display, model, cut
-	}
 	timeout := time.Duration(args.Timeout) * time.Second
-	var output, modelOutput strings.Builder
+	var blocks []execBlock
 	var summary execSummary
 	truncated := false
 	for index, command := range args.Commands {
@@ -90,24 +82,16 @@ func (r *Registry) execCommandsCurrent(ctx context.Context, scope Scope, args Ex
 		result, execErr := transport.Exec(commandContext, command, base.ExecOptions{Timeout: timeout, ExpectedGeneration: transport.Generation()})
 		deadlineHit := errors.Is(commandContext.Err(), context.DeadlineExceeded)
 		cancel()
-		fmt.Fprintf(&output, "$ %s\n", command)
-		fmt.Fprintf(&modelOutput, "$ %s\n", command)
-		stdout, modelStdout, stdoutCut := capOutput(result.Stdout)
-		stderr, modelStderr, stderrCut := capOutput(result.Stderr)
-		truncated = truncated || stdoutCut || stderrCut || result.Truncated
-		output.WriteString(stdout)
-		modelOutput.WriteString(modelStdout)
-		if stderr != "" {
-			output.WriteString("\n[stderr]\n")
-			output.WriteString(stderr)
-			modelOutput.WriteString("\n[stderr]\n")
-			modelOutput.WriteString(modelStderr)
-		}
+		prefix := fmt.Sprintf("$ %s\n", command)
+		block := execBlock{prefix: prefix, modelPrefix: prefix, stdout: result.Stdout, stderr: result.Stderr}
+		var footer, modelFooter strings.Builder
+		truncated = truncated || result.Truncated
 		if result.ExitCode != nil {
 			summary.exit(index, *result.ExitCode)
-			fmt.Fprintf(&output, "\n[exit_code=%d]\n", *result.ExitCode)
-			fmt.Fprintf(&modelOutput, "\n[exit_code=%d]\n", *result.ExitCode)
+			fmt.Fprintf(&footer, "\n[exit_code=%d]\n", *result.ExitCode)
+			fmt.Fprintf(&modelFooter, "\n[exit_code=%d]\n", *result.ExitCode)
 		}
+		stop := false
 		if execErr != nil {
 			if ctx.Err() != nil {
 				return Fail(ctx.Err())
@@ -115,28 +99,36 @@ func (r *Registry) execCommandsCurrent(ctx context.Context, scope Scope, args Ex
 			if errors.Is(execErr, context.DeadlineExceeded) || deadlineHit {
 				// The command's own deadline expired while the run is still alive: keep what it and the earlier
 				// commands printed, and do not start the rest, which may depend on it or contend with it while it runs.
-				fmt.Fprintf(&output, "\n[超时（%d 秒），命令可能仍在运行，退出码未知]\n\n", args.Timeout)
-				fmt.Fprintf(&modelOutput, "\n[timeout after %ds; may still be running; exit code unknown]\n\n", args.Timeout)
+				fmt.Fprintf(&footer, "\n[超时（%d 秒），命令可能仍在运行，退出码未知]\n\n", args.Timeout)
+				fmt.Fprintf(&modelFooter, "\n[timeout after %ds; may still be running; exit code unknown]\n\n", args.Timeout)
 				summary.timedOut, summary.timedOutIndex = true, index
 				for _, skipped := range args.Commands[index+1:] {
-					fmt.Fprintf(&output, "$ %s\n[未执行：前面的命令超时]\n\n", skipped)
-					fmt.Fprintf(&modelOutput, "$ %s\n[not run: an earlier command timed out]\n\n", skipped)
+					fmt.Fprintf(&footer, "$ %s\n[未执行：前面的命令超时]\n\n", skipped)
+					fmt.Fprintf(&modelFooter, "$ %s\n[not run: an earlier command timed out]\n\n", skipped)
 				}
-				break
+				stop = true
+			} else {
+				if errors.Is(execErr, context.Canceled) {
+					return Fail(execErr)
+				}
+				summary.exit(index, 1)
+				summary.execFailed = true
+				fmt.Fprintf(&footer, "\n[执行失败: %v]\n", execErr)
+				fmt.Fprintf(&modelFooter, "\n[execution failed: %v]\n", execErr)
 			}
-			if errors.Is(execErr, context.Canceled) {
-				return Fail(execErr)
-			}
-			summary.exit(index, 1)
-			summary.execFailed = true
-			fmt.Fprintf(&output, "\n[执行失败: %v]\n", execErr)
-			fmt.Fprintf(&modelOutput, "\n[execution failed: %v]\n", execErr)
 		}
-		output.WriteByte('\n')
-		modelOutput.WriteByte('\n')
+		if !stop {
+			footer.WriteByte('\n')
+			modelFooter.WriteByte('\n')
+		}
+		block.footer, block.modelFooter = footer.String(), modelFooter.String()
+		blocks = append(blocks, block)
+		if stop {
+			break
+		}
 	}
-	text, _, cut := capOutput(output.String())
-	_, modelText, _ := capOutput(modelOutput.String())
+	// Each command's output is capped on its own, so every header and exit code survives the combined cap.
+	text, modelText, cut := renderExecBlocks(blocks)
 	// The summary goes after the cap, so a long output never hides which command failed or timed out.
 	note, modelNote := summary.notes(len(args.Commands), args.Timeout)
 	text += note
@@ -307,13 +299,22 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 		return r.prepareExecBatchProduction(ctx, jobID, call, args, targets)
 	}
 
-	var output, modelOutput strings.Builder
+	var blocks []execBlock
 	exitCode := 0
 	truncated := false
 	execFailed := false
 	failedIndex, failedAsset := 0, ""
 	var timedOutAssets []string
 	timedOutIndex := 0
+	// appendFooter adds text to the last block, or starts a body-less block when there is none.
+	appendFooter := func(text, model string) {
+		if len(blocks) == 0 {
+			blocks = append(blocks, execBlock{})
+		}
+		last := &blocks[len(blocks)-1]
+		last.footer += text
+		last.modelFooter += model
+	}
 	for index, command := range args.Commands {
 		if err := ctx.Err(); err != nil {
 			return Fail(err)
@@ -327,29 +328,29 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 			if ctx.Err() != nil {
 				return Fail(ctx.Err())
 			}
-			fmt.Fprintf(&output, "\n第 %d 条命令未执行: %v\n", index+1, execErr)
+			failure := fmt.Sprintf("\n第 %d 条命令未执行: %v\n", index+1, execErr)
 			if index > 0 {
-				output.WriteString("此前命令已经执行；未从头重试，请检查各主机状态后再决定下一步\n")
+				failure += "此前命令已经执行；未从头重试，请检查各主机状态后再决定下一步\n"
 			}
-			text, cut := capText(output.String())
-			return Output{Text: text, ModelText: text, ExitCode: 1, Truncated: truncated || cut, ExecFailed: true}
+			appendFooter(failure, failure)
+			text, modelText, cut := renderExecBlocks(blocks)
+			return Output{Text: text, ModelText: modelText, ExitCode: 1, Truncated: truncated || cut, ExecFailed: true}
 		}
-		shared := func(format string, values ...any) {
-			fmt.Fprintf(&output, format, values...)
-			fmt.Fprintf(&modelOutput, format, values...)
+		header := fmt.Sprintf("$ %s\n", command)
+		if len(batch.Results) == 0 {
+			blocks = append(blocks, execBlock{prefix: header, modelPrefix: header})
 		}
-		shared("$ %s\n", command)
-		for _, result := range batch.Results {
-			shared("[asset_id=%s session_id=%s status=%s]\n", result.AssetID, result.SessionID, result.Status)
-			stdout, stdoutCut := capText(result.Stdout)
-			stderr, stderrCut := capText(result.Stderr)
-			truncated = truncated || stdoutCut || stderrCut || result.Truncated
-			shared("%s", stdout)
-			if stderr != "" {
-				shared("\n[stderr]\n%s", stderr)
+		for resultIndex, result := range batch.Results {
+			prefix := fmt.Sprintf("[asset_id=%s session_id=%s status=%s]\n", result.AssetID, result.SessionID, result.Status)
+			if resultIndex == 0 {
+				prefix = header + prefix
 			}
+			truncated = truncated || result.Truncated
+			block := execBlock{prefix: prefix, modelPrefix: prefix, stdout: result.Stdout, stderr: result.Stderr}
+			var footer, modelFooter strings.Builder
 			if result.ExitCode != nil {
-				shared("\n[exit_code=%d]\n", *result.ExitCode)
+				fmt.Fprintf(&footer, "\n[exit_code=%d]\n", *result.ExitCode)
+				fmt.Fprintf(&modelFooter, "\n[exit_code=%d]\n", *result.ExitCode)
 			}
 			recordFailure := func(code int) {
 				if exitCode == 0 && code != 0 {
@@ -362,13 +363,13 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 			if result.Status == execbatch.StatusTimeout {
 				// The target's deadline expired while the run is alive: the output it printed so far is kept and
 				// the remaining commands are not sent to any target.
-				fmt.Fprintf(&output, "\n[超时（%d 秒），命令可能仍在运行，退出码未知]\n", args.Timeout)
-				fmt.Fprintf(&modelOutput, "\n[timeout after %ds; may still be running; exit code unknown]\n", args.Timeout)
+				fmt.Fprintf(&footer, "\n[超时（%d 秒），命令可能仍在运行，退出码未知]\n", args.Timeout)
+				fmt.Fprintf(&modelFooter, "\n[timeout after %ds; may still be running; exit code unknown]\n", args.Timeout)
 				timedOutAssets = append(timedOutAssets, result.AssetID)
 				timedOutIndex = index
 			} else if result.Error != "" {
-				fmt.Fprintf(&output, "\n[执行失败: %s]\n", result.Error)
-				fmt.Fprintf(&modelOutput, "\n[execution failed: %s]\n", result.Error)
+				fmt.Fprintf(&footer, "\n[执行失败: %s]\n", result.Error)
+				fmt.Fprintf(&modelFooter, "\n[execution failed: %s]\n", result.Error)
 			}
 			if result.Status != execbatch.StatusSuccess {
 				recordFailure(1)
@@ -376,21 +377,20 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 					execFailed = true
 				}
 			}
-			shared("\n")
+			footer.WriteString("\n")
+			modelFooter.WriteString("\n")
+			block.footer, block.modelFooter = footer.String(), modelFooter.String()
+			blocks = append(blocks, block)
 		}
 		if len(timedOutAssets) > 0 {
 			for _, skipped := range args.Commands[index+1:] {
-				fmt.Fprintf(&output, "$ %s\n[未执行：前面的命令超时]\n\n", skipped)
-				fmt.Fprintf(&modelOutput, "$ %s\n[not run: an earlier command timed out]\n\n", skipped)
+				appendFooter(fmt.Sprintf("$ %s\n[未执行：前面的命令超时]\n\n", skipped), fmt.Sprintf("$ %s\n[not run: an earlier command timed out]\n\n", skipped))
 			}
 			break
 		}
 	}
-	text, cut := capText(output.String())
-	modelText, modelCut := capText(modelOutput.String())
-	if modelCut {
-		modelText = strings.TrimSuffix(modelText, "\n[输出已截断]") + "\n[output truncated]"
-	}
+	// Each target's output is capped on its own, so every header and exit code survives the combined cap.
+	text, modelText, cut := renderExecBlocks(blocks)
 	// The summary goes after the cap, so a long output never hides which command failed or timed out.
 	if exitCode != 0 && (len(args.Commands) > 1 || len(targets.SessionIDs) > 1) {
 		text += fmt.Sprintf("[第 %d 条命令在 asset_id=%s 上最先以非零退出码 %d 结束；exitCode 取第一个非零退出码]\n", failedIndex+1, failedAsset, exitCode)
@@ -690,14 +690,14 @@ func (r *Registry) searchFiles(ctx context.Context, scope Scope, raw []byte) Out
 		text = "无匹配"
 		modelText = "no matches"
 	}
-	text, cut := capText(text)
+	text, cappedModel, cut := capHeadTail(text)
 	note, modelNote := search.notes(timedOut)
+	if cut && modelText == "" {
+		modelText = cappedModel
+	}
 	if note != "" {
 		if modelText == "" {
 			modelText = text
-			if cut {
-				modelText = strings.TrimSuffix(text, "\n[输出已截断]") + "\n[output truncated]"
-			}
 		}
 		text += "\n" + note
 		modelText += "\n" + modelNote
@@ -1201,7 +1201,7 @@ func (r *Registry) readScreenHistory(ctx context.Context, tabID string, maxLines
 	if unwrap {
 		lines = unwrapLines(lines, cols)
 	}
-	text, truncated := capText(strings.Join(lines, "\n"))
+	text, _, truncated := capHeadTail(strings.Join(lines, "\n"))
 	if truncated {
 		header += "；本页渲染已截断，用更小的 history_lines 重读"
 	}
@@ -1246,7 +1246,7 @@ func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq u
 			header += " 或 cursor=" + cursor
 		}
 	}
-	text, truncated := capText(strings.Join(lines, "\n"))
+	text, _, truncated := capHeadTail(strings.Join(lines, "\n"))
 	if truncated {
 		header += fmt.Sprintf("；本页渲染已截断，用 since_seq=%d 配合更小 max_bytes 重读", start)
 	}

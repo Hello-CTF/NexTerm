@@ -88,7 +88,7 @@ func (r *Registry) shellHistory(ctx context.Context, scope Scope, raw []byte) Ou
 	if text == "" {
 		text = "（历史为空）"
 	}
-	text, truncated := capText(text)
+	text, _, truncated := capHeadTail(text)
 	prefix := fmt.Sprintf("[本机 %s shell 历史，最新 %d 条]\n", shell, len(entries))
 	return Output{OK: true, Text: prefix + text, Truncated: truncated}
 }

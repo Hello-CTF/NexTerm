@@ -522,3 +522,13 @@ func TestProjectModelMessagesLeavesUnrecognizedJSONUntouched(t *testing.T) {
 		t.Fatalf("unrecognized JSON changed: %s", projected[0].Content)
 	}
 }
+
+func TestProjectOmissionMarkerOnlyRewritesTruncatedResults(t *testing.T) {
+	text := "head\n[... 已省略 3 行 / 40 字节 ...]\ntail"
+	if got := projectOmissionMarker(text, true); got != "head\n[... omitted 3 lines / 40 bytes ...]\ntail" {
+		t.Fatalf("truncated projection = %q", got)
+	}
+	if got := projectOmissionMarker(text, false); got != text {
+		t.Fatalf("untruncated output was rewritten: %q", got)
+	}
+}

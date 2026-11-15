@@ -185,9 +185,9 @@ func projectModelResult(view modelResultView) string {
 	case "read_screen":
 		if view.OK {
 			if projected, ok := projectReadScreenText(view.Text); ok {
-				return projected
+				return projectOmissionMarker(projected, view.Truncated)
 			}
-			return view.Text
+			return projectOmissionMarker(view.Text, view.Truncated)
 		}
 	case "send_keys", "wait_for":
 		if projected, ok := projectTerminalWaitText(view.Text); ok {
@@ -242,6 +242,25 @@ func splitModelAuditSuffix(text string, depth int) (string, string, bool) {
 	}
 	nested := text[index+len(marker) : len(text)-1]
 	return text[:index], "\n[audit write failed: " + projectMachineTextDepth(nested, depth+1) + "]", true
+}
+
+var omissionMarkerPattern = regexp.MustCompile(`\n\[\.\.\. 已省略 ([0-9]+) 行 / ([0-9]+) 字节 \.\.\.\]\n`)
+
+// projectOmissionMarker translates the head-and-tail truncation marker of a capped result. It only runs on
+// results flagged truncated, so a marker-like line in untruncated output is left alone.
+func projectOmissionMarker(text string, truncated bool) string {
+	if !truncated {
+		return text
+	}
+	replaced := false
+	return omissionMarkerPattern.ReplaceAllStringFunc(text, func(match string) string {
+		if replaced {
+			return match
+		}
+		replaced = true
+		parts := omissionMarkerPattern.FindStringSubmatch(match)
+		return "\n[... omitted " + parts[1] + " lines / " + parts[2] + " bytes ...]\n"
+	})
 }
 
 func projectFreeResultText(text string, truncated bool) string {
@@ -457,7 +476,7 @@ func projectTerminalCreateDetail(detail string) string {
 }
 
 func projectShellHistoryText(text string, truncated bool) string {
-	body := projectFreeResultText(text, truncated)
+	body := projectOmissionMarker(projectFreeResultText(text, truncated), truncated)
 	prefix := ""
 	const remote = "[注意] 当前会话连接的是远端资产；以下是运行 NexTerm 的本机 shell 历史，不是远端机器的历史。\n"
 	if strings.HasPrefix(body, remote) {
@@ -530,6 +549,7 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "未备份原文件（资产未开启覆盖前备份）", target: "original file not backed up (the asset has not enabled backup before overwrite)"},
 	{source: "已备份原文件为 .nexterm-bak", target: "original file backed up as .nexterm-bak"},
 	{source: "仅显示前 %d 行（查询返回 %d 行）\n", target: "showing only the first %d rows (query returned %d rows)\n"},
+	{source: "[... 已省略 %d 行 / %d 字节 ...]", target: "[... omitted %d lines / %d bytes ...]"},
 	{source: "数据库连接 %s 不存在或已关闭", target: "database connection %s does not exist or is closed"},
 	{source: "参数错误: %w", target: "invalid parameters: %w"},
 	{source: "MySQL 配置无效: %e", target: "invalid MySQL configuration: %e"},
