@@ -57,7 +57,7 @@ func (r *Runner) CompactConversation(ctx context.Context, conversationID string)
 		return CompactResult{}, err
 	}
 	if window == 0 {
-		window = 262144
+		window = defaultContextWindow
 	}
 	handler := newCompactionHandler(chatModel, window, nil)
 	summaryCtx, cancel := context.WithTimeout(executionCtx, handler.summaryCallTimeout())

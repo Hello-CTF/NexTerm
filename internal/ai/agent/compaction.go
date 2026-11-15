@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -25,8 +26,58 @@ func compactionTriggerTokens(window uint64) int {
 	return int(window * compactionTriggerPercent / 100)
 }
 
-func estimateHistoryTokens(messages []*schema.Message) int {
-	return estimatedMessages(messages) / 3
+// defaultContextWindow applies when neither the profile nor the model reports
+// a window. A too-large guess delays compaction until the provider rejects the
+// request, while a too-small one only summarizes earlier, so the guess is the
+// common conservative window rather than the largest one on the market.
+const defaultContextWindow uint64 = 128000
+
+const (
+	// retainedUserBudgetCap bounds the earlier user messages kept verbatim.
+	retainedUserBudgetCap = 20000
+	planStateMarker       = "[Plan State]"
+	loadedSkillsPrefix    = "Loaded skills: "
+)
+
+// estimateContextTokens follows the approach of eino's summarization token
+// counter: the newest assistant message's provider-reported total is the
+// baseline, messages after it and the tool schemas are estimated, and without
+// any reported usage the whole history is estimated at bytes/3.
+func estimateContextTokens(messages []*schema.Message, toolInfos []*schema.ToolInfo) int {
+	base, start := 0, 0
+	for index := len(messages) - 1; index >= 0; index-- {
+		if tokens := reportedTotalTokens(messages[index]); tokens > 0 {
+			base, start = tokens, index+1
+			break
+		}
+	}
+	return base + estimatedMessages(messages[start:])/3 + estimateToolInfoTokens(toolInfos)
+}
+
+func reportedTotalTokens(message *schema.Message) int {
+	if message == nil || message.Role != schema.Assistant || message.ResponseMeta == nil || message.ResponseMeta.Usage == nil {
+		return 0
+	}
+	usage := message.ResponseMeta.Usage
+	if usage.TotalTokens > 0 {
+		return usage.TotalTokens
+	}
+	return max(usage.PromptTokens, 0) + max(usage.CompletionTokens, 0)
+}
+
+func estimateToolInfoTokens(toolInfos []*schema.ToolInfo) int {
+	total := 0
+	for _, info := range toolInfos {
+		if info == nil {
+			continue
+		}
+		copied := *info
+		copied.Extra = nil
+		if encoded, err := json.Marshal(copied); err == nil {
+			total += len(encoded)
+		}
+	}
+	return total / 3
 }
 
 type compactionHandler struct {
@@ -43,6 +94,8 @@ type compactionHandler struct {
 	// model calls fall back to trimming instead of retrying the summary.
 	onSummaryFailed func(error)
 	summaryFailed   atomic.Bool
+	// todos returns the run's current todo list so it survives a summary.
+	todos func() []tools.TodoItem
 }
 
 // failSummary stops summarizing for the rest of the run and reports the
@@ -56,8 +109,8 @@ func (h *compactionHandler) failSummary(err error) {
 	}
 }
 
-func (h *compactionHandler) wantsSummary(messages []*schema.Message) bool {
-	return h.model != nil && !h.summaryFailed.Load() && estimateHistoryTokens(messages) > compactionTriggerTokens(h.window)
+func (h *compactionHandler) wantsSummary(messages []*schema.Message, toolInfos []*schema.ToolInfo) bool {
+	return h.model != nil && !h.summaryFailed.Load() && estimateContextTokens(messages, toolInfos) > compactionTriggerTokens(h.window)
 }
 
 func newCompactionHandler(chatModel model.BaseChatModel, window uint64, onCompact func(), onUsage ...func(*schema.Message, time.Duration) error) *compactionHandler {
@@ -82,7 +135,7 @@ func (h *compactionHandler) generate(ctx context.Context, input []*schema.Messag
 func (h *compactionHandler) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, _ *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
 	messages := state.Messages
 	summarized := false
-	if h.wantsSummary(messages) {
+	if h.wantsSummary(messages, state.ToolInfos) {
 		finalized, _, err := h.summarize(ctx, messages, 0)
 		switch {
 		case err == nil:
@@ -110,7 +163,7 @@ func (h *compactionHandler) BeforeModelRewriteState(ctx context.Context, state *
 }
 
 func (h *compactionHandler) compactHistory(ctx context.Context, messages []*schema.Message) ([]*schema.Message, error) {
-	if h.wantsSummary(messages) {
+	if h.wantsSummary(messages, nil) {
 		finalized, summary, err := h.summarize(ctx, messages, durableCompactionReserve)
 		switch {
 		case err == nil:
@@ -207,6 +260,12 @@ func (h *compactionHandler) mergeSummaries(ctx context.Context, texts []string) 
 func (h *compactionHandler) finalize(system, contextMsgs []*schema.Message, summary string, retainedReserve int) []*schema.Message {
 	summaryMessage := schema.UserMessage("[History Summary]\n" + summary)
 	retained := retainRecentUnit(contextMsgs)
+	earlier := contextMsgs[:len(contextMsgs)-len(retained)]
+	var note []*schema.Message
+	if text := h.planStateNote(contextMsgs); text != "" {
+		note = append(note, schema.UserMessage(text))
+	}
+	userBudget := min(compactionTriggerTokens(h.window)/3, retainedUserBudgetCap) * 3
 	if retainedReserve > 0 {
 		budget := compactionTriggerTokens(h.window)*3 - estimatedMessages(system) - estimatedMessages([]*schema.Message{summaryMessage}) - retainedReserve
 		if budget <= 0 {
@@ -214,12 +273,115 @@ func (h *compactionHandler) finalize(system, contextMsgs []*schema.Message, summ
 		} else {
 			retained = truncateContentsToBudget(retained, budget)
 		}
+		userBudget = min(userBudget, budget-estimatedMessages(retained)-estimatedMessages(note))
 	}
-	result := make([]*schema.Message, 0, len(system)+1+len(retained))
+	kept := retainEarlierUserMessages(earlier, userBudget)
+	result := make([]*schema.Message, 0, len(system)+2+len(kept)+len(retained))
 	result = append(result, system...)
 	result = append(result, summaryMessage)
+	result = append(result, note...)
+	result = append(result, kept...)
 	result = append(result, retained...)
 	return result
+}
+
+// retainEarlierUserMessages keeps the newest earlier user messages whole, in
+// their original order, while they fit the byte budget. Only user messages
+// are kept, so a tool call is never separated from its result. The
+// assistant's own earlier text is covered by the summary.
+func retainEarlierUserMessages(messages []*schema.Message, budget int) []*schema.Message {
+	if budget <= 0 {
+		return nil
+	}
+	var kept []*schema.Message
+	used := 0
+	for index := len(messages) - 1; index >= 0; index-- {
+		message := messages[index]
+		if message.Role != schema.User || isSyntheticUserMessage(message) {
+			continue
+		}
+		size := estimatedMessages([]*schema.Message{message})
+		if size == 0 || used+size > budget {
+			break
+		}
+		used += size
+		kept = append(kept, message)
+	}
+	for left, right := 0, len(kept)-1; left < right; left, right = left+1, right-1 {
+		kept[left], kept[right] = kept[right], kept[left]
+	}
+	return kept
+}
+
+// isSyntheticUserMessage reports messages the runner injects (summaries,
+// environment, plan state), which are regenerated rather than preserved.
+func isSyntheticUserMessage(message *schema.Message) bool {
+	for _, prefix := range []string{"[History Summary]", "[Environment Context]", "[Referenced Content]", "[Available Skills]", planStateMarker} {
+		if strings.HasPrefix(message.Content, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// planStateNote renders the current todo list and loaded skill names so the
+// plan survives the history being replaced by a summary.
+func (h *compactionHandler) planStateNote(history []*schema.Message) string {
+	var todos []tools.TodoItem
+	if h.todos != nil {
+		todos = h.todos()
+	}
+	skills := loadedSkillNames(history)
+	if len(todos) == 0 && len(skills) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	builder.WriteString(planStateMarker + "\nState carried over from the summarized history.\n")
+	if len(todos) > 0 {
+		builder.WriteString("Current todo list:\n")
+		for _, item := range todos {
+			fmt.Fprintf(&builder, "- [%s] %s\n", item.Status, item.Content)
+		}
+	}
+	if len(skills) > 0 {
+		builder.WriteString(loadedSkillsPrefix + strings.Join(skills, ", ") + "\n")
+	}
+	return strings.TrimRight(builder.String(), "\n")
+}
+
+// loadedSkillNames lists skills loaded through load_skill in the history, in
+// first-load order, including those a previous plan-state note carried over.
+func loadedSkillNames(messages []*schema.Message) []string {
+	var names []string
+	seen := map[string]bool{}
+	add := func(name string) {
+		if name = strings.TrimSpace(name); name != "" && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	for _, message := range messages {
+		switch {
+		case message.Role == schema.User && strings.HasPrefix(message.Content, planStateMarker):
+			for _, line := range strings.Split(message.Content, "\n") {
+				if rest, ok := strings.CutPrefix(line, loadedSkillsPrefix); ok {
+					for _, name := range strings.Split(rest, ",") {
+						add(name)
+					}
+				}
+			}
+		case message.Role == schema.Assistant:
+			for _, call := range message.ToolCalls {
+				var args struct {
+					Name string `json:"name"`
+				}
+				if call.Function.Name == "load_skill" && json.Unmarshal([]byte(call.Function.Arguments), &args) == nil {
+					add(args.Name)
+				}
+			}
+		}
+	}
+	return names
 }
 
 func (h *compactionHandler) summaryChunkBytes() int {

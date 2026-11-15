@@ -263,7 +263,7 @@ func (r *Runner) setupEino(current *job, assembleInput bool) error {
 		return err
 	}
 	if contextWindow == 0 {
-		contextWindow = 262144
+		contextWindow = defaultContextWindow
 	}
 	runtime := &einoRuntime{contextWindow: contextWindow, maxTurns: r.maxTurns(current.ctx)}
 	current.eino = runtime
@@ -272,6 +272,7 @@ func (r *Runner) setupEino(current *job, assembleInput bool) error {
 	}, func(message *schema.Message, latency time.Duration) error {
 		return r.emitUsageChannel(current, message, latency, "summary")
 	})
+	compaction.todos = func() []tools.TodoItem { return r.config.Tools.Todos(current.id) }
 	compaction.onSummaryFailed = func(err error) {
 		slog.Warn("AI 历史摘要失败，本轮改为裁剪早期内容", "job", current.id, "error", err)
 		detail := summaryFailedNotice

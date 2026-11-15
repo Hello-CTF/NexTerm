@@ -566,6 +566,8 @@ func TestSummarizeAllRejectsEmptySummary(t *testing.T) {
 	}
 }
 
+// The earlier design kept only the latest user unit; earlier user messages are
+// now retained verbatim after the summary, so the expectation includes them.
 func TestCompactionFinalizeRetainsLatestUnit(t *testing.T) {
 	t.Parallel()
 	handler := newCompactionHandler(nil, 2000, nil)
@@ -578,11 +580,145 @@ func TestCompactionFinalizeRetainsLatestUnit(t *testing.T) {
 	}
 	system, contextMsgs := splitSystemPrefix(original)
 	result := handler.finalize(system, contextMsgs, "摘要：保留关键事实", 0)
-	if len(result) != 4 || result[0].Role != schema.System || result[1].Role != schema.User || result[2].Content != "最近的问题" || result[3].Content != "最近回复" {
+	if len(result) != 5 || result[0].Role != schema.System || result[1].Role != schema.User || result[2].Content != "旧问题" || result[3].Content != "最近的问题" || result[4].Content != "最近回复" {
 		t.Fatalf("unexpected finalized history: %+v", result)
 	}
 	if !strings.Contains(result[1].Content, "[History Summary]") || !strings.Contains(result[1].Content, "摘要：保留关键事实") {
 		t.Fatalf("summary message malformed: %+v", result[1])
+	}
+}
+
+func usageAssistant(text string, total int) *schema.Message {
+	message := schema.AssistantMessage(text, nil)
+	message.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{TotalTokens: total}}
+	return message
+}
+
+func TestContextEstimateFollowsReportedUsage(t *testing.T) {
+	t.Parallel()
+	small := []*schema.Message{schema.UserMessage("q"), usageAssistant("a", 5000), schema.UserMessage(strings.Repeat("x", 300))}
+	if got := estimateContextTokens(small, nil); got != 5000+100 {
+		t.Fatalf("estimate = %d, want reported 5000 plus 100 for the trailing message", got)
+	}
+	unreported := []*schema.Message{schema.UserMessage(strings.Repeat("x", 3000)), schema.AssistantMessage("a", nil)}
+	if got := estimateContextTokens(unreported, nil); got != (3000+1)/3 {
+		t.Fatalf("estimate without usage = %d", got)
+	}
+}
+
+func TestContextEstimateCountsToolSchemas(t *testing.T) {
+	t.Parallel()
+	messages := []*schema.Message{schema.UserMessage("q")}
+	info := &schema.ToolInfo{Name: "big_tool", Desc: strings.Repeat("d", 3000)}
+	if with, without := estimateContextTokens(messages, []*schema.ToolInfo{info}), estimateContextTokens(messages, nil); with-without < 1000 {
+		t.Fatalf("tool schema added %d tokens, want about 1000", with-without)
+	}
+}
+
+func TestWantsSummaryUsesReportedUsageAndToolSchemas(t *testing.T) {
+	t.Parallel()
+	handler := newCompactionHandler(&compactionModel{}, 1000, nil)
+	trigger := compactionTriggerTokens(1000)
+	// Few bytes but the provider reported a full context.
+	reported := []*schema.Message{schema.UserMessage("hi"), usageAssistant("ok", trigger+1), schema.UserMessage("next")}
+	if !handler.wantsSummary(reported, nil) {
+		t.Fatal("reported usage above the trigger did not start a summary")
+	}
+	under := []*schema.Message{schema.UserMessage("hi"), usageAssistant("ok", trigger-100), schema.UserMessage("next")}
+	if handler.wantsSummary(under, nil) {
+		t.Fatal("history under the trigger started a summary")
+	}
+	if !handler.wantsSummary(under, []*schema.ToolInfo{{Name: "t", Desc: strings.Repeat("d", 3*200)}}) {
+		t.Fatal("tool schema size was not counted toward the trigger")
+	}
+}
+
+func TestDefaultContextWindowIsConservative(t *testing.T) {
+	t.Parallel()
+	if defaultContextWindow != 128000 {
+		t.Fatalf("defaultContextWindow = %d", defaultContextWindow)
+	}
+}
+
+func TestFinalizeRetainsEarlierUserMessagesWithinBudgetInOrder(t *testing.T) {
+	t.Parallel()
+	// Window 300 gives a trigger of 210 tokens, so the user budget is 70 tokens (210 bytes).
+	handler := newCompactionHandler(nil, 300, nil)
+	history := []*schema.Message{
+		schema.UserMessage(strings.Repeat("a", 250)),
+		schema.AssistantMessage("", []schema.ToolCall{{ID: "c1", Function: schema.FunctionCall{Name: "exec", Arguments: "{}"}}}),
+		schema.ToolMessage("result", "c1"),
+		schema.UserMessage("older constraint"),
+		schema.AssistantMessage("ok", nil),
+		schema.UserMessage("second constraint"),
+		schema.AssistantMessage("ok", nil),
+		schema.UserMessage("latest"),
+	}
+	result := handler.finalize(nil, history, "S", 0)
+	var users []string
+	for _, message := range result {
+		if message.Role == schema.User {
+			users = append(users, message.Content)
+		}
+		if message.Role == schema.Tool || len(message.ToolCalls) > 0 {
+			t.Fatalf("tool traffic of earlier history leaked: %+v", message)
+		}
+	}
+	want := []string{"[History Summary]\nS", "older constraint", "second constraint", "latest"}
+	if strings.Join(users, "|") != strings.Join(want, "|") {
+		t.Fatalf("users = %q, want %q (oversized oldest message dropped)", users, want)
+	}
+}
+
+func TestFinalizePlanStateTodosAndSkills(t *testing.T) {
+	t.Parallel()
+	history := []*schema.Message{
+		schema.UserMessage("do it"),
+		schema.AssistantMessage("", []schema.ToolCall{{ID: "s1", Function: schema.FunctionCall{Name: "load_skill", Arguments: `{"name":"ops-runbook"}`}}}),
+		schema.ToolMessage("skill body", "s1"),
+		schema.UserMessage("latest"),
+	}
+	handler := newCompactionHandler(nil, 4000, nil)
+	handler.todos = func() []tools.TodoItem {
+		return []tools.TodoItem{{Content: "restart nginx", Status: "in_progress"}}
+	}
+	result := handler.finalize(nil, history, "S", 0)
+	if len(result) < 2 || !strings.HasPrefix(result[1].Content, planStateMarker) {
+		t.Fatalf("plan state not right after the summary: %+v", result)
+	}
+	for _, want := range []string{"- [in_progress] restart nginx", "Loaded skills: ops-runbook"} {
+		if !strings.Contains(result[1].Content, want) {
+			t.Fatalf("plan state missing %q: %s", want, result[1].Content)
+		}
+	}
+	// A second compaction keeps the skill the earlier note carried.
+	again := handler.finalize(nil, append([]*schema.Message{result[1]}, schema.UserMessage("more")), "S2", 0)
+	if !strings.Contains(again[1].Content, "ops-runbook") {
+		t.Fatalf("carried skill lost: %s", again[1].Content)
+	}
+	bare := newCompactionHandler(nil, 4000, nil).finalize(nil, []*schema.Message{schema.UserMessage("a"), schema.UserMessage("b")}, "S", 0)
+	for _, message := range bare {
+		if strings.HasPrefix(message.Content, planStateMarker) {
+			t.Fatalf("plan state present without todos or skills: %+v", bare)
+		}
+	}
+}
+
+func TestMidRunSummaryTriggeredByReportedUsage(t *testing.T) {
+	t.Parallel()
+	chat := &compactionModel{generate: func(context.Context, []*schema.Message) (*schema.Message, error) {
+		return schema.AssistantMessage("summary text", nil), nil
+	}}
+	handler := newCompactionHandler(chat, 2000, nil)
+	state := &adk.ChatModelAgentState{Messages: []*schema.Message{
+		schema.UserMessage("keep me"), usageAssistant("reply", compactionTriggerTokens(2000)+10), schema.UserMessage("go on"),
+	}}
+	_, after, err := handler.BeforeModelRewriteState(context.Background(), state, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after == state || !strings.Contains(after.Messages[0].Content, "summary text") {
+		t.Fatalf("expected a summary-rewritten state: %+v", after.Messages)
 	}
 }
 

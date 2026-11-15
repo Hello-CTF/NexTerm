@@ -120,6 +120,22 @@ func (r *Registry) SkillCatalog(ctx context.Context) ([]SkillSummary, error) {
 	return r.deps.Skills.SkillCatalog(ctx)
 }
 
+// Todos returns the job's current todo list as last written by todo_write.
+func (r *Registry) Todos(jobID string) []TodoItem {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	state := r.jobs[jobID]
+	r.mu.Unlock()
+	if state == nil {
+		return nil
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return append([]TodoItem(nil), state.todos...)
+}
+
 func (r *Registry) acquireOperationFlight(key string) (release func(), acquired bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
