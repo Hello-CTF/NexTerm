@@ -141,7 +141,20 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 		// reports the last complete round instead of a partial one.
 		satisfied := 0
 		if waitContext.Err() == nil {
+			previous := make([]waitTarget, len(targets))
+			for i, target := range targets {
+				previous[i] = *target
+			}
 			satisfied = evaluate(true)
+			if waitContext.Err() != nil {
+				// The deadline cut this round short, so some tabs may carry a
+				// fresh verdict that was never verified as a group: roll back
+				// to the last complete round, including its recorded failures.
+				for i, target := range targets {
+					*target = previous[i]
+				}
+				satisfied = 0
+			}
 		}
 		ready := waitContext.Err() == nil && ((mode == "any" && satisfied > 0) || (mode == "all" && satisfied == len(targets)))
 		if ready {
