@@ -57,8 +57,11 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 	targets := make([]*waitTarget, 0, len(tabIDs))
 	seen := make(map[string]bool, len(tabIDs))
 	for _, requested := range tabIDs {
-		tabID, err := r.resolveReadableTab(waitContext, jobID, scope, requested)
+		tabID, err := r.waitResolveTab(waitContext, jobID, scope, requested)
 		if err != nil {
+			if waitContext.Err() == context.DeadlineExceeded {
+				return r.waitTabsResult(waitContext, targets, mode, false, true)
+			}
 			return Fail(err)
 		}
 		if seen[tabID] {
@@ -70,14 +73,20 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 	for _, target := range targets {
 		screen, err := r.waitSnapshot(waitContext, target.tabID, quietMS > 0)
 		if err != nil {
+			if waitContext.Err() == context.DeadlineExceeded {
+				return r.waitTabsResult(waitContext, targets, mode, false, true)
+			}
 			return Fail(err)
 		}
 		target.cols, target.rows, target.idleMS = screen.Cols, screen.Rows, screen.IdleMS
 		if sinceSeq > 0 {
 			target.fromSeq = sinceSeq
 		} else {
-			_, _, latest, err := r.outputSince(waitContext, target.tabID, 0, 1)
+			_, _, latest, err := r.waitOutputSince(waitContext, target.tabID, 0, 1)
 			if err != nil {
+				if waitContext.Err() == context.DeadlineExceeded {
+					return r.waitTabsResult(waitContext, targets, mode, false, true)
+				}
 				return Fail(err)
 			}
 			target.fromSeq = latest
@@ -102,10 +111,12 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 				if screen, err := r.waitSnapshot(waitContext, target.tabID, true); err == nil {
 					target.idleMS = screen.IdleMS
 					target.idleErr = ""
-				} else {
+				} else if waitContext.Err() == nil {
 					// A failed quiet snapshot must never reuse stale idle to
 					// fake success: the tab goes unsatisfied with the failure
-					// recorded for the timeout output.
+					// recorded for the timeout output. A read cut off by the
+					// wait deadline keeps the last observed state for the
+					// timeout output instead.
 					target.idleMS = -1
 					target.idleErr = "安静快照失败: " + err.Error()
 				}
@@ -122,8 +133,13 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 		return satisfied
 	}
 	for {
-		satisfied := evaluate(true)
-		ready := (mode == "any" && satisfied > 0) || (mode == "all" && satisfied == len(targets))
+		// Past the deadline the reads are cut off, so the timeout output
+		// reports the last complete round instead of a partial one.
+		satisfied := 0
+		if waitContext.Err() == nil {
+			satisfied = evaluate(true)
+		}
+		ready := waitContext.Err() == nil && ((mode == "any" && satisfied > 0) || (mode == "all" && satisfied == len(targets)))
 		if ready {
 			if quietMS > 0 {
 				// The success return and its headline/metadata must come
@@ -181,7 +197,9 @@ func (r *Registry) quietGroupConsistent(waitContext context.Context, targets []*
 	}
 	var previous []TabQuietState
 	for attempt := 0; attempt < 3; attempt++ {
-		current, err := snapshotter.QuietGroupSnapshot(waitContext, tabIDs)
+		current, err := boundedCall(waitContext, func() ([]TabQuietState, error) {
+			return snapshotter.QuietGroupSnapshot(waitContext, tabIDs)
+		})
 		if err != nil {
 			markGroupQuietFailure(targets, "组快照读取失败: "+err.Error())
 			return nil, false, true
@@ -288,9 +306,11 @@ func applyGroupQuietStates(targets []*waitTarget, states []TabQuietState, quietM
 // after its anchor, counting newly rendered lines and matching the pattern
 // against the new output only.
 func (r *Registry) scanWaitTarget(waitContext context.Context, target *waitTarget, regex *regexp.Regexp, lines int) {
-	data, start, latest, err := r.outputSince(waitContext, target.tabID, target.scanPos, waitScanBytes)
+	data, start, latest, err := r.waitOutputSince(waitContext, target.tabID, target.scanPos, waitScanBytes)
 	if err != nil {
-		target.note = "输出读取失败: " + err.Error()
+		if waitContext.Err() == nil {
+			target.note = "输出读取失败: " + err.Error()
+		}
 		return
 	}
 	if start > target.scanPos && target.note == "" {
@@ -306,7 +326,7 @@ func (r *Registry) scanWaitTarget(waitContext context.Context, target *waitTarge
 			target.newLines += fresh
 		}
 	}
-	if regex != nil && regex.MatchString(strings.Join(rendered, "\n")) {
+	if regex != nil && MatchWaitLines(regex, rendered) {
 		target.patternMatched = true
 	}
 	if lines > 0 && target.newLines >= lines {

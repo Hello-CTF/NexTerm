@@ -985,15 +985,21 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 	if _, ok := r.deps.Terminal.(PasteLiteralTerminal); ok {
 		literalGuarded = true
 	}
+	// The write phase is bounded so a terminal that stops accepting input
+	// (a stalled channel or a write gate held behind one) fails this call
+	// instead of hanging the run; the submit delay is added on top.
+	writeBudget := sendKeysWriteTimeout
+	if args.Paste && args.Enter {
+		writeBudget += sendKeysSubmitDelay(args)
+	}
+	writeCtx, cancelWrite := context.WithTimeout(ctx, writeBudget)
+	defer cancelWrite()
 	if args.Paste {
-		delay := time.Duration(defaultSubmitDelayMS) * time.Millisecond
-		if args.SubmitDelayMS > 0 {
-			delay = time.Duration(args.SubmitDelayMS) * time.Millisecond
-		}
+		delay := sendKeysSubmitDelay(args)
 		if submitter, ok := r.deps.Terminal.(PasteSubmitTerminal); ok {
 			// The same-lock implementer owns the in-lock literal-newline guard.
 			literalGuarded = true
-			err = submitter.WritePasteSubmit(ctx, tabID, args.Keys, args.Enter, delay)
+			err = submitter.WritePasteSubmit(writeCtx, tabID, args.Keys, args.Enter, delay)
 			if err != nil && args.Enter && !errors.Is(err, session.ErrPasteGuarded) && !errors.Is(err, session.ErrUnsupported) && !errors.Is(err, session.ErrTabNotFound) {
 				// The paste block may already be written while the Enter
 				// never left — a write failure, a mode flip, a close, or a
@@ -1004,10 +1010,13 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 			}
 		} else {
 			sameLockSubmit = false
-			err = r.writePasteSplit(ctx, tabID, args.Keys, args.Enter, delay)
+			err = r.writePasteSplit(writeCtx, tabID, args.Keys, args.Enter, delay)
 		}
 	} else {
-		err = r.deps.Terminal.Write(ctx, tabID, encoded)
+		err = r.deps.Terminal.Write(writeCtx, tabID, encoded)
+	}
+	if err != nil && ctx.Err() == nil && errors.Is(writeCtx.Err(), context.DeadlineExceeded) {
+		err = fmt.Errorf("发送按键超时：%s 内终端未接受输入，终端可能无响应；按键可能稍后仍会送达，请先读取屏幕确认再决定是否重试: %w", writeBudget, err)
 	}
 	if err != nil {
 		// The write was initiated: its outcome is uncertain, so the failure
@@ -1537,6 +1546,17 @@ func (r *Registry) terminalRename(ctx context.Context, jobID string, scope Scope
 	return OK(fmt.Sprintf("已将终端标签页 %s 重命名为「%s」", tabID, args.Title))
 }
 
+// sendKeysWriteTimeout bounds the write phase of one send_keys call (gate
+// wait plus channel write).
+var sendKeysWriteTimeout = 20 * time.Second
+
+func sendKeysSubmitDelay(args sendKeysArgs) time.Duration {
+	if args.SubmitDelayMS > 0 {
+		return time.Duration(args.SubmitDelayMS) * time.Millisecond
+	}
+	return time.Duration(defaultSubmitDelayMS) * time.Millisecond
+}
+
 const (
 	maxSendKeysWaitMS = 10_000
 	busyReturnGraceMS = 1_500
@@ -1691,10 +1711,14 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 	if args.Pattern != nil {
 		pattern = *args.Pattern
 	}
-	regex, err := regexp.Compile(pattern)
+	regex, err := CompileWaitPattern(pattern)
 	if err != nil {
 		return Fail(invalid("正则无效: %v", err))
 	}
+	// Every step, tab resolution included, runs under the wait deadline so
+	// the call always ends with its structured outcome within timeout_ms.
+	waitContext, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
+	defer cancel()
 	if args.Lines > 0 || len(args.TabIDs) > 1 {
 		mode := args.Mode
 		if mode == "" {
@@ -1704,16 +1728,17 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 		if len(tabIDs) == 0 {
 			tabIDs = []string{args.TabID}
 		}
-		waitContext, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
-		defer cancel()
 		var matcher *regexp.Regexp
 		if pattern != "" {
 			matcher = regex
 		}
 		return r.waitForTabs(waitContext, jobID, scope, tabIDs, matcher, pattern, args.Lines, args.QuietMS, mode, args.SinceSeq)
 	}
-	tabID, err := r.resolveReadableTab(ctx, jobID, scope, args.TabID)
+	tabID, err := r.waitResolveTab(waitContext, jobID, scope, args.TabID)
 	if err != nil {
+		if waitContext.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+			return legacyWaitTimeoutOutput(args.TabID, nil, Screen{})
+		}
 		return Fail(err)
 	}
 	if args.QuietMS > 0 {
@@ -1721,21 +1746,21 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 			return Fail(errors.New("该终端不支持同步安静快照"))
 		}
 	}
-	waitContext, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
-	defer cancel()
 	if args.SinceSeq > 0 {
-		return r.waitForNewOutput(waitContext, tabID, regex, args.SinceSeq, args.QuietMS)
+		return r.waitForNewOutput(waitContext, tabID, regex, pattern, args.SinceSeq, args.QuietMS)
 	}
 	ticker := time.NewTicker(r.deps.pollInterval())
 	defer ticker.Stop()
+	var lastTail []string
+	var lastScreen Screen
 	for {
 		screen, snapshotErr := r.waitSnapshot(waitContext, tabID, args.QuietMS > 0)
 		if snapshotErr != nil {
 			// The wait budget exhausted mid-snapshot is the wait's own
-			// timeout: surface the structured timeout output, not a raw
-			// context error.
+			// timeout: surface the structured timeout output with the last
+			// observed screen, not a raw context error.
 			if waitContext.Err() == context.DeadlineExceeded && ctx.Err() == nil {
-				return legacyWaitTimeoutOutput(tabID, nil, Screen{})
+				return legacyWaitTimeoutOutput(tabID, lastTail, lastScreen)
 			}
 			return Fail(snapshotErr)
 		}
@@ -1746,7 +1771,8 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 		if len(tail) > 30 {
 			tail = tail[len(tail)-30:]
 		}
-		if regex.MatchString(strings.Join(tail, "\n")) && (args.QuietMS == 0 || screen.IdleMS >= args.QuietMS) {
+		lastTail, lastScreen = tail, screen
+		if MatchWaitLines(regex, tail) && (args.QuietMS == 0 || screen.IdleMS >= args.QuietMS) {
 			output := OK(waitSatisfiedText(pattern, screen.IdleMS, args.QuietMS))
 			output.Wait = &WaitOutcome{Mode: "single", Satisfied: true, Tabs: []WaitTabOutcome{{
 				TabID: tabID, Matched: true, IdleMS: screen.IdleMS, ToSeq: screen.Seq, Note: "匹配自可见屏幕尾部，无输出锚点",
@@ -1784,11 +1810,35 @@ func waitSatisfiedText(pattern string, idleMS, quietMS int64) string {
 	return fmt.Sprintf("模式已出现，终端已安静 %dms（要求 %dms）", idleMS, quietMS)
 }
 
+// waitSnapshot reads the wait target's screen, bounded by ctx even when the
+// terminal read itself blocks.
 func (r *Registry) waitSnapshot(ctx context.Context, tabID string, synchronized bool) (Screen, error) {
-	if synchronized {
-		return r.deps.Terminal.(WaitSnapshotTerminal).WaitSnapshot(ctx, tabID)
+	return boundedCall(ctx, func() (Screen, error) {
+		if synchronized {
+			return r.deps.Terminal.(WaitSnapshotTerminal).WaitSnapshot(ctx, tabID)
+		}
+		return r.deps.Terminal.Snapshot(ctx, tabID)
+	})
+}
+
+// waitOutputSince reads output after seq for a wait, bounded by ctx.
+func (r *Registry) waitOutputSince(ctx context.Context, tabID string, seq uint64, maxBytes int) ([]byte, uint64, uint64, error) {
+	type page struct {
+		data          []byte
+		start, latest uint64
 	}
-	return r.deps.Terminal.Snapshot(ctx, tabID)
+	result, err := boundedCall(ctx, func() (page, error) {
+		data, start, latest, err := r.outputSince(ctx, tabID, seq, maxBytes)
+		return page{data: data, start: start, latest: latest}, err
+	})
+	return result.data, result.start, result.latest, err
+}
+
+// waitResolveTab resolves a wait target, bounded by ctx.
+func (r *Registry) waitResolveTab(ctx context.Context, jobID string, scope Scope, requested string) (string, error) {
+	return boundedCall(ctx, func() (string, error) {
+		return r.resolveReadableTab(ctx, jobID, scope, requested)
+	})
 }
 
 // waitForNewOutput matches only output produced after the anchor sequence, so
@@ -1796,7 +1846,7 @@ func (r *Registry) waitSnapshot(ctx context.Context, tabID string, synchronized 
 // advances through the new output in bounded windows, carrying an overlap so
 // patterns spanning a window seam still match; every byte after the anchor is
 // scanned at least once (evicted bytes are flagged in the timeout output).
-func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, regex *regexp.Regexp, sinceSeq uint64, quietMS int64) Output {
+func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, regex *regexp.Regexp, pattern string, sinceSeq uint64, quietMS int64) Output {
 	cols, rows := 80, 24
 	if screen, err := r.waitSnapshot(waitContext, tabID, quietMS > 0); err == nil {
 		cols, rows = screen.Cols, screen.Rows
@@ -1810,9 +1860,12 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 	matched := false
 	toSeq := sinceSeq
 	for {
-		data, start, latest, err := r.outputSince(waitContext, tabID, scanPos, waitScanBytes)
+		data, start, latest, err := r.waitOutputSince(waitContext, tabID, scanPos, waitScanBytes)
 		if err != nil {
-			return Fail(err)
+			if waitContext.Err() != context.DeadlineExceeded {
+				return Fail(err)
+			}
+			data, start, latest = nil, scanPos, toSeq
 		}
 		toSeq = latest
 		if start > scanPos {
@@ -1820,7 +1873,7 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 		}
 		window := append(carry, data...)
 		rendered := renderOutputDiff(window, cols, rows)
-		matched = matched || regex.MatchString(strings.Join(rendered, "\n"))
+		matched = matched || MatchWaitLines(regex, rendered)
 		if matched && quietMS == 0 {
 			output := OK(fmt.Sprintf("模式已出现（新输出，屏幕序号 %d）", latest))
 			output.Wait = &WaitOutcome{Mode: "single", Satisfied: true, Tabs: []WaitTabOutcome{{
@@ -1830,11 +1883,11 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 		}
 		if matched && quietMS > 0 {
 			screen, snapshotErr := r.waitSnapshot(waitContext, tabID, quietMS > 0)
-			if snapshotErr != nil {
+			if snapshotErr != nil && waitContext.Err() != context.DeadlineExceeded {
 				return Fail(snapshotErr)
 			}
-			if screen.IdleMS >= quietMS {
-				output := OK(fmt.Sprintf("%s（新输出，屏幕序号 %d）", waitSatisfiedText(regex.String(), screen.IdleMS, quietMS), latest))
+			if snapshotErr == nil && screen.IdleMS >= quietMS {
+				output := OK(fmt.Sprintf("%s（新输出，屏幕序号 %d）", waitSatisfiedText(pattern, screen.IdleMS, quietMS), latest))
 				output.Wait = &WaitOutcome{Mode: "single", Satisfied: true, Tabs: []WaitTabOutcome{{
 					TabID: tabID, Matched: true, IdleMS: screen.IdleMS, FromSeq: sinceSeq, ToSeq: latest,
 				}}}

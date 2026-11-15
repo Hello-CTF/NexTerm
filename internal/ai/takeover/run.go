@@ -551,7 +551,7 @@ func (e *actionExecution) tools() ([]tool.BaseTool, error) {
 	if err != nil {
 		return nil, err
 	}
-	waitFor, err := utils.InferTool("wait_for", "Wait for the terminal's recent output to match a regex.", func(ctx context.Context, input takeoverWaitForArgs) (tools.Output, error) {
+	waitFor, err := utils.InferTool("wait_for", "Wait for the terminal's recent output to match a regex; ^ and $ match at line boundaries.", func(ctx context.Context, input takeoverWaitForArgs) (tools.Output, error) {
 		return tools.Guarded(ctx, "wait_for", func() (tools.Output, error) {
 			output, err := e.manager.waitFor(ctx, e.state.args.TabID, input.Pattern, input.TimeoutMS)
 			return output, err

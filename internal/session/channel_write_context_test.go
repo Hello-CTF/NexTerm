@@ -55,22 +55,16 @@ func TestManagerWriteContextCancelsInFlightWrite(t *testing.T) {
 	}
 }
 
-// Channels without the context-write capability keep the plain blocking
-// behavior: an in-flight write is not aborted by context cancellation.
-func TestManagerWriteWithoutContextCapabilityKeepsBlockingBehavior(t *testing.T) {
+// Channels without the context-write capability cannot abort a blocked
+// Write, but the caller stops waiting for it when its context ends; the
+// abandoned write still delivers its bytes once the transport recovers.
+func TestManagerWriteWithoutContextCapabilityStopsWaitingOnCancel(t *testing.T) {
 	manager, connector, _, session := openTestSession(t, KindSSH)
 	tab := openTestTab(t, manager, session, "client-a", "a-1")
 	channel := connector.transport(0).channel(0)
 	started := make(chan struct{})
 	release := make(chan struct{})
-	channel.writeHook = func(data []byte) (int, error) {
-		close(started)
-		<-release
-		channel.mu.Lock()
-		channel.input = append(channel.input, data...)
-		channel.mu.Unlock()
-		return len(data), nil
-	}
+	stallFirstWrite(channel, started, release)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
@@ -84,15 +78,21 @@ func TestManagerWriteWithoutContextCapabilityKeepsBlockingBehavior(t *testing.T)
 	cancel()
 	select {
 	case err := <-done:
-		t.Fatalf("Write returned %v while the transport was still blocked; capability-less channels must keep the blocking behavior", err)
-	case <-time.After(100 * time.Millisecond):
+		if !errors.Is(err, ErrWriteStalled) || !errors.Is(err, context.Canceled) {
+			t.Fatalf("Write = %v, want ErrWriteStalled wrapping context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Write kept waiting for a blocked transport write after its context ended")
+	}
+	if writeGateHeld(tab) {
+		t.Fatal("tab write gate still held after the caller gave up")
 	}
 	close(release)
-	if err := <-done; err != nil {
-		t.Fatalf("Write = %v", err)
+	if err := manager.Write(context.Background(), tab.ID, tab.Info().SizeOwner, []byte("next")); err != nil {
+		t.Fatalf("Write after recovery = %v", err)
 	}
-	if got := string(channel.written()); got != "data" {
-		t.Fatalf("written = %q, want %q", got, "data")
+	if got := string(channel.written()); got != "datanext" {
+		t.Fatalf("written = %q, want %q", got, "datanext")
 	}
 }
 

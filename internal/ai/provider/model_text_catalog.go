@@ -568,6 +568,8 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "已发送（屏幕序号 %d）", target: "sent (screen sequence %d)"},
 	{source: "已发送（屏幕序号 %d）；该终端不支持 OSC 133 命令跟踪，无法确认命令是否完成，请用 wait_for 校验新输出", target: "sent (screen sequence %d); this terminal does not support OSC 133 command tracking, so command completion cannot be confirmed; use wait_for to verify new output"},
 	{source: "模式已出现（新输出，屏幕序号 %d）", target: "pattern appeared (new output, screen sequence %d)"},
+	{source: "发送按键超时：%s 内终端未接受输入，终端可能无响应；按键可能稍后仍会送达，请先读取屏幕确认再决定是否重试: %w", target: "sending keys timed out: the terminal accepted no input within %s and may be unresponsive; the keys may still be delivered later, so read the screen before deciding whether to retry: %w"},
+	{source: "工具 %s 执行超过 %s 仍未返回，已停止等待；操作可能仍在后台进行，结果未知，请先读取状态确认再决定是否重试", target: "tool %s did not return within %s, so it is no longer awaited; the operation may still be running in the background and its result is unknown, so check the state before deciding whether to retry"},
 	{source: "等待超时，锚点 %d 之后的新输出", target: "wait timed out, new output after anchor %d"},
 	{source: "已将终端标签页 %s 重命名为「%s」", target: "renamed terminal tab %s to \"%s\""},
 	{source: "已在后台创建分离终端（%s），AI 可在其中工作，用户可在「后台会话」中接管", target: "created detached terminal in the background (%s); AI can work in it, and the user can take over in 「后台会话」"},

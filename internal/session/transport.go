@@ -40,6 +40,13 @@ type channelHandle struct {
 	mu       sync.Mutex
 	complete bool
 	err      error
+
+	// writeMu guards writing, which is non-nil while a plain blocking
+	// channel write runs and is closed when it returns. A caller that gave
+	// up on a stalled write leaves it running, and later writes wait on it
+	// so their bytes never interleave with its unsent remainder.
+	writeMu sync.Mutex
+	writing chan struct{}
 }
 
 func newChannelHandle(channel base.Channel) *channelHandle {

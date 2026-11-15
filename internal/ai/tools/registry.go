@@ -1134,7 +1134,7 @@ func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, c
 	case "operation_result":
 		return r.operationResult(ctx, scope, call.Args)
 	case "wait_for":
-		return r.waitFor(ctx, jobID, scope, call.Args, 120)
+		return r.waitFor(ctx, jobID, scope, call.Args, int(waitForMaxTimeout/time.Second))
 	case "shell_history":
 		return r.shellHistory(ctx, scope, call.Args)
 	case "docker_ps":

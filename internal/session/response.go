@@ -4,7 +4,12 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 )
+
+// responseWriteTimeout bounds one automatic terminal reply, including the
+// wait for the tab write gate.
+const responseWriteTimeout = 10 * time.Second
 
 type terminalResponse struct {
 	generation uint64
@@ -78,12 +83,17 @@ func (m *Manager) startResponses(tab *Tab) bool {
 				current := !tab.closed && tab.generation == item.generation
 				tab.mu.Unlock()
 				if current && channel != nil {
-					release, err := tab.acquireWrite(context.Background())
-					if err != nil {
-						continue
+					// A reply the terminal cannot take within the bound is
+					// dropped rather than holding the write gate on a
+					// stalled channel; the querying program has given up
+					// on it by then.
+					ctx, cancel := context.WithTimeout(tab.ctx, responseWriteTimeout)
+					release, err := tab.acquireWrite(ctx)
+					if err == nil {
+						_ = writeChannelContext(ctx, channel, item.data)
+						release()
 					}
-					_ = writeChannelContext(tab.ctx, channel, item.data)
-					release()
+					cancel()
 				}
 				continue
 			}
