@@ -15,6 +15,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
 	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
@@ -668,6 +669,11 @@ func (r *Runner) complete(current *job, answer string, turns int, total usage.Us
 		terminal, _ := r.hitl.FinishError(current.id, terminalErr)
 		if terminal.Reason == hitl.TerminalCanceled && !isCancellation(terminalErr) {
 			terminalErr = errors.Join(context.Canceled, terminalErr)
+		}
+		if terminalErr != nil && !isCancellation(terminalErr) {
+			status, _ := provider.ErrorDetail(terminalErr)
+			slog.Warn("ai run failed", "job", current.id, "class", string(provider.ClassifyError(terminalErr)),
+				"status", status, "error", tools.RedactText(terminalErr.Error()))
 		}
 		var statusErr error
 		if err := current.finish(answer, turns, total, terminalErr, func() {

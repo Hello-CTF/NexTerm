@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
@@ -222,15 +223,28 @@ func terminalErrorMessage(err error) string {
 	}
 	switch provider.ClassifyError(err) {
 	case provider.ErrorClassRateLimit:
-		return "AI 服务请求过于频繁，请稍后重试"
+		return withProviderDetail("AI 服务请求过于频繁，请稍后重试", err)
 	case provider.ErrorClassServer:
-		return "AI 服务暂时不可用（服务端错误），请稍后重试"
+		return withProviderDetail("AI 服务暂时不可用（服务端错误），请稍后重试", err)
 	case provider.ErrorClassClient:
-		return "AI 服务拒绝了请求，请检查模型档案中的密钥与模型配置"
+		return withProviderDetail("AI 服务拒绝了请求，请检查模型档案中的密钥与模型配置", err)
 	case provider.ErrorClassTransport:
 		return "无法连接 AI 服务，请检查网络或代理设置后重试"
 	case provider.ErrorClassProtocol:
 		return "AI 服务返回了无法解析的响应，请稍后重试或更换模型"
 	}
-	return err.Error()
+	return tools.RedactText(err.Error())
+}
+
+// withProviderDetail keeps the actionable summary and adds the HTTP status and the provider's own explanation, so a
+// rejected request (an invalid model name, a malformed history) can be told apart from a bad key.
+func withProviderDetail(summary string, err error) string {
+	status, detail := provider.ErrorDetail(err)
+	if status == 0 {
+		return summary
+	}
+	if detail == "" {
+		return fmt.Sprintf("%s（服务端返回 HTTP %d）", summary, status)
+	}
+	return fmt.Sprintf("%s（服务端返回 HTTP %d：%s）", summary, status, tools.RedactText(detail))
 }

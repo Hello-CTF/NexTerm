@@ -98,6 +98,41 @@ func statusCodeForError(err error) (int, bool) {
 	}
 }
 
+// ErrorDetail returns the HTTP status of a provider error and the provider's own explanation, trimmed to one short
+// line. The message is the provider's text as received; callers redact it before showing or logging it.
+func ErrorDetail(err error) (int, string) {
+	status, ok := statusCodeForError(err)
+	if !ok {
+		return 0, ""
+	}
+	var (
+		httpErr      *HTTPError
+		componentErr *einoopenai.APIError
+		sdkErr       *sdkopenai.APIError
+		requestErr   *sdkopenai.RequestError
+		statusErr    *statusError
+		message      string
+	)
+	switch {
+	case errors.As(err, &httpErr):
+		message = httpErr.Body
+	case errors.As(err, &componentErr):
+		message = componentErr.Message
+	case errors.As(err, &sdkErr):
+		message = sdkErr.Message
+	case errors.As(err, &requestErr):
+		message = string(requestErr.Body)
+		if strings.TrimSpace(message) == "" && requestErr.Err != nil {
+			message = requestErr.Err.Error()
+		}
+	case errors.As(err, &statusErr):
+		if statusErr.err != nil {
+			message = statusErr.err.Error()
+		}
+	}
+	return status, truncate(strings.Join(strings.Fields(message), " "), 300)
+}
+
 const maxRetryAfterDelay = 30 * time.Second
 
 type RetryPolicy struct {

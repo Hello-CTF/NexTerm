@@ -195,6 +195,15 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 	return messages
 }
 
+func interruptedToolResult(callID string) *schema.Message {
+	envelope, _ := json.Marshal(tools.Output{
+		OK:        false,
+		Text:      "工具调用未完成：本轮在返回结果前已中断，操作可能已执行，也可能未执行",
+		ModelText: "Tool call did not complete: the run was interrupted before a result came back. The action may or may not have taken effect; check the current state before relying on it.",
+	})
+	return schema.ToolMessage(string(envelope), callID)
+}
+
 func repairHistory(messages []*schema.Message) ([]*schema.Message, int, int) {
 	orphanResults := 0
 	unansweredCalls := 0
@@ -231,21 +240,17 @@ func repairHistory(messages []*schema.Message) ([]*schema.Message, int, int) {
 			}
 			answered[candidate.ToolCallID] = candidate
 		}
-		remaining := make([]schema.ToolCall, 0, len(answered))
-		for _, call := range message.ToolCalls {
-			if _, ok := answered[call.ID]; ok {
-				remaining = append(remaining, call)
-			}
-		}
-		unansweredCalls += len(message.ToolCalls) - len(remaining)
-		if len(remaining) != len(message.ToolCalls) {
-			cloned := *message
-			cloned.ToolCalls = remaining
-			message = &cloned
-		}
+		// A call left without a result (the run was canceled or failed mid-tool) is answered with an
+		// interrupted result. Dropping it instead would leave an assistant message with neither content nor
+		// tool calls, which providers reject, and would hide that the action may already have taken effect.
 		repaired = append(repaired, message)
-		for _, call := range remaining {
-			repaired = append(repaired, answered[call.ID])
+		for _, call := range message.ToolCalls {
+			if result, ok := answered[call.ID]; ok {
+				repaired = append(repaired, result)
+				continue
+			}
+			unansweredCalls++
+			repaired = append(repaired, interruptedToolResult(call.ID))
 		}
 		index = end
 	}
