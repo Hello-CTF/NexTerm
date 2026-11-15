@@ -17,6 +17,7 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/compact"
 	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
 )
@@ -365,7 +366,12 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 	}
 	instruction := strings.TrimSpace(strings.Join([]string{m.config.Instruction, request.Persona}, "\n"))
 	toolsConfig := compose.ToolsNodeConfig{Tools: tools, ExecuteSequentially: true}
-	var handlers []adk.ChatModelAgentMiddleware
+	// The tool filter and the context budget run before the safety guard,
+	// which stays last so it wraps tool calls innermost.
+	handlers := []adk.ChatModelAgentMiddleware{
+		&toolFilterHandler{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, allowed: allowed},
+		compact.NewBudgetHandler(m.config.ContextWindow),
+	}
 	if m.config.ToolSafety != nil {
 		names := make([]string, 0, len(allowed))
 		for name := range allowed {
@@ -383,16 +389,6 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 		MaxIterations: m.config.MaxIterations,
 		ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: toolsConfig},
 		Handlers:      handlers,
-		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(_ context.Context, state *adk.ChatModelAgentState) error {
-			visible := make([]*schema.ToolInfo, 0, len(allowed))
-			for _, info := range state.ToolInfos {
-				if _, ok := allowed[info.Name]; ok {
-					visible = append(visible, info)
-				}
-			}
-			state.ToolInfos = visible
-			return nil
-		}}},
 	})
 	if err != nil {
 		return "", 0, usage.Usage{}, err
@@ -519,6 +515,24 @@ func (m *Manager) modelFor(current *task, request Request) (model.BaseChatModel,
 		return m.config.NewModelForProfile(current.ctx, request.ModelProfileID)
 	}
 	return m.config.NewModel(current.ctx)
+}
+
+// toolFilterHandler hides tools outside the task's allowed set from the model.
+type toolFilterHandler struct {
+	*adk.BaseChatModelAgentMiddleware
+	allowed map[string]struct{}
+}
+
+func (h *toolFilterHandler) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, _ *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	visible := make([]*schema.ToolInfo, 0, len(h.allowed))
+	for _, info := range state.ToolInfos {
+		if _, ok := h.allowed[info.Name]; ok {
+			visible = append(visible, info)
+		}
+	}
+	next := *state
+	next.ToolInfos = visible
+	return ctx, &next, nil
 }
 
 func (t *task) emit(event Event) {

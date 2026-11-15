@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -283,19 +284,7 @@ func (m *Manager) initializeEino(state *runState) error {
 		Instruction: "Act on the fresh terminal screen provided before each model call; do not repeat stale screens back.",
 		Model:       chatModel, MaxIterations: state.args.MaxSteps,
 		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true, UnknownToolsHandler: unknownTool}, ReturnDirectly: map[string]bool{"done": true}},
-		Handlers:    []adk.ChatModelAgentMiddleware{toolSafety},
-		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(ctx context.Context, agentState *adk.ChatModelAgentState) error {
-			m.waitIdle(ctx, state.args.TabID)
-			screen, err := m.deps.Snapshot(ctx, state.args.TabID)
-			if err != nil {
-				return err
-			}
-			if err := state.emit(ctx, agent.Event{Type: "screen", TabID: state.args.TabID, Text: screen.Text}); err != nil {
-				return err
-			}
-			agentState.Messages = append(agentState.Messages, schema.UserMessage(fmt.Sprintf("[Current Terminal]\nCursor (%d,%d), idle %dms\n%s", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Text)))
-			return nil
-		}}},
+		Handlers:    []adk.ChatModelAgentMiddleware{&screenHandler{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, manager: m, state: state}, toolSafety},
 	})
 	if err != nil {
 		return err
@@ -303,6 +292,38 @@ func (m *Manager) initializeEino(state *runState) error {
 	runtime.runner = adk.NewRunner(state.ctx, adk.RunnerConfig{Agent: chatAgent, EnableStreaming: true, CheckPointStore: m.checkpoints})
 	state.eino = runtime
 	return nil
+}
+
+const screenMarker = "[Current Terminal]"
+
+// screenHandler puts the fresh terminal screen in front of each model call.
+// It replaces the previous screen message so checkpointed state keeps exactly
+// one, the latest.
+type screenHandler struct {
+	*adk.BaseChatModelAgentMiddleware
+	manager *Manager
+	state   *runState
+}
+
+func (h *screenHandler) BeforeModelRewriteState(ctx context.Context, agentState *adk.ChatModelAgentState, _ *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	h.manager.waitIdle(ctx, h.state.args.TabID)
+	screen, err := h.manager.deps.Snapshot(ctx, h.state.args.TabID)
+	if err != nil {
+		return ctx, nil, err
+	}
+	if err := h.state.emit(ctx, agent.Event{Type: "screen", TabID: h.state.args.TabID, Text: screen.Text}); err != nil {
+		return ctx, nil, err
+	}
+	next := *agentState
+	next.Messages = make([]*schema.Message, 0, len(agentState.Messages)+1)
+	for _, message := range agentState.Messages {
+		if message.Role == schema.User && strings.HasPrefix(message.Content, screenMarker+"\n") {
+			continue
+		}
+		next.Messages = append(next.Messages, message)
+	}
+	next.Messages = append(next.Messages, schema.UserMessage(fmt.Sprintf(screenMarker+"\nCursor (%d,%d), idle %dms\n%s", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Text)))
+	return ctx, &next, nil
 }
 
 func (m *Manager) consume(iterCtx context.Context, state *runState, iterator *adk.AsyncIterator[*adk.AgentEvent]) runResult {

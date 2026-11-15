@@ -87,12 +87,14 @@ type Config struct {
 	ResolveDefaultProfileID func() string
 	Instruction             string
 	MaxIterations           int
-	MaxRunTime              time.Duration
-	MaxTasks                int
-	MaxConcurrent           int
-	MaxOutputBytes          int
-	MaxHistoryMessages      int
-	MaxHistoryBytes         int
+	// ContextWindow bounds the model input in tokens; zero uses the shared default.
+	ContextWindow      uint64
+	MaxRunTime         time.Duration
+	MaxTasks           int
+	MaxConcurrent      int
+	MaxOutputBytes     int
+	MaxHistoryMessages int
+	MaxHistoryBytes    int
 }
 
 type Scope struct {

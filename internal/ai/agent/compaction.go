@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/compact"
 	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/cloudwego/eino/adk"
@@ -30,7 +31,7 @@ func compactionTriggerTokens(window uint64) int {
 // a window. A too-large guess delays compaction until the provider rejects the
 // request, while a too-small one only summarizes earlier, so the guess is the
 // common conservative window rather than the largest one on the market.
-const defaultContextWindow uint64 = 128000
+const defaultContextWindow = compact.DefaultContextWindow
 
 const (
 	// retainedUserBudgetCap bounds the earlier user messages kept verbatim.
