@@ -584,7 +584,7 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 				return runtime.failure(err)
 			}
 			if len(message.ToolCalls) > 0 {
-				if err := r.persistToolCallRows(current.ctx, current, message.Content, message.ToolCalls); err != nil {
+				if err := r.persistToolCallRows(current.ctx, current, message.Content, message.ReasoningContent, message.ToolCalls); err != nil {
 					if ctxErr := current.ctx.Err(); ctxErr != nil {
 						return runtime.failure(ctxErr)
 					}

@@ -213,7 +213,7 @@ func TestPersistToolRowsTruncatesAndStripsRuntimeFields(t *testing.T) {
 	}
 	runner := &Runner{store: storage}
 	current := &job{id: "job-1", args: ChatArgs{ConversationID: conversation.ID, PlanMode: true}}
-	if err := runner.persistToolCallRows(context.Background(), current, "", []schema.ToolCall{namedToolCall("call-1", "exec_commands", `{"commands":["ls"]}`)}); err != nil {
+	if err := runner.persistToolCallRows(context.Background(), current, "", "", []schema.ToolCall{namedToolCall("call-1", "exec_commands", `{"commands":["ls"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	huge := strings.Repeat("输出", 40<<10)
@@ -346,7 +346,7 @@ func TestToolResultModelTextCompatibility(t *testing.T) {
 		}
 		runner := &Runner{store: storage}
 		current := &job{id: "job-1", args: ChatArgs{ConversationID: conversation.ID}}
-		if err := runner.persistToolCallRows(context.Background(), current, "", []schema.ToolCall{namedToolCall("call-1", "db_list_tables", `{}`)}); err != nil {
+		if err := runner.persistToolCallRows(context.Background(), current, "", "", []schema.ToolCall{namedToolCall("call-1", "db_list_tables", `{}`)}); err != nil {
 			t.Fatal(err)
 		}
 		result := tools.Output{OK: true, Text: "无表", ModelText: "no tables"}

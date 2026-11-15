@@ -41,15 +41,22 @@ type historyRow struct {
 	Before    string          `json:"before"`
 	After     string          `json:"after"`
 	Plan      string          `json:"plan"`
+	// Reasoning is the model reasoning of a tool-call turn. Providers such as
+	// DeepSeek reject tool-call history that omits it.
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 // persistToolCallRows saves one assistant turn's tool calls. Text the model
 // wrote alongside the calls is saved first as an interim assistant row, and
 // rebuildHistory joins it with the calls into one assistant message.
-func (r *Runner) persistToolCallRows(ctx context.Context, current *job, text string, calls []schema.ToolCall) error {
+func (r *Runner) persistToolCallRows(ctx context.Context, current *job, text, reasoning string, calls []schema.ToolCall) error {
 	conversationID, jobID := current.args.ConversationID, current.id
 	if text != "" {
 		interim := map[string]any{"role": "assistant", "content": text, "jobId": jobID, "interim": true}
+		if reasoning != "" {
+			interim["reasoning"] = reasoning
+			reasoning = ""
+		}
 		if err := r.store.MsgInsert(ctx, conversationID, "assistant", interim, nil, nil); err != nil {
 			return err
 		}
@@ -63,6 +70,10 @@ func (r *Runner) persistToolCallRows(ctx context.Context, current *job, text str
 			"id":    call.ID,
 			"name":  call.Function.Name,
 			"args":  rawObject(json.RawMessage(call.Function.Arguments)),
+		}
+		if reasoning != "" {
+			row["reasoning"] = reasoning
+			reasoning = ""
 		}
 		if err := r.store.MsgInsert(ctx, conversationID, historyTypeToolCall, row, nil, nil); err != nil {
 			return err
@@ -207,6 +218,7 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 				continue
 			}
 			messages = append(messages, schema.AssistantMessage("", []schema.ToolCall{call}))
+			messages[len(messages)-1].ReasoningContent = persisted.Reasoning
 			carrying = true
 			groupCalls = map[string]struct{}{persisted.ID: {}}
 			groupAnswered = map[string]struct{}{}
@@ -262,6 +274,7 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 				}
 				messages = append(messages, schema.AssistantMessage(content, nil))
 				if persisted.Interim {
+					messages[len(messages)-1].ReasoningContent = persisted.Reasoning
 					// The turn's tool calls follow and join this message.
 					carrying = true
 					groupCalls = map[string]struct{}{}
