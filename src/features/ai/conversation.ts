@@ -1076,7 +1076,22 @@ export function historyToItems(
       }
       if (structured === "summary") {
         const messages = Number(historyField(raw, "messages") ?? 0);
-        items.push({ id: `h${seq++}`, attempt: null, role: "compact", text: historyString(raw, "summary"), messages: messages || 0 });
+        const compact: ChatItem = { id: `h${seq++}`, attempt: null, role: "compact", text: historyString(raw, "summary"), messages: messages || 0 };
+        // An automatic summary is saved after the run's own message but replaces
+        // the history before that run, so it is shown before the message.
+        const beforeJobId = historyField(raw, "auto") === true ? historyField(raw, "beforeJobId") : undefined;
+        let anchor = -1;
+        if (typeof beforeJobId === "string" && beforeJobId) {
+          for (let i = items.length - 1; i >= 0; i--) {
+            const candidate = items[i];
+            if (candidate.role === "user" && candidate.jobId === beforeJobId && !candidate.steered) {
+              anchor = i;
+              break;
+            }
+          }
+        }
+        if (anchor >= 0) items.splice(anchor, 0, compact);
+        else items.push(compact);
         continue;
       }
       continue;
