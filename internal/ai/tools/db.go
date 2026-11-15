@@ -29,8 +29,13 @@ func (r *Registry) dbListTables(ctx context.Context, scope Scope, raw []byte) Ou
 	if err != nil {
 		return Fail(err)
 	}
-	tables, err := database.Tables(ctx, scope.ConnID, args.Schema)
+	metadataCtx, cancel := context.WithTimeout(ctx, dbMetadataTimeout)
+	defer cancel()
+	tables, err := database.Tables(metadataCtx, scope.ConnID, args.Schema)
 	if err != nil {
+		if failure, timedOut := toolTimeout(ctx, metadataCtx, "db_list_tables", dbMetadataTimeout); timedOut {
+			return failure
+		}
 		return Fail(err)
 	}
 	text := strings.Join(tables, "\n")
@@ -57,8 +62,13 @@ func (r *Registry) dbDescribe(ctx context.Context, scope Scope, raw []byte) Outp
 	if err != nil {
 		return Fail(err)
 	}
-	description, err := database.Describe(ctx, scope.ConnID, args.Schema, args.Table)
+	metadataCtx, cancel := context.WithTimeout(ctx, dbMetadataTimeout)
+	defer cancel()
+	description, err := database.Describe(metadataCtx, scope.ConnID, args.Schema, args.Table)
 	if err != nil {
+		if failure, timedOut := toolTimeout(ctx, metadataCtx, "db_describe", dbMetadataTimeout); timedOut {
+			return failure
+		}
 		return Fail(err)
 	}
 	encoded, err := json.MarshalIndent(description, "", "  ")
@@ -130,10 +140,23 @@ func (r *Registry) dbQuery(ctx context.Context, scope Scope, raw []byte) Output 
 	return Output{OK: true, Text: text, ModelText: modelText, Truncated: truncated || cut}
 }
 
+// dbMetadataTimeout bounds db_list_tables and db_describe, so a database that stops answering fails the call
+// instead of holding it until the run is canceled.
+var dbMetadataTimeout = 30 * time.Second
+
+// redis_scan budgets: one call keeps issuing SCAN until the iteration completes or one of these is reached.
+const (
+	redisScanKeyBudget  = 300
+	redisScanTimeBudget = 5 * time.Second
+	// redisScanTimeout bounds the call including a SCAN still in flight when the time budget runs out.
+	redisScanTimeout = 15 * time.Second
+)
+
 func (r *Registry) redisScan(ctx context.Context, scope Scope, raw []byte) Output {
 	var args struct {
 		Pattern string `json:"pattern"`
 		Count   uint64 `json:"count"`
+		Cursor  uint64 `json:"cursor"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
@@ -151,16 +174,53 @@ func (r *Registry) redisScan(ctx context.Context, scope Scope, raw []byte) Outpu
 	if err != nil {
 		return Fail(err)
 	}
-	result, err := database.RedisScan(ctx, scope.ConnID, 0, args.Pattern, args.Count)
-	if err != nil {
-		return Fail(err)
+	scanCtx, cancel := context.WithTimeout(ctx, redisScanTimeout)
+	defer cancel()
+	started := time.Now()
+	cursor := args.Cursor
+	seen := make(map[string]struct{})
+	var keys []string
+	scans := 0
+	for {
+		result, err := database.RedisScan(scanCtx, scope.ConnID, cursor, args.Pattern, args.Count)
+		if err != nil {
+			if failure, timedOut := toolTimeout(ctx, scanCtx, "redis_scan", redisScanTimeout); timedOut {
+				return failure
+			}
+			return Fail(err)
+		}
+		scans++
+		for _, key := range result.Keys {
+			// SCAN may return a key more than once during one iteration.
+			if _, duplicate := seen[key]; !duplicate {
+				seen[key] = struct{}{}
+				keys = append(keys, key)
+			}
+		}
+		// A cursor that does not advance would repeat the same page forever.
+		stalled := result.Cursor == cursor
+		cursor = result.Cursor
+		if cursor == 0 || stalled || len(keys) >= redisScanKeyBudget || time.Since(started) >= redisScanTimeBudget {
+			break
+		}
 	}
 	var output strings.Builder
-	fmt.Fprintf(&output, "cursor=%d keys:\n", result.Cursor)
-	for _, key := range result.Keys {
+	fmt.Fprintf(&output, "cursor=%d keys:\n", cursor)
+	for _, key := range keys {
 		output.WriteString(key)
 		output.WriteByte('\n')
 	}
 	text, truncated := capText(output.String())
-	return Output{OK: true, Text: text, Truncated: truncated}
+	modelText := text
+	if truncated {
+		modelText = strings.TrimSuffix(text, "\n[输出已截断]") + "\n[output truncated]"
+	}
+	if cursor != 0 {
+		text += fmt.Sprintf("\n[cursor≠0：可能还有更多匹配的键（本次执行 %d 次 SCAN）；继续扫描请传 cursor=%d]", scans, cursor)
+		modelText += fmt.Sprintf("\n[cursor≠0: more keys may match (this call ran %d SCAN iterations); to continue, call redis_scan with cursor=%d]", scans, cursor)
+	} else {
+		text += fmt.Sprintf("\n[扫描已完成（本次执行 %d 次 SCAN）]", scans)
+		modelText += fmt.Sprintf("\n[scan complete (this call ran %d SCAN iterations)]", scans)
+	}
+	return Output{OK: true, Text: text, ModelText: modelText, Truncated: truncated}
 }

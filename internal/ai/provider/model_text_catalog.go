@@ -556,6 +556,9 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "提醒已创建（任务 %s），将于 %s 投递到当前会话；可在定时任务列表查看投递状态", target: "reminder created (job %s) and will be delivered to this conversation at %s; delivery status is available in the scheduled jobs list"},
 
 	{source: "文件名 glob 无效: %v", target: "invalid filename glob: %v"},
+	{source: "offset 必须从 1 开始，limit 必须在 1-%d 行之间", target: "offset must start at 1, and limit must be between 1 and %d lines"},
+	{source: "%s 超时（%d 秒）：远端未在时限内响应，已停止等待", target: "%s timed out after %d seconds: the remote side did not respond in time; stopped waiting"},
+	{source: "操作 %s 没有执行记录：该操作未被记录或仍在执行中，这不代表它没有执行；请先检查实际状态（屏幕、文件、进程等）再决定是否重试", target: "operation %s has no record: it was not recorded or is still running, which does not mean it never ran; check the actual state (screen, files, processes) before deciding whether to retry"},
 	{source: "内容正则无效: %v", target: "invalid content regex: %v"},
 	{source: "正则无效: %v", target: "invalid regex: %v"},
 	{source: "正则无效: %w", target: "invalid regex: %w"},
