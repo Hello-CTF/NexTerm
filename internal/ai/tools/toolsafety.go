@@ -23,6 +23,35 @@ const maxToolFailureBytes = 600
 // result tells the model to stop and explain the problem to the user.
 const maxRepeatedToolFailures = 3
 
+// maxHardStopSameTool is how many consecutive argument or unknown-tool
+// failures of one tool name end the run, three after the stop-retrying notice.
+const maxHardStopSameTool = 6
+
+// maxHardStopAnyTool is how many consecutive argument or unknown-tool
+// failures across tool names, with no successful or executed tool call in
+// between, end the run.
+const maxHardStopAnyTool = 10
+
+// ErrRepeatedToolFailure marks a run stopped because the model kept issuing
+// calls that failed argument validation or named unknown tools.
+var ErrRepeatedToolFailure = errors.New("repeated invalid tool calls")
+
+// RepeatedToolFailureError carries the details of the hard stop. Tool is empty
+// when the streak spans several tool names.
+type RepeatedToolFailureError struct {
+	Tool  string
+	Count int
+}
+
+func (e *RepeatedToolFailureError) Error() string {
+	if e.Tool == "" {
+		return fmt.Sprintf("模型反复发出无效的工具调用（连续 %d 次），已停止本轮；请检查模型或换个说法重试 (model kept making invalid tool calls: %d in a row, run stopped)", e.Count, e.Count)
+	}
+	return fmt.Sprintf("模型反复调用失败的工具 %s（连续 %d 次），已停止本轮；请检查模型或换个说法重试 (model kept calling failing tool %s: %d in a row, run stopped)", e.Tool, e.Count, e.Tool, e.Count)
+}
+
+func (e *RepeatedToolFailureError) Unwrap() error { return ErrRepeatedToolFailure }
+
 // UnknownToolHandler matches compose.ToolsNodeConfig.UnknownToolsHandler.
 type UnknownToolHandler func(ctx context.Context, name, input string) (string, error)
 
@@ -36,7 +65,7 @@ type UnknownToolHandler func(ctx context.Context, name, input string) (string, e
 func NewToolSafety(available []string, fatal ...error) (adk.ChatModelAgentMiddleware, UnknownToolHandler) {
 	names := append([]string(nil), available...)
 	sort.Strings(names)
-	state := &toolSafetyState{streaks: map[string]int{}, fatal: fatal}
+	state := &toolSafetyState{streaks: map[string]int{}, hardStreaks: map[string]int{}, fatal: fatal}
 	handler := &toolSafetyHandler{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, state: state}
 	return handler, func(ctx context.Context, name, _ string) (string, error) {
 		result := encodeToolFailure(state.limit(name, unknownToolOutput(name, names)))
@@ -67,6 +96,9 @@ func ToolNames(ctx context.Context, list []tool.BaseTool) ([]string, error) {
 type toolSafetyState struct {
 	mu           sync.Mutex
 	streaks      map[string]int
+	hardStreaks  map[string]int
+	anyStreak    int
+	stop         error
 	lengthCutOff bool
 	fatal        []error
 }
@@ -86,7 +118,30 @@ func (s *toolSafetyState) cutOff() bool {
 func (s *toolSafetyState) succeeded(name string) {
 	s.mu.Lock()
 	delete(s.streaks, name)
+	s.resetHardLocked()
 	s.mu.Unlock()
+}
+
+// executed notes a tool that ran and failed on its own terms: a legitimate
+// failure that never counts toward the hard stop and breaks its streaks.
+func (s *toolSafetyState) executed(name string) {
+	s.mu.Lock()
+	s.resetHardLocked()
+	s.mu.Unlock()
+}
+
+// resetHardLocked ends every hard-stop streak: a tool call that ran, whatever
+// its outcome, means the failures are no longer consecutive.
+func (s *toolSafetyState) resetHardLocked() {
+	clear(s.hardStreaks)
+	s.anyStreak = 0
+}
+
+// stopErr returns the pending hard-stop error, if any.
+func (s *toolSafetyState) stopErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stop
 }
 
 // limit counts a consecutive failure of name and, once the streak reaches the
@@ -95,6 +150,15 @@ func (s *toolSafetyState) limit(name string, output Output) Output {
 	s.mu.Lock()
 	s.streaks[name]++
 	count := s.streaks[name]
+	s.hardStreaks[name]++
+	s.anyStreak++
+	if s.stop == nil {
+		if s.hardStreaks[name] >= maxHardStopSameTool {
+			s.stop = &RepeatedToolFailureError{Tool: name, Count: s.hardStreaks[name]}
+		} else if s.anyStreak >= maxHardStopAnyTool {
+			s.stop = &RepeatedToolFailureError{Count: s.anyStreak}
+		}
+	}
 	s.mu.Unlock()
 	if count >= maxRepeatedToolFailures {
 		output.Text += fmt.Sprintf("（已连续失败 %d 次，请停止重试）", count)
@@ -117,6 +181,16 @@ func (h *toolSafetyHandler) AfterModelRewriteState(ctx context.Context, state *a
 		cut = last != nil && last.Role == schema.Assistant && last.ResponseMeta != nil && last.ResponseMeta.FinishReason == "length"
 	}
 	h.state.setLengthCutOff(cut)
+	return ctx, state, nil
+}
+
+// BeforeModelRewriteState ends the run once the failure streak crossed the
+// hard-stop threshold. The failing results were already returned (and so
+// persisted) by then; the error surfaces as an ordinary failed run.
+func (h *toolSafetyHandler) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, _ *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	if err := h.state.stopErr(); err != nil && ctx.Err() == nil {
+		return ctx, state, err
+	}
 	return ctx, state, nil
 }
 
@@ -148,6 +222,8 @@ func (h *toolSafetyHandler) WrapInvokableToolCall(_ context.Context, endpoint ad
 		output := toolErrorOutput(name, err)
 		if strings.Contains(err.Error(), "failed to unmarshal arguments") {
 			output = h.state.limit(name, output)
+		} else {
+			h.state.executed(name)
 		}
 		return encodeToolFailure(output), nil
 	}, nil
