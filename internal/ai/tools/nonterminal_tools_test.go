@@ -58,7 +58,7 @@ func scriptedRegistry(transport base.Transport) *Registry {
 	return NewRegistry(Dependencies{Transport: func(context.Context, string) (base.Transport, error) { return transport, nil }})
 }
 
-func execArgs(t *testing.T, args ExecCommandsArgs) json.RawMessage {
+func execCommandsRawArgs(t *testing.T, args ExecCommandsArgs) json.RawMessage {
 	t.Helper()
 	encoded, err := json.Marshal(args)
 	if err != nil {
@@ -84,7 +84,7 @@ func TestExecCommandsTimeoutKeepsOutputAndStopsRemainingCommands(t *testing.T) {
 	}}
 	registry := scriptedRegistry(transport)
 	commands := []string{"echo one", "sudo apt-get update", "echo three", "echo four"}
-	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s"}, Call{ID: "c", Name: "exec_commands", Args: execArgs(t, ExecCommandsArgs{Commands: commands})}, nil)
+	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s"}, Call{ID: "c", Name: "exec_commands", Args: execCommandsRawArgs(t, ExecCommandsArgs{Commands: commands})}, nil)
 	if result.OK || !result.ExitUnknown {
 		t.Fatalf("timed-out run must be a failed result with an unknown exit: %+v", result)
 	}
@@ -106,7 +106,7 @@ func TestExecCommandsPerCommandDeadlineKeepsPartialOutput(t *testing.T) {
 		"tail -f /var/log/syslog": {result: base.ExecResult{Stdout: "line before deadline"}, waitDeadline: true},
 	}}
 	registry := scriptedRegistry(transport)
-	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s"}, Call{ID: "c", Name: "exec_commands", Args: execArgs(t, ExecCommandsArgs{Commands: []string{"tail -f /var/log/syslog"}, Timeout: 1})}, nil)
+	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s"}, Call{ID: "c", Name: "exec_commands", Args: execCommandsRawArgs(t, ExecCommandsArgs{Commands: []string{"tail -f /var/log/syslog"}, Timeout: 1})}, nil)
 	if result.OK || !result.ExitUnknown {
 		t.Fatalf("deadline result = %+v", result)
 	}
@@ -122,7 +122,7 @@ func TestExecCommandsReportsFirstNonZeroExitAndRecordsFailure(t *testing.T) {
 	}}
 	registry := scriptedRegistry(transport)
 	registry.deps.Outcome = ledger
-	call := Call{ID: "c", Name: "exec_commands", Args: execArgs(t, ExecCommandsArgs{Commands: []string{"true", "false", "exit 2", "true"}}), AuthorizationID: "guard:test"}
+	call := Call{ID: "c", Name: "exec_commands", Args: execCommandsRawArgs(t, ExecCommandsArgs{Commands: []string{"true", "false", "exit 2", "true"}}), AuthorizationID: "guard:test"}
 	result := registry.Execute(context.Background(), "job", Scope{SessionID: "s"}, call, nil)
 	if !result.OK || result.ExitCode != 3 {
 		t.Fatalf("exit code = %d, want the first non-zero exit 3: %+v", result.ExitCode, result)
@@ -141,7 +141,7 @@ func TestExecCommandsReportsFirstNonZeroExitAndRecordsFailure(t *testing.T) {
 	}
 
 	// A run whose last command succeeds after a failure is still failed.
-	call = Call{ID: "c2", Name: "exec_commands", Args: execArgs(t, ExecCommandsArgs{Commands: []string{"false", "true"}}), AuthorizationID: "guard:test"}
+	call = Call{ID: "c2", Name: "exec_commands", Args: execCommandsRawArgs(t, ExecCommandsArgs{Commands: []string{"false", "true"}}), AuthorizationID: "guard:test"}
 	if result := registry.Execute(context.Background(), "job", Scope{SessionID: "s"}, call, nil); result.ExitCode != 3 {
 		t.Fatalf("[false true] exit code = %d", result.ExitCode)
 	}
@@ -561,7 +561,7 @@ func TestOperationIDsResolveThroughOperationResult(t *testing.T) {
 	}
 
 	// A replayed mutation returns an operation ID that answers with the original effect's result.
-	call := Call{ID: "exec", Name: "exec_commands", Args: execArgs(t, ExecCommandsArgs{Commands: []string{"false"}}), AuthorizationID: "guard:test"}
+	call := Call{ID: "exec", Name: "exec_commands", Args: execCommandsRawArgs(t, ExecCommandsArgs{Commands: []string{"false"}}), AuthorizationID: "guard:test"}
 	if first := registry.Execute(context.Background(), "job", scope, call, nil); first.ExitCode != 3 {
 		t.Fatalf("first exec = %+v", first)
 	}
