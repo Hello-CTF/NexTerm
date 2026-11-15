@@ -41,7 +41,7 @@ type historyRow struct {
 	Before    string          `json:"before"`
 	After     string          `json:"after"`
 	Plan      string          `json:"plan"`
-	// Reasoning is the model reasoning of a tool-call turn. Providers such as
+	// Reasoning is the model reasoning of an assistant turn. Providers such as
 	// DeepSeek reject tool-call history that omits it.
 	Reasoning string `json:"reasoning,omitempty"`
 }
@@ -273,8 +273,8 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 					content += partialAnswerNote
 				}
 				messages = append(messages, schema.AssistantMessage(content, nil))
+				messages[len(messages)-1].ReasoningContent = persisted.Reasoning
 				if persisted.Interim {
-					messages[len(messages)-1].ReasoningContent = persisted.Reasoning
 					// The turn's tool calls follow and join this message.
 					carrying = true
 					groupCalls = map[string]struct{}{}

@@ -266,6 +266,8 @@ type job struct {
 	// without a final answer saves it as a partial answer.
 	streamedMu sync.Mutex
 	streamed   strings.Builder
+	// streamedReasoning is the reasoning text of the same turn.
+	streamedReasoning strings.Builder
 
 	emitMu         sync.Mutex
 	emitTurn       uint64
@@ -323,20 +325,34 @@ func (j *job) recordStreamed(text string) {
 	j.streamedMu.Unlock()
 }
 
+func (j *job) recordStreamedReasoning(text string) {
+	j.streamedMu.Lock()
+	j.streamedReasoning.WriteString(text)
+	j.streamedMu.Unlock()
+}
+
 func (j *job) resetStreamed() {
 	j.streamedMu.Lock()
 	j.streamed.Reset()
+	j.streamedReasoning.Reset()
 	j.streamedMu.Unlock()
 }
 
 // takeStreamed returns the unsaved streamed text and clears it, so it is
 // saved at most once.
 func (j *job) takeStreamed() string {
+	text, _ := j.takeStreamedWithReasoning()
+	return text
+}
+
+// takeStreamedWithReasoning is takeStreamed plus the turn's reasoning text.
+func (j *job) takeStreamedWithReasoning() (string, string) {
 	j.streamedMu.Lock()
 	defer j.streamedMu.Unlock()
-	text := j.streamed.String()
+	text, reasoning := j.streamed.String(), j.streamedReasoning.String()
 	j.streamed.Reset()
-	return text
+	j.streamedReasoning.Reset()
+	return text, reasoning
 }
 
 func (j *job) queueTurnEmits(events ...Event) {

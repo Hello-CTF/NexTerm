@@ -660,6 +660,7 @@ func emitAssistantText(current *job, message *schema.Message) error {
 		if err := current.emit(current.ctx, Event{Type: "reasoning", Text: message.ReasoningContent}); err != nil {
 			return err
 		}
+		current.recordStreamedReasoning(message.ReasoningContent)
 	}
 	if message.Content != "" {
 		if err := current.emit(current.ctx, Event{Type: "delta", Text: message.Content}); err != nil {
@@ -908,10 +909,12 @@ func interactionValue(value any) (tools.Interaction, bool) {
 // persistFinalAnswer saves a finished run's answer; the streamed text it
 // covers is then saved and must not come back as a partial answer.
 func (r *Runner) persistFinalAnswer(current *job, answer string, total usage.Usage) error {
-	if err := r.persistAssistant(current.ctx, current.args.ConversationID, current.id, answer, total); err != nil {
+	// The final turn's reasoning is replayed with the answer; providers such
+	// as DeepSeek need it back on prior assistant messages.
+	_, reasoning := current.takeStreamedWithReasoning()
+	if err := r.persistAssistant(current.ctx, current.args.ConversationID, current.id, answer, reasoning, total); err != nil {
 		return err
 	}
-	current.resetStreamed()
 	return nil
 }
 
@@ -920,24 +923,30 @@ func (r *Runner) persistFinalAnswer(current *job, answer string, total usage.Usa
 // conversation and the next run keep what the user already saw. It uses the
 // finish context of the run status, which outlives cancellation and shutdown.
 func (r *Runner) persistPartialAnswer(current *job) {
-	text := current.takeStreamed()
+	text, reasoning := current.takeStreamedWithReasoning()
 	if strings.TrimSpace(text) == "" || r.store == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(current.ctx), 5*time.Second)
 	defer cancel()
 	row := map[string]any{"role": "assistant", "content": text, "jobId": current.id, "partial": true}
+	if reasoning != "" {
+		row["reasoning"] = reasoning
+	}
 	if err := r.store.MsgInsert(ctx, current.args.ConversationID, "assistant", row, nil, nil); err != nil {
 		slog.Warn("AI 部分回答保存失败", "job", current.id, "error", err)
 	}
 }
 
-func (r *Runner) persistAssistant(ctx context.Context, conversationID, jobID, answer string, total usage.Usage) error {
+func (r *Runner) persistAssistant(ctx context.Context, conversationID, jobID, answer, reasoning string, total usage.Usage) error {
 	tokensIn := clampTokensInt64(total.PromptTokens)
 	tokensOut := clampTokensInt64(total.CompletionTokens)
 	row := map[string]any{"role": "assistant", "content": answer}
 	if jobID != "" {
 		row["jobId"] = jobID
+	}
+	if reasoning != "" {
+		row["reasoning"] = reasoning
 	}
 	return r.store.MsgInsert(ctx, conversationID, "assistant", row, &tokensIn, &tokensOut)
 }
