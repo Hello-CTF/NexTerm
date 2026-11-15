@@ -443,6 +443,33 @@ describe("AiSidebar stream recovery", () => {
     expect(secondCall.conversationId).toBe("conv-1");
   });
 
+  it("shows the step limit as a pause and continues it in the same conversation", async () => {
+    await send("部署服务");
+    emit({ type: "error", message: "已达到单轮最大步数（999），本轮已暂停", retryable: false, maxIterations: true, seq: 1 });
+    await flush();
+
+    const text = textOf(view!);
+    expect(text).toContain("已达到单轮最大步数（999），本轮已暂停");
+    expect(text).not.toContain("本次回答失败");
+    expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
+    const buttons = [...view!.container.querySelectorAll("button")].map((button) => button.textContent?.trim());
+    expect(buttons).not.toContain("重试");
+
+    const textarea = view!.container.querySelector("textarea")!;
+    setInputValue(textarea, "草稿");
+    clickButton(view!.container, "继续");
+    await flush();
+
+    expect(mocks.chat).toHaveBeenCalledTimes(2);
+    const secondCall = mocks.chat.mock.calls[1][0] as { message: string; conversationId: string; planMode?: boolean };
+    expect(secondCall.message).toBe("继续");
+    expect(secondCall.conversationId).toBe("conv-1");
+    expect(secondCall.planMode).toBeFalsy();
+    expect(view!.container.querySelector("textarea")!.value).toBe("草稿");
+    const after = [...view!.container.querySelectorAll("button")].map((button) => button.textContent?.trim());
+    expect(after).not.toContain("继续");
+  });
+
   it("settles when a rejected filler drains the buffered terminal during replay", async () => {
     await send("Hello");
     emit({ type: "delta", text: "半截", seq: 1 });

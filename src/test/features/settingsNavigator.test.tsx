@@ -208,7 +208,7 @@ describe("Settings section navigation", () => {
     expect(groupShown("ai")).toBe(true);
     click(tocToggle());
     await flush();
-    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["外观", "终端", "通知", "快捷键与快捷命令", "AI", "模型", "AI 信息脱敏", "AI 拦截规则", "技能", "记忆", "安全", "账号与数据", "关于"]);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["外观", "终端", "通知", "快捷键与快捷命令", "AI", "模型", "AI 信息脱敏", "AI 拦截规则", "AI 运行", "技能", "记忆", "安全", "账号与数据", "关于"]);
   });
 
   it("persists TOC expansion state to local storage", async () => {

@@ -73,7 +73,7 @@ func NewRunner(config Config) *Runner {
 		config.NewID = ids.New
 	}
 	if config.MaxTurns <= 0 {
-		config.MaxTurns = 24
+		config.MaxTurns = DefaultMaxTurns
 	}
 	if config.MaxImages <= 0 {
 		config.MaxImages = 8

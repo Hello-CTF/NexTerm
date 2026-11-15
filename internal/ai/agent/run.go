@@ -30,6 +30,7 @@ type einoRuntime struct {
 	runner        *adk.Runner
 	input         []*schema.Message
 	contextWindow uint64
+	maxTurns      int
 	mu            sync.Mutex
 	turns         int
 	total         usage.Usage
@@ -249,7 +250,7 @@ func (r *Runner) initializeEino(current *job) error {
 	if contextWindow == 0 {
 		contextWindow = 262144
 	}
-	runtime := &einoRuntime{contextWindow: contextWindow}
+	runtime := &einoRuntime{contextWindow: contextWindow, maxTurns: r.maxTurns(current.ctx)}
 	current.eino = runtime
 	compaction := newCompactionHandler(chatModel, contextWindow, func() {
 		current.queueEmits(statusEvent("compacting", runtime.currentTurn()))
@@ -345,7 +346,7 @@ func (r *Runner) initializeEino(current *job) error {
 		returnDirectly["exit_plan_mode"] = true
 	}
 	chatAgent, err := adk.NewChatModelAgent(current.ctx, &adk.ChatModelAgentConfig{
-		Name: "nexterm-ai", Description: "NexTerm ops assistant", Instruction: instruction, Model: chatModel, MaxIterations: r.config.MaxTurns,
+		Name: "nexterm-ai", Description: "NexTerm ops assistant", Instruction: instruction, Model: chatModel, MaxIterations: runtime.maxTurns,
 		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true}, ReturnDirectly: returnDirectly},
 		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(_ context.Context, state *adk.ChatModelAgentState) error {
 
@@ -447,7 +448,7 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 		}
 		if event.Err != nil {
 			if errors.Is(event.Err, adk.ErrExceedMaxIterations) {
-				return runtime.failure(&maxIterationsError{limit: r.config.MaxTurns})
+				return runtime.failure(&maxIterationsError{limit: runtime.maxTurns})
 			}
 			return runtime.failure(event.Err)
 		}

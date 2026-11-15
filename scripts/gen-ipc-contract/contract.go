@@ -129,6 +129,7 @@ var contractScopes = []scopeSpec{
 	{name: "ai-roster", prefixes: []string{"ai_roster_"}},
 	{name: "ai-watch", prefixes: []string{"ai_watch_"}},
 	{name: "ai-run", commands: []string{"ai_run_history", "ai_run_recovery_summary"}},
+	{name: "ai-run-settings", commands: []string{"ai_run_settings_get", "ai_run_settings_set"}},
 	{name: "ai-skills", prefixes: []string{"ai_skills_"}},
 	{name: "ai-command", commands: []string{"ai_command_generate"}},
 	{name: "ai-grant", prefixes: []string{"ai_grant_"}},

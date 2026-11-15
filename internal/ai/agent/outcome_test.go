@@ -20,7 +20,18 @@ import (
 func TestMaxIterationsExhaustionEmitsNonRetryableTerminal(t *testing.T) {
 	storage := restartStore(t)
 	chat := sequenceModel(toolCallMessage(namedToolCall("loop", "todo_write", `{"todos":[]}`)))
-	runner := durableRunner(t, storage, chat, tools.Dependencies{}, nil)
+	runner := NewRunner(Config{
+		Model:       func(context.Context) (model.BaseChatModel, uint64, error) { return chat, 32768, nil },
+		Tools:       tools.NewRegistry(tools.Dependencies{}),
+		Store:       storage,
+		Runs:        storage,
+		Checkpoints: NewStoreCheckpoints(storage),
+		Settings:    storage,
+	})
+	t.Cleanup(func() { _ = runner.Close() })
+	if _, err := runner.SetRunSettings(context.Background(), RunSettingsInput{MaxTurns: 24}); err != nil {
+		t.Fatal(err)
+	}
 	stream := &SliceStream{}
 	response := startTestJob(t, runner, stream, "go")
 	events := waitClosed(t, stream)
@@ -32,11 +43,11 @@ func TestMaxIterationsExhaustionEmitsNonRetryableTerminal(t *testing.T) {
 	if terminal.Type != "error" || terminal.Retryable || !terminal.MaxIterations {
 		t.Fatalf("terminal event = %+v", terminal)
 	}
-	if !strings.Contains(terminal.Message, "最大迭代次数（24）") {
+	if !strings.Contains(terminal.Message, "单轮最大步数（24）") {
 		t.Fatalf("terminal message = %q", terminal.Message)
 	}
 	row := waitRunStatus(t, storage, response.JobID, store.RunStatusFailed)
-	if row.Turns != 24 || !strings.Contains(row.Error, "最大迭代次数") {
+	if row.Turns != 24 || !strings.Contains(row.Error, "单轮最大步数") {
 		t.Fatalf("run row = %+v", row)
 	}
 	journal := runEventsOf(t, storage, response.JobID)
@@ -69,7 +80,7 @@ func TestMaxIterationsSmallLimitMessage(t *testing.T) {
 	startTestJob(t, runner, stream, "go")
 	events := waitClosed(t, stream)
 	terminal := events[len(events)-1]
-	if terminal.Type != "error" || terminal.Retryable || !terminal.MaxIterations || !strings.Contains(terminal.Message, "最大迭代次数（2）") {
+	if terminal.Type != "error" || terminal.Retryable || !terminal.MaxIterations || !strings.Contains(terminal.Message, "单轮最大步数（2）") {
 		t.Fatalf("terminal event = %+v", terminal)
 	}
 }

@@ -893,6 +893,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		Store:           services.Store,
 		Runs:            services.Store,
 		Checkpoints:     agent.NewStoreCheckpoints(services.Store),
+		Settings:        services.Store,
 		Subagents: &tools.SubagentConfig{
 			Model:           subagent.NewProfileModelFactory(services.Profiles),
 			ModelForProfile: subagent.NewProfileModelFactoryByID(services.Profiles),

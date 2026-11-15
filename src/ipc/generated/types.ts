@@ -2936,6 +2936,14 @@ export type RunRequest = {
   runId: string;
 };
 
+export type RunSettings = {
+  maxTurns: number;
+};
+
+export type RunSettingsInput = {
+  maxTurns: number;
+};
+
 export type RunState = {
   runId: string;
   runbookId: string;

@@ -121,6 +121,10 @@ type Config struct {
 
 	MaxPendingSteers int
 
+	// Settings holds the user's step limit, read when each run starts; MaxTurns
+	// applies when it holds no valid value.
+	Settings RunSettingsStore
+
 	Memory         *memory.Store
 	MemoryScope    memory.Scope
 	MemoryScopeFor func(context.Context) (memory.Scope, error)

@@ -70,7 +70,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
       maybeOpenAiCreatedTerminal(run.generation, ev, result);
       if (!result.terminal) return;
       settleRestoredRun(run.generation);
-      if (type === "error" && result.accepted) pushToast("error", t("AI 回答出错：{value}", { value: ev.message as string }));
+      if (type === "error" && result.accepted && ev.maxIterations !== true) pushToast("error", t("AI 回答出错：{value}", { value: ev.message as string }));
     });
 
     const offHitlReopen = onChannelReopen(channel, () => {

@@ -516,7 +516,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
       maybeOpenAiCreatedTerminal(generation, ev, result);
       if (!result.terminal) return;
       settleRestoredRun(generation);
-      if (type === "error" && result.accepted) pushToast("error", `AI: ${ev.message as string}`);
+      if (type === "error" && result.accepted && ev.maxIterations !== true) pushToast("error", `AI: ${ev.message as string}`);
     });
     const offReopen = onChannelReopen(channel, () => {
       if (!isRestoreActive(restoreGeneration, id)) return;

@@ -17,6 +17,7 @@ export const ChatBubble = memo(function ChatBubble({
   planApproved,
   onApprovePlan,
   onRetry,
+  onContinue,
   onEdit,
   agentToolCall,
   onAgentApproval,
@@ -27,6 +28,8 @@ export const ChatBubble = memo(function ChatBubble({
   planApproved: boolean;
   onApprovePlan: () => void;
   onRetry: (item: ChatItem) => void;
+  // onContinue is set on the latest step-limit notice; it starts a new run in the same conversation.
+  onContinue?: () => void;
   onEdit: (item: ChatItem) => void;
   agentToolCall: AgentToolCall | null;
   onAgentApproval: (requestId: string, decision: AgentApprovalDecision) => void;
@@ -113,6 +116,29 @@ export const ChatBubble = memo(function ChatBubble({
     );
   }
   if (item.role === "outcome") {
+    if (item.outcome === "error" && item.maxIterations) {
+      // Reaching the step limit pauses the run; it is not a failure.
+      return (
+        <div
+          role="status"
+          className="flex items-start gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-2.5 py-2 text-[11.5px] leading-relaxed text-[var(--nx-fg-warning)]"
+        >
+          <IconAlert size={12} className="mt-0.5 shrink-0" />
+          <span className="whitespace-pre-wrap">{item.text}</span>
+          {onContinue ? (
+            <button
+              type="button"
+              className="nx-btn nx-btn-outline nx-btn-xs ml-auto shrink-0"
+              title={t("在当前对话中让 AI 接着执行")}
+              onClick={onContinue}
+            >
+              <IconPlay size={11} />
+              {t("继续")}
+            </button>
+          ) : null}
+        </div>
+      );
+    }
     if (item.outcome === "error") {
       return (
         <div
@@ -120,9 +146,6 @@ export const ChatBubble = memo(function ChatBubble({
           className="flex items-start gap-1.5 rounded-lg border border-red-500/30 bg-red-500/[0.08] px-2.5 py-2 text-[11.5px] leading-relaxed text-red-200"
         >
           <IconAlert size={12} className="mt-0.5 shrink-0 text-red-300" />
-          {item.maxIterations ? (
-            <span className="nx-badge nx-badge-amber shrink-0">{t("已达到最大步数")}</span>
-          ) : null}
           <span className="whitespace-pre-wrap">{t("本次回答失败：{text}", { text: item.text })}</span>
           {item.retryable ? (
             <button

@@ -288,6 +288,22 @@ export const ipcContractManifest = {
       input: { go: "struct{ConversationID string \"json:\\\"conversationId\\\"\"}", ts: "{\n  conversationId: string;\n}" },
       output: { go: "*github.com/Hello-CTF/NexTerm/internal/ai/agent.ConversationRecoverySummary", ts: "ConversationRecoverySummary | null" },
     },
+    "ai_run_settings_get": {
+      scope: "ai-run-settings",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RunSettings", ts: "RunSettings" },
+    },
+    "ai_run_settings_set": {
+      scope: "ai-run-settings",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RunSettingsInput", ts: "RunSettingsInput" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RunSettings", ts: "RunSettings" },
+    },
     "ai_set_permission": {
       nested: false,
       channel: false,
@@ -3395,6 +3411,14 @@ export interface IPCCommandTypeMap {
   conversationId: string;
 };
     output: contractTypes.ConversationRecoverySummary | null;
+  };
+  "ai_run_settings_get": {
+    input: Record<string, never>;
+    output: contractTypes.RunSettings;
+  };
+  "ai_run_settings_set": {
+    input: contractTypes.RunSettingsInput;
+    output: contractTypes.RunSettings;
   };
   "ai_skills_delete_override": {
     input: contractTypes.NameRequest;
