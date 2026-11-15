@@ -2219,6 +2219,8 @@
   "模型下载服务器返回错误（HTTP %d），请稍后重试": "El servidor de descarga de modelos devolvió un error (HTTP %d); inténtalo de nuevo más tarde",
   "模型不存在或已被删除": "El modelo no existe o ya se eliminó",
   "模型停止": "El modelo se detuvo",
+  "模型反复发出无效的工具调用（连续 %d 次），已停止本轮；请检查模型或换个说法重试": "El modelo siguió haciendo llamadas a herramientas no válidas (%d seguidas), así que se detuvo esta ejecución; revisa el modelo o reformula e inténtalo de nuevo",
+  "模型反复调用失败的工具 %s（连续 %d 次），已停止本轮；请检查模型或换个说法重试": "El modelo siguió llamando a la herramienta fallida %s (%d seguidas), así que se detuvo esta ejecución; revisa el modelo o reformula e inténtalo de nuevo",
   "模型文件校验失败，可能在传输中损坏，请重新下载": "Falló la verificación del archivo del modelo; puede haberse dañado durante la transferencia. Vuelve a descargarlo",
   "模型输出达到长度上限，工具参数被截断；": "La salida del modelo alcanzó su límite de longitud y los argumentos de la herramienta se truncaron; ",
   "模型返回了空 tool call ID": "El modelo devolvió un tool call ID vacío",

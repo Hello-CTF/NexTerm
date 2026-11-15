@@ -45,9 +45,9 @@ type RepeatedToolFailureError struct {
 
 func (e *RepeatedToolFailureError) Error() string {
 	if e.Tool == "" {
-		return fmt.Sprintf("模型反复发出无效的工具调用（连续 %d 次），已停止本轮；请检查模型或换个说法重试 (model kept making invalid tool calls: %d in a row, run stopped)", e.Count, e.Count)
+		return fmt.Sprintf("模型反复发出无效的工具调用（连续 %d 次），已停止本轮；请检查模型或换个说法重试", e.Count)
 	}
-	return fmt.Sprintf("模型反复调用失败的工具 %s（连续 %d 次），已停止本轮；请检查模型或换个说法重试 (model kept calling failing tool %s: %d in a row, run stopped)", e.Tool, e.Count, e.Tool, e.Count)
+	return fmt.Sprintf("模型反复调用失败的工具 %s（连续 %d 次），已停止本轮；请检查模型或换个说法重试", e.Tool, e.Count)
 }
 
 func (e *RepeatedToolFailureError) Unwrap() error { return ErrRepeatedToolFailure }
