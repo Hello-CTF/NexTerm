@@ -189,6 +189,60 @@ func StaticStream(stream Stream) StreamFactory {
 	}
 }
 
+// switchableStream is a job's live downstream. A client that reopens its
+// panel confirms with a new channel; the job then delivers to that channel.
+// Every event goes to exactly one downstream: Send and Switch share one lock,
+// and events missed by an abandoned channel stay in the run journal.
+type switchableStream struct {
+	mu     sync.Mutex
+	stream Stream
+	closed bool
+}
+
+func newSwitchableStream(stream Stream) *switchableStream {
+	return &switchableStream{stream: stream}
+}
+
+func (s *switchableStream) Send(ctx context.Context, event Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stream.Send(ctx, event)
+}
+
+// Switch makes next the downstream and closes the previous one. A closed
+// stream keeps its state and closes next instead.
+func (s *switchableStream) Switch(next Stream) {
+	if next == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		_ = next.Close()
+		return
+	}
+	previous := s.stream
+	s.stream = next
+	s.mu.Unlock()
+	if previous != nil && previous != next {
+		_ = previous.Close()
+	}
+}
+
+func (s *switchableStream) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	return s.stream.Close()
+}
+
+func (s *switchableStream) CloseGracefully() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	return CloseStreamGracefully(s.stream)
+}
+
 type discardStream struct{}
 
 func (discardStream) Send(context.Context, Event) error { return nil }

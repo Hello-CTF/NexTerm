@@ -77,6 +77,9 @@ type Event struct {
 	SubagentID               string
 	Depth                    int
 	Status                   string
+	// Decision is how an interaction was resolved: a confirm decision,
+	// "answered" or "expired".
+	Decision string
 }
 
 func (e Event) MarshalJSON() ([]byte, error) {
@@ -128,6 +131,8 @@ func (e Event) MarshalJSON() ([]byte, error) {
 	case "questionRequired":
 		payload["id"], payload["question"], payload["confirmationNonce"] = e.ID, e.Question, e.Nonce
 		payload["requestId"], payload["attempt"] = e.RequestID, e.Attempt
+	case "interactionResolved":
+		payload["callId"], payload["decision"] = e.CallID, e.Decision
 	case "screen":
 		payload["tabId"], payload["text"] = e.TabID, e.Text
 	case "fileChange":

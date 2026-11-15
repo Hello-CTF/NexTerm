@@ -107,6 +107,13 @@ func (r *Runner) editAffectedRuns(ctx context.Context, conversationID string, ro
 	}
 	affected := make([]store.RunRow, 0, len(runs))
 	for _, run := range runs {
+		// An unfinished run, such as one restored after a restart and still
+		// waiting for confirmation, is replaced as well: a new message cannot
+		// start while it stays open.
+		if run.FinishedAt == nil && (run.Status == store.RunStatusRunning || run.Status == store.RunStatusInterrupted) {
+			affected = append(affected, run)
+			continue
+		}
 		if index, ok := anchor[run.ID]; ok {
 			if index >= targetIndex {
 				affected = append(affected, run)

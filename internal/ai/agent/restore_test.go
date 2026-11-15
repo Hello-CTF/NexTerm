@@ -247,7 +247,9 @@ func TestRecoveredUsageKeepsUnchanneledCallsWithSharedProviderID(t *testing.T) {
 	}
 }
 
-func TestRestoreCompactionDoesNotDoubleCountNewSummary(t *testing.T) {
+// A restored run resumes from its checkpoint, so it never summarizes the
+// history again, and its usage counts the old and the resumed call once.
+func TestRestoreSkipsHistorySummaryAndCountsUsageOnce(t *testing.T) {
 	ctx := context.Background()
 	storage := restartStore(t)
 	deps := tools.Dependencies{DockerAct: func(context.Context, string, string, string) error { return nil }}
@@ -301,18 +303,15 @@ func TestRestoreCompactionDoesNotDoubleCountNewSummary(t *testing.T) {
 	if done, failed := terminalCounts(events); done != 1 || failed != 0 {
 		t.Fatalf("terminal counts done=%d failed=%d events=%+v", done, failed, events)
 	}
-	if summaryCalls == 0 || len(restoredChat.snapshotInputs()) != 1 {
-		t.Fatalf("summary calls=%d main calls=%d, want summary plus one resumed main call", summaryCalls, len(restoredChat.snapshotInputs()))
+	if summaryCalls != 0 || len(restoredChat.snapshotInputs()) != 1 {
+		t.Fatalf("summary calls=%d main calls=%d, want no summary and one resumed main call", summaryCalls, len(restoredChat.snapshotInputs()))
 	}
 	row, err := storage.RunGet(ctx, response.JobID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPrompt := int64(50 + 100*summaryCalls)
-	wantCompletion := int64(9 + 20*summaryCalls)
-	wantCacheCreation := int64(4 + 10*summaryCalls)
-	if row.TokensIn != wantPrompt || row.TokensOut != wantCompletion || row.CacheCreationTokens != wantCacheCreation || row.LatencyMS < int64(5*summaryCalls) {
-		t.Fatalf("restored usage = %+v, want old main + %d summary calls + resumed main exactly once: %d/%d cache %d", row, summaryCalls, wantPrompt, wantCompletion, wantCacheCreation)
+	if row.TokensIn != 50 || row.TokensOut != 9 || row.CacheCreationTokens != 4 {
+		t.Fatalf("restored usage = %+v, want old main + resumed main exactly once: 50/9 cache 4", row)
 	}
 	usageEvents := 0
 	for _, event := range runEventsOf(t, storage, response.JobID) {
@@ -320,8 +319,8 @@ func TestRestoreCompactionDoesNotDoubleCountNewSummary(t *testing.T) {
 			usageEvents++
 		}
 	}
-	if usageEvents != summaryCalls+2 {
-		t.Fatalf("usage events = %d, want old main + %d summary calls + resumed main", usageEvents, summaryCalls)
+	if usageEvents != 2 {
+		t.Fatalf("usage events = %d, want old main + resumed main", usageEvents)
 	}
 }
 

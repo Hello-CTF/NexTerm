@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -41,7 +42,16 @@ type historyRow struct {
 	Plan      string          `json:"plan"`
 }
 
-func (r *Runner) persistToolCallRows(ctx context.Context, conversationID, jobID string, calls []schema.ToolCall) error {
+// persistToolCallRows saves one assistant turn's tool calls. Text the model
+// wrote alongside the calls is saved first as an interim assistant row, and
+// rebuildHistory joins it with the calls into one assistant message.
+func (r *Runner) persistToolCallRows(ctx context.Context, conversationID, jobID, text string, calls []schema.ToolCall) error {
+	if text != "" {
+		interim := map[string]any{"role": "assistant", "content": text, "jobId": jobID, "interim": true}
+		if err := r.store.MsgInsert(ctx, conversationID, "assistant", interim, nil, nil); err != nil {
+			return err
+		}
+	}
 	for _, call := range calls {
 		row := map[string]any{
 			"type":  historyTypeToolCall,
@@ -112,17 +122,65 @@ func historyMessages(rows []store.MessageRow, jobID string) []*schema.Message {
 	return repaired
 }
 
+// parsedHistoryRow is one stored row decoded for history rebuilding.
+type parsedHistoryRow struct {
+	historyRow
+	Interim     bool   `json:"interim"`
+	BeforeJobID string `json:"beforeJobId"`
+}
+
+// orderHistoryRows keeps each run's rows together, in the order the runs
+// started. Two runs that wrote into one conversation at the same time
+// interleaved their rows; regrouping them pairs every tool call with its own
+// result. A final answer saved without a run ID stays with the run whose row
+// came before it, and an automatic summary goes in front of the run it was
+// made for, replacing exactly the history before that run.
+func orderHistoryRows(rows []store.MessageRow) []parsedHistoryRow {
+	type block struct{ rows []parsedHistoryRow }
+	var blocks []*block
+	byJob := map[string]*block{}
+	var last *block
+	for _, row := range rows {
+		var persisted parsedHistoryRow
+		if json.Unmarshal([]byte(row.ContentJSON), &persisted) != nil {
+			continue
+		}
+		switch {
+		case persisted.JobID != "":
+			current := byJob[persisted.JobID]
+			if current == nil {
+				current = &block{}
+				blocks = append(blocks, current)
+				byJob[persisted.JobID] = current
+			}
+			current.rows = append(current.rows, persisted)
+			last = current
+		case persisted.Type == historyTypeSummary && persisted.BeforeJobID != "" && byJob[persisted.BeforeJobID] != nil:
+			target := byJob[persisted.BeforeJobID]
+			index := slices.Index(blocks, target)
+			blocks = slices.Insert(blocks, index, &block{rows: []parsedHistoryRow{persisted}})
+		case persisted.Type == "" && persisted.Role == "assistant" && last != nil:
+			last.rows = append(last.rows, persisted)
+		default:
+			current := &block{rows: []parsedHistoryRow{persisted}}
+			blocks = append(blocks, current)
+			last = current
+		}
+	}
+	ordered := make([]parsedHistoryRow, 0, len(rows))
+	for _, current := range blocks {
+		ordered = append(ordered, current.rows...)
+	}
+	return ordered
+}
+
 func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 	messages := make([]*schema.Message, 0, len(rows))
 	carrying := false
 	groupCalls := map[string]struct{}{}
 	groupAnswered := map[string]struct{}{}
 	groupToolEnd := -1
-	for _, row := range rows {
-		var persisted historyRow
-		if json.Unmarshal([]byte(row.ContentJSON), &persisted) != nil {
-			continue
-		}
+	for _, persisted := range orderHistoryRows(rows) {
 		if persisted.JobID != "" && persisted.JobID == jobID {
 			continue
 		}
@@ -168,7 +226,7 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 		case historyTypeFileChange, historyTypePlanSubmitted:
 			continue
 		case historyTypeSummary:
-			// A /compact summary replaces everything before it.
+			// A summary replaces everything before it.
 			if persisted.Summary == "" {
 				continue
 			}
@@ -186,6 +244,14 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 				messages = append(messages, schema.UserMessage(persisted.Content))
 			case "assistant":
 				messages = append(messages, schema.AssistantMessage(persisted.Content, nil))
+				if persisted.Interim {
+					// The turn's tool calls follow and join this message.
+					carrying = true
+					groupCalls = map[string]struct{}{}
+					groupAnswered = map[string]struct{}{}
+					groupToolEnd = len(messages) - 1
+					continue
+				}
 			default:
 				continue
 			}

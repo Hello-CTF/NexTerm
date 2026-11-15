@@ -133,6 +133,7 @@ func (r *Runner) recoverRun(ctx context.Context, row store.RunRow, blob hitl.Run
 		status = store.RunStatusExpired
 		message = "AI 确认请求已过期，请重新发送"
 		retryable = false
+		r.journalExpiredInteractions(ctx, row.ID)
 	}
 	applied, err := r.finishRecoveredRun(ctx, row, status, message, retryable)
 	if err != nil {
@@ -241,6 +242,7 @@ func (r *Runner) watchRestoredRun(ctx context.Context, row store.RunRow) {
 		case hitl.TerminalExpired:
 			status = store.RunStatusExpired
 			message = "AI 确认请求已过期，请重新发送"
+			r.journalExpiredInteractions(ctx, row.ID)
 		case hitl.TerminalCanceled:
 			status = store.RunStatusCanceled
 			message = "AI 任务已停止"
@@ -265,10 +267,27 @@ type scopeResolutionError struct {
 func (e *scopeResolutionError) Error() string { return e.err.Error() }
 func (e *scopeResolutionError) Unwrap() error { return e.err }
 
+// restoreSetupError carries why a restorable run could not be loaded, so the
+// caller sees the real cause instead of a missing job.
+type restoreSetupError struct {
+	err error
+}
+
+func (e *restoreSetupError) Error() string { return "AI 任务恢复失败: " + e.err.Error() }
+func (e *restoreSetupError) Unwrap() error { return e.err }
+
 func restoreJobError(err error) error {
 	var resolutionErr *scopeResolutionError
 	if errors.As(err, &resolutionErr) {
 		return resolutionErr.err
+	}
+	var setupErr *restoreSetupError
+	if errors.As(err, &setupErr) {
+		var appErr *ipc.Error
+		if errors.As(setupErr.err, &appErr) {
+			return ipc.WrapError(appErr.Code, setupErr.Error(), setupErr)
+		}
+		return ipc.WrapError(ipc.CodeInternal, setupErr.Error(), setupErr)
 	}
 	return ErrJobNotFound
 }
@@ -337,12 +356,13 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 	if factory != nil {
 		opened, err := factory(ctx, "", jobID)
 		if err != nil {
-			return nil, err
+			return nil, &restoreSetupError{err: err}
 		}
 		if opened != nil {
 			stream = opened
 		}
 	}
+	downstream := newSwitchableStream(stream)
 	jobContext, cancel := context.WithCancel(context.WithoutCancel(executionCtx))
 	jobContext = tools.WithNotifyOwner(jobContext, conversation.OwnerID)
 	deliveryContext, forceCancel := context.WithCancel(context.WithoutCancel(jobContext))
@@ -354,7 +374,8 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 		cancel:      cancel,
 		deliveryCtx: deliveryContext,
 		forceCancel: forceCancel,
-		stream:      r.wrapStream(stream, jobID),
+		stream:      r.wrapStream(downstream, jobID),
+		downstream:  downstream,
 		memory:      r.conversationMemory(conversation.OwnerID, row.ConversationID, scope),
 		steer:       steer.NewQueue(r.config.MaxPendingSteers),
 		cancelSync:  newCancelSync(),
@@ -362,6 +383,9 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 	}
 	current.capture = r.newJobCapture(jobID, row.ConversationID)
 	r.restoreCallHandles(ctx, current)
+	for _, pending := range snapshot.Pending {
+		current.addPendingCall(pending.CallID)
+	}
 	if err := r.reserveJobID(jobID); err != nil {
 		cancel()
 		forceCancel()
@@ -389,7 +413,9 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 	r.wg.Add(1)
 	r.mu.Unlock()
 	recovered := r.recoveredUsage(context.Background(), jobID)
-	if err := r.initializeEino(current); err != nil {
+	// The checkpoint holds the run's messages, so resuming needs only the
+	// agent, its tools and permission, never input assembly or a summary.
+	if err := r.setupEino(current, false); err != nil {
 		r.mu.Lock()
 		if r.jobs[jobID] == current {
 			delete(r.jobs, jobID)
@@ -400,7 +426,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 		_ = current.stream.Close()
 		r.releaseJobID(jobID)
 		r.wg.Done()
-		return nil, err
+		return nil, &restoreSetupError{err: err}
 	}
 	current.eino.addUsage(recovered)
 	go r.watchHITL(current)

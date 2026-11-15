@@ -939,7 +939,8 @@ func TestCloseContextDeadlineStillDrainsWritersBeforeStoreClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.Status != store.RunStatusCanceled || !strings.Contains(row.Error, "context deadline exceeded") {
+	// Closing the app interrupts the run instead of recording a user cancel.
+	if row.Status != store.RunStatusInterrupted || row.Error != errRunShutdown.Error() {
 		t.Fatalf("parent row = %+v", row)
 	}
 	rows, err := storage.RunList(context.Background(), "", 0)

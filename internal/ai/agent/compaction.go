@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
@@ -35,6 +36,28 @@ type compactionHandler struct {
 	summaryTimeout time.Duration
 	onCompact      func()
 	onUsage        func(*schema.Message, time.Duration) error
+	// onSummary receives a summary that replaced the history before the run,
+	// so it can be saved and later runs start from it.
+	onSummary func(summary string, replaced int)
+	// onSummaryFailed reports the first failed summary of the run; later
+	// model calls fall back to trimming instead of retrying the summary.
+	onSummaryFailed func(error)
+	summaryFailed   atomic.Bool
+}
+
+// failSummary stops summarizing for the rest of the run and reports the
+// first failure.
+func (h *compactionHandler) failSummary(err error) {
+	if h.summaryFailed.Swap(true) {
+		return
+	}
+	if h.onSummaryFailed != nil {
+		h.onSummaryFailed(err)
+	}
+}
+
+func (h *compactionHandler) wantsSummary(messages []*schema.Message) bool {
+	return h.model != nil && !h.summaryFailed.Load() && estimateHistoryTokens(messages) > compactionTriggerTokens(h.window)
 }
 
 func newCompactionHandler(chatModel model.BaseChatModel, window uint64, onCompact func(), onUsage ...func(*schema.Message, time.Duration) error) *compactionHandler {
@@ -59,14 +82,16 @@ func (h *compactionHandler) generate(ctx context.Context, input []*schema.Messag
 func (h *compactionHandler) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, _ *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
 	messages := state.Messages
 	summarized := false
-	if h.model != nil && estimateHistoryTokens(messages) > compactionTriggerTokens(h.window) {
-		finalized, err := h.summarize(ctx, messages, 0)
+	if h.wantsSummary(messages) {
+		finalized, _, err := h.summarize(ctx, messages, 0)
 		switch {
 		case err == nil:
 			messages = finalized
 			summarized = true
 		case ctx.Err() != nil:
 			return ctx, nil, err
+		default:
+			h.failSummary(err)
 		}
 	}
 	fitted, compacted, err := fitMessageBudget(messages, h.window)
@@ -85,16 +110,22 @@ func (h *compactionHandler) BeforeModelRewriteState(ctx context.Context, state *
 }
 
 func (h *compactionHandler) compactHistory(ctx context.Context, messages []*schema.Message) ([]*schema.Message, error) {
-	if h.model != nil && estimateHistoryTokens(messages) > compactionTriggerTokens(h.window) {
-		finalized, err := h.summarize(ctx, messages, durableCompactionReserve)
+	if h.wantsSummary(messages) {
+		finalized, summary, err := h.summarize(ctx, messages, durableCompactionReserve)
 		switch {
 		case err == nil:
+			if h.onSummary != nil {
+				_, contextMsgs := splitSystemPrefix(messages)
+				h.onSummary(summary, len(contextMsgs))
+			}
 			if h.onCompact != nil {
 				h.onCompact()
 			}
 			return finalized, nil
 		case ctx.Err() != nil:
 			return nil, err
+		default:
+			h.failSummary(err)
 		}
 	}
 	fitted, compacted := fitHistoryBudget(messages, h.window)
@@ -104,15 +135,15 @@ func (h *compactionHandler) compactHistory(ctx context.Context, messages []*sche
 	return fitted, nil
 }
 
-func (h *compactionHandler) summarize(ctx context.Context, messages []*schema.Message, retainedReserve int) ([]*schema.Message, error) {
+func (h *compactionHandler) summarize(ctx context.Context, messages []*schema.Message, retainedReserve int) ([]*schema.Message, string, error) {
 	summaryCtx, cancel := context.WithTimeout(ctx, h.summaryCallTimeout())
 	defer cancel()
 	system, contextMsgs := splitSystemPrefix(messages)
 	summary, err := h.summarizeAll(summaryCtx, contextMsgs)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return h.finalize(system, contextMsgs, summary, retainedReserve), nil
+	return h.finalize(system, contextMsgs, summary, retainedReserve), summary, nil
 }
 
 func (h *compactionHandler) summaryCallTimeout() time.Duration {

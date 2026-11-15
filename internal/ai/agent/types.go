@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	aicontext "github.com/Hello-CTF/NexTerm/internal/ai/context"
@@ -29,6 +30,9 @@ var (
 	ErrInvalidConfirmation = errors.New("确认必须包含 callId、nonce 和有效 decision")
 	ErrSteerQueueFull      = errors.New("AI 补充指令队列已满，请稍后再试")
 	errRunPaused           = errors.New("AI 任务等待用户交互")
+	// errRunShutdown records a run stopped because the app closed; it reuses
+	// the restart wording and stays retryable.
+	errRunShutdown = errors.New("AI 任务因应用重启而中断")
 )
 
 type openAccessContextKey struct{}
@@ -232,11 +236,27 @@ type job struct {
 	deliveryCtx context.Context
 	forceCancel context.CancelFunc
 	stream      Stream
-	memory      *guard.Memory
-	eino        *einoRuntime
-	cancelFn    adk.AgentCancelFunc
-	cancelSync  *cancelSync
-	capture     *Capture
+	// downstream is the live delivery below the journal; a confirmation from
+	// a reopened panel switches it to that panel's channel.
+	downstream *switchableStream
+	memory     *guard.Memory
+	// shutdown marks a run stopped because the app is closing; it is recorded
+	// as interrupted and retryable rather than canceled by the user.
+	shutdown atomic.Bool
+	// settled is set once the run's final status is recorded, right before
+	// its terminal event is delivered: the run writes nothing more to the
+	// conversation, so a client may start the next run as soon as it sees
+	// the terminal event even though cleanup is still finishing.
+	settled atomic.Bool
+	// pendingCalls are the call IDs of interactions shown to the user and not
+	// resolved yet, so an expiry can settle each card.
+	pendingCallsMu sync.Mutex
+	pendingCalls   []string
+	resolved       []Event
+	eino           *einoRuntime
+	cancelFn       adk.AgentCancelFunc
+	cancelSync     *cancelSync
+	capture        *Capture
 
 	steer *steer.Queue
 
