@@ -23,7 +23,7 @@ The images use sample data; try the live demos on the [website](https://nexterm.
 
 ## AI assistant
 
-20+ tools for commands, files, Docker, and terminal output; writes show the command or diff before they run, with plan mode, per-host and per-path grants, scheduled tasks, and long-term memory. Works with any OpenAI-compatible API, with DeepSeek, Kimi, GLM, and Ollama presets. In a terminal, press Ctrl+Shift+G (Cmd+I on macOS) and describe the task in plain words: the generated command is typed at the prompt and never run automatically, and code blocks in AI replies can be inserted into the current terminal too. Production hosts ask again before anything is typed. For optional local redaction, see [AI privacy redaction](ai-privacy.en.md).
+20+ tools for commands, files, Docker, and terminal output; writes show the command or diff before they run, with plan mode, per-host and per-path grants, scheduled tasks, and long-term memory. Permission modes are read-only, read-write, auto-run and full access (runs everything except forbidden operations; interception-rule hits still ask, production hosts are treated as auto-run, and scheduled tasks never use it). The maximum steps per answer is adjustable in settings (default 999); reaching it pauses the answer with a Continue option. Works with any OpenAI-compatible API, with DeepSeek, Kimi, GLM, and Ollama presets. In a terminal, press Ctrl+Shift+G (Cmd+I on macOS) and describe the task in plain words: the generated command is typed at the prompt and never run automatically, and code blocks in AI replies can be inserted into the current terminal too. Production hosts ask again before anything is typed. For optional local redaction, see [AI privacy redaction](ai-privacy.en.md).
 
 ## Everyday operations
 
