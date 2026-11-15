@@ -2,7 +2,7 @@ import { useCallback, useRef, useState, useMemo, useEffect } from "react";
 import type { MessageDto, AiRunDto } from "../../../ipc/types";
 import { messageHistoryStart, MESSAGE_HISTORY_PAGE_SIZE, earlierMessageHistoryStart } from "../aiWire";
 import { replayableJobIds } from "../runRestore";
-import { historyToItems } from "../conversation";
+import { historyJobIdOf, historyToItems } from "../conversation";
 import { type AiPermissionConfig, aiApi, modelApi } from "../../../ipc/commands";
 import { useConversationFollow } from "../conversationFollow";
 import { useVirtualWindow } from "../conversationVirtual";
@@ -65,6 +65,18 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
     messageWindowStartRef.current = 0;
     setMessageWindowStart(0);
   }, []);
+  // Replayed runs whose saved rows lie before the loaded history window are
+  // older than every loaded row, so they are placed at the top.
+  const leadingReplayJobIds = useCallback((id: string): Set<string> => {
+    const history = messageHistoryRef.current;
+    const out = new Set<string>();
+    if (!history || history.id !== id) return out;
+    for (const m of history.messages.slice(0, messageWindowStartRef.current)) {
+      const jobId = historyJobIdOf(m.content);
+      if (jobId && history.skipJobIds.has(jobId)) out.add(jobId);
+    }
+    return out;
+  }, []);
   const loadOlderMessages = () => {
     const history = messageHistoryRef.current;
     if (!isLifecycleActive() || !history || history.id !== conversationIdRef.current) return;
@@ -74,6 +86,7 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
     setMessageWindowStart(next);
     stream.replaceHistory(
       historyToItems(stream.getState(), history.messages.slice(next), history.skipJobIds),
+      leadingReplayJobIds(history.id),
     );
   };
   const deletedConversationIdsRef = useRef<Set<string>>(new Set());
@@ -311,7 +324,7 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
 
   const composeMessage = composeUserMessage;
 
-  return { isRestoreActive, setConversationRuns, updateConversationId, clearMessageHistory, resetMessageHistory, permOpen, setPermOpen, setAtOpen, composeMessage, deletedConversationIdsRef, conversationRuns, inputRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, historyOpen, setHistoryOpen, setCompacting, compacting, slashQuery, modelQuery, modelOptions, skillOptions, searchOpen, setSearchOpen, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, conversations, runStatusByConv, permError, loadPermission, perm, permDeviceOverride, followGlobalMode, switchMode, setScrollEl, messageWindowStart, loadOlderMessages, virtual, activeMatchIndex, follow, slashIndex, setSlashIndex, atOpen, refCandidates, atItems, atIndex, setAtIndex, imageInputRef };
+  return { isRestoreActive, leadingReplayJobIds, setConversationRuns, updateConversationId, clearMessageHistory, resetMessageHistory, permOpen, setPermOpen, setAtOpen, composeMessage, deletedConversationIdsRef, conversationRuns, inputRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, historyOpen, setHistoryOpen, setCompacting, compacting, slashQuery, modelQuery, modelOptions, skillOptions, searchOpen, setSearchOpen, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, conversations, runStatusByConv, permError, loadPermission, perm, permDeviceOverride, followGlobalMode, switchMode, setScrollEl, messageWindowStart, loadOlderMessages, virtual, activeMatchIndex, follow, slashIndex, setSlashIndex, atOpen, refCandidates, atItems, atIndex, setAtIndex, imageInputRef };
 }
 
 export type UseChatPanelStateOut = ReturnType<typeof useChatPanelState>;

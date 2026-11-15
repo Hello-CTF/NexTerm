@@ -779,6 +779,47 @@ describe("history and reset", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it("places replayed runs after their saved messages, also when older history loads", () => {
+    const { s } = stream();
+    const user = (id: string, content: string, jobId: string, steered = false) => ({
+      id,
+      role: "user",
+      content: { content, jobId, ...(steered ? { steered: true } : {}) },
+    });
+    const older = [user("m1", "One", "job-1")];
+    const window = [
+      user("m2", "Two", "job-2"),
+      user("m3", "Steer two", "job-2", true),
+      { id: "m4", role: "user", content: { content: "Three", jobId: "job-3" } },
+      { id: "m5", role: "assistant", content: { content: "Answer three" } },
+    ];
+    s.reset(historyToItems(s.getState(), window, new Set(["job-1", "job-2"])));
+    for (const [generation, jobId] of [[1, "job-1"], [2, "job-2"]] as const) {
+      s.beginRun(generation);
+      s.bindJob(generation, jobId);
+      s.pushEvent(generation, { type: "toolCall", id: `c${generation}`, name: "read_file", display: `Tool ${generation}` });
+      s.pushEvent(generation, { type: "error", message: `Failed ${generation}`, retryable: true });
+    }
+    s.placeReplayedRuns(new Set(["job-1"]));
+    const order = (items: ChatItem[]) =>
+      items.map((item) =>
+        item.role === "tool" ? item.display : item.role === "outcome" ? item.text : (item as { text: string }).text,
+      );
+    expect(order(s.getState().items)).toEqual([
+      "Tool 1", "Failed 1", "Two", "Steer two", "Tool 2", "Failed 2", "Three", "Answer three",
+    ]);
+    expect(s.getState().items[2]).toMatchObject({ attempt: null, jobId: "job-2" });
+    expect(s.getState().items[3]).toMatchObject({ jobId: "job-2", steered: true });
+
+    s.beginRun(3);
+    s.appendUser(3, "Live");
+    s.bindJob(3, "job-live");
+    s.replaceHistory(historyToItems(s.getState(), [...older, ...window], new Set(["job-1", "job-2"])), new Set());
+    expect(order(s.getState().items)).toEqual([
+      "One", "Tool 1", "Failed 1", "Two", "Steer two", "Tool 2", "Failed 2", "Three", "Answer three", "Live",
+    ]);
+  });
+
   it("replaces the loaded history window without discarding live run state", () => {
     const { s } = stream();
     const recent = { id: "recent", role: "user", content: { content: "Recent" } };

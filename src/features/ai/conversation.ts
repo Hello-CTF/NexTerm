@@ -42,6 +42,10 @@ export type ChatItem =
       imageCount?: number;
       steer?: SteerDelivery;
       messageId?: string;
+      // History rows keep the job they started (or steered) so a replayed run
+      // can be placed after them and a retry can find its source message.
+      jobId?: string;
+      steered?: boolean;
     })
   | (ItemBase & { role: "assistant"; text: string })
   | (ItemBase & { role: "reasoning"; text: string })
@@ -1027,6 +1031,7 @@ export function historyToItems(
     if (!text) continue;
     if (m.role === "user") {
       const n = Number(historyField(raw, "imageCount") ?? 0);
+      const jobId = historyString(raw, "jobId");
       items.push({
         id: `h${seq++}`,
         attempt: null,
@@ -1034,12 +1039,56 @@ export function historyToItems(
         text,
         imageCount: n || undefined,
         ...(typeof m.id === "string" && m.id ? { messageId: m.id } : {}),
+        ...(jobId ? { jobId } : {}),
+        ...(historyField(raw, "steered") === true ? { steered: true } : {}),
       });
     } else if (m.role === "assistant") {
       items.push({ id: `h${seq++}`, attempt: null, role: "assistant", text });
     }
   }
   return items;
+}
+
+export function historyJobIdOf(raw: unknown): string {
+  return historyString(raw, "jobId");
+}
+
+// placeReplayedRuns moves the items of each run replayed from its events to
+// just after that job's saved user rows (its message and any steers), so a
+// rebuilt conversation keeps the message order instead of piling replayed
+// output after all history. A run whose rows lie before the loaded history
+// window (leadingJobIds) goes to the top. Runs sent in this view carry their
+// own user item and stay where they are.
+export function placeReplayedRuns(
+  state: ConversationState,
+  leadingJobIds?: ReadonlySet<string>,
+): ConversationState {
+  let items = state.items;
+  let front = 0;
+  for (const attempt of state.attempts) {
+    const jobId = attempt.jobId;
+    if (!jobId) continue;
+    const generation = attempt.generation;
+    const run = items.filter((item) => item.attempt === generation);
+    if (run.length === 0 || run.some((item) => item.role === "user" && item.steer === undefined)) continue;
+    const rest = items.filter((item) => item.attempt !== generation);
+    let at = -1;
+    for (let i = rest.length - 1; i >= 0; i--) {
+      const item = rest[i];
+      if (item.attempt === null && item.role === "user" && item.jobId === jobId) {
+        at = i + 1;
+        break;
+      }
+    }
+    if (at < 0) {
+      if (!leadingJobIds?.has(jobId)) continue;
+      at = front;
+      front += run.length;
+    }
+    items = [...rest.slice(0, at), ...run, ...rest.slice(at)];
+  }
+  if (items.length === state.items.length && items.every((item, i) => item === state.items[i])) return state;
+  return { ...state, items };
 }
 
 export function truncateItemsAfter(state: ConversationState, itemId: string): ConversationState {

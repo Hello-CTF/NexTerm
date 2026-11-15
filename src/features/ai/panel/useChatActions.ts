@@ -200,12 +200,22 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
       pushToast("info", t("AI 正在回答，请先停止当前回答再重试"));
       return;
     }
+    const jobId = item.attempt === null
+      ? undefined
+      : conv.attempts.find((attempt) => attempt.generation === item.attempt)?.jobId;
+    // A run rebuilt from its events after a remount gets a new generation; its
+    // message is the saved user row of the same job.
     const source = [...conv.items]
       .reverse()
       .find(
         (candidate): candidate is Extract<ChatItem, { role: "user" }> =>
           candidate.attempt === item.attempt && candidate.role === "user" && candidate.steer === undefined,
-      );
+      ) ?? (jobId
+      ? conv.items.find(
+          (candidate): candidate is Extract<ChatItem, { role: "user" }> =>
+            candidate.role === "user" && candidate.attempt === null && candidate.jobId === jobId && !candidate.steered,
+        )
+      : undefined);
     if (!source) {
       pushToast("info", t("未找到原消息内容，请手动重新发送"));
       return;
@@ -219,12 +229,15 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
       void send(snapshot);
       return;
     }
-    const jobId = item.attempt === null
-      ? undefined
-      : conv.attempts.find((attempt) => attempt.generation === item.attempt)?.jobId;
     const planMode = conversationRuns.find((run) => run.id === jobId)?.planMode ?? false;
     const { refs: droppedRefs, body } = splitUserRefs(source.text);
+    const droppedImages = source.imageCount ?? 0;
+    if (!body.trim()) {
+      pushToast("info", t("原消息的图片或引用无法自动恢复，请重新添加后发送"));
+      return;
+    }
     if (droppedRefs.length > 0) pushToast("info", t("原消息的 {length} 个引用无法自动恢复，如需引用请重新 @ 添加后发送", { length: droppedRefs.length }));
+    if (droppedImages > 0) pushToast("info", t("原消息的 {count} 张图片无法自动恢复，如需图片请重新添加后发送", { count: droppedImages }));
     void send({ message: body, images: [], refs: [], planMode });
   };
   const retryRunRef = useRef(retryRun);

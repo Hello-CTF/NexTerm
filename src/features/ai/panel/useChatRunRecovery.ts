@@ -13,7 +13,7 @@ import type { UseChatPanelStateOut } from "./useChatPanelState";
 import { t } from "../../../i18n";
 
 export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseChatPanelStateOut) {
-  const { tabId, isLifecycleActive, activeRunRef, stream, cancelWaitersRef, cancelOperationRef, setActiveRun, pushToast, conversationIdRef, pushAgentEvent, setBusy, runChannelRef, restoredChannelRef, disposeRestoredChannel, clearResyncState, tabKey, activeRef, catchupChains, clearResyncTimer, markSyncing, markSynced, markSyncFailed, resyncTimerRef, terminalPollRef, terminalPollFailuresRef, activeRun, isRestoreActive, setConversationRuns, runSequenceRef, runControl, restoreGenerationRef, updateConversationId, clearMessageHistory, setConversationError, resetMessageHistory, boundConversationId, setConversationId, restoreBindingRef, rightOpenRef } = p;
+  const { tabId, isLifecycleActive, activeRunRef, stream, cancelWaitersRef, cancelOperationRef, setActiveRun, pushToast, conversationIdRef, pushAgentEvent, setBusy, runChannelRef, restoredChannelRef, disposeRestoredChannel, clearResyncState, tabKey, activeRef, catchupChains, clearResyncTimer, markSyncing, markSynced, markSyncFailed, resyncTimerRef, terminalPollRef, terminalPollFailuresRef, activeRun, isRestoreActive, setConversationRuns, runSequenceRef, runControl, restoreGenerationRef, updateConversationId, clearMessageHistory, setConversationError, resetMessageHistory, boundConversationId, setConversationId, restoreBindingRef, rightOpenRef, leadingReplayJobIds } = p;
 
 
   const replayHitl = useCallback(async (generation: number, jobId: string) => {
@@ -324,7 +324,16 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
       const run = await aiApi.run(jobId);
       if (!isLifecycleActive() || !isCurrentAiRun(activeRunRef.current, generation)) return;
       terminalPollFailuresRef.current = 0;
-      if (run.conversationId !== id || !isRunTerminal(run)) return;
+      if (run.conversationId !== id) return;
+      if (!isRunTerminal(run)) {
+        // A run adopted after a remount has no live channel; without this its
+        // progress (a tool result, the next tool) would stay hidden until it ends.
+        const hasChannel =
+          runChannelRef.current?.generation === generation ||
+          restoredChannelRef.current?.generation === generation;
+        if (!hasChannel) await catchUpRunEvents(generation, jobId);
+        return;
+      }
       await catchUpRunEvents(generation, jobId);
       const latest = activeRunRef.current;
       if (!isLifecycleActive() || !isCurrentAiRun(latest, generation) || latest.settled || latest.jobId !== jobId) return;
@@ -458,6 +467,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
         { shouldContinue: () => isRestoreActive(restoreGeneration, id) },
       );
       if (!isRestoreActive(restoreGeneration, id)) return;
+      stream.placeReplayedRuns(leadingReplayJobIds(id));
     }
     const resumable = await findResumableRun(
       runs,
@@ -528,7 +538,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
     setActiveRun(bindAiRunJob(createAiRun(generation), resumable.run.id));
     setBusy(true);
     void replayHitl(generation, resumable.run.id);
-  }, [tabId, isRestoreActive, setConversationRuns, activeRunRef, disposeRestoredChannel, restoredChannelRef, scheduleExpiryWatch, tabKey, runControl, setActiveRun, setBusy, replayHitl, runSequenceRef, stream, pushAgentEvent, resyncRun, maybeOpenAiCreatedTerminal, settleRestoredRun, pushToast, clearResyncState]);
+  }, [tabId, isRestoreActive, leadingReplayJobIds, setConversationRuns, activeRunRef, disposeRestoredChannel, restoredChannelRef, scheduleExpiryWatch, tabKey, runControl, setActiveRun, setBusy, replayHitl, runSequenceRef, stream, pushAgentEvent, resyncRun, maybeOpenAiCreatedTerminal, settleRestoredRun, pushToast, clearResyncState]);
 
   const restoreConversation = useCallback(
     async (id: string) => {

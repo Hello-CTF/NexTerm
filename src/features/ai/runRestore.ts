@@ -218,7 +218,7 @@ export function replayableRuns(runs: AiRunDto[]): AiRunDto[] {
   return runs
     .filter((run) => run.status !== "completed" && run.status !== "superseded")
     .slice()
-    .sort((a, b) => a.createdAt - b.createdAt);
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 }
 
 export function replayableJobIds(runs: AiRunDto[]): Set<string> {
