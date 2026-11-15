@@ -8,7 +8,8 @@ import "context"
 // discard (when set) releases a value that arrives after the caller has gone, such as an opened file handle.
 //
 // Only requests whose abandonment leaves nothing half-done go through here: lookups, and opens whose late handle
-// discard closes. Mutating requests are waited for, so a write never reports cancellation while it may still commit.
+// discard closes. Mutating requests never do, so a timed-out lookup always means nothing changed; a write stops
+// waiting as a whole through boundWrite, which reports an unknown outcome instead of a cancellation.
 func await[T any](ctx context.Context, call func() (T, error), discard func(T)) (T, error) {
 	var zero T
 	if err := ctx.Err(); err != nil {

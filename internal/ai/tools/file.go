@@ -35,10 +35,16 @@ func (r *Registry) prepareFile(ctx context.Context, jobID string, scope Scope, c
 	if !ok {
 		return nil, nil, ErrReadRequired
 	}
+	// These are lookups: a timeout changes nothing.
+	lookupCtx, cancel := context.WithTimeout(ctx, fileToolTimeout)
+	defer cancel()
 	change := &preparedChange{path: args.Path, key: key, version: registered}
 	if !registered.Exists {
-		exists, err := files.Exists(ctx, args.Path)
+		exists, err := files.Exists(lookupCtx, args.Path)
 		if err != nil {
+			if timeout := toolTimeoutError(ctx, lookupCtx, call.Name, fileToolTimeout); timeout != nil {
+				return nil, nil, timeout
+			}
 			return nil, nil, err
 		}
 		if exists {
@@ -50,8 +56,11 @@ func (r *Registry) prepareFile(ctx context.Context, jobID string, scope Scope, c
 		change.before = fileState{known: true, missing: true}
 		change.after = args.Content
 	} else {
-		content, err := files.ReadFile(ctx, args.Path, 2<<20)
+		content, err := files.ReadFile(lookupCtx, args.Path, 2<<20)
 		if err != nil {
+			if timeout := toolTimeoutError(ctx, lookupCtx, call.Name, fileToolTimeout); timeout != nil {
+				return nil, nil, timeout
+			}
 			return nil, nil, err
 		}
 		if versionOf(content) != registered {
@@ -92,6 +101,13 @@ func (r *Registry) prepareFile(ctx context.Context, jobID string, scope Scope, c
 	return change, preview, nil
 }
 
+// fileWriteTimeout bounds the write phase of write_file and edit_file, after which the remote side is treated as hung.
+// The content is at most a few MiB (edits read at most 2 MiB) and a write is a handful of round trips plus a sync and
+// a rename, which a slow but working link or a busy network mount finishes well within it. It is twice
+// fileToolTimeout because a write also waits for the remote sync and commit, and a write cut short mid-step reports an
+// unknown outcome the model has to settle by reading the file again.
+var fileWriteTimeout = 120 * time.Second
+
 const (
 	writeCreateSemantics  = "atomic_no_clobber_create"
 	writeReplaceSemantics = "non_cas_overwrite"
@@ -121,10 +137,17 @@ func (r *Registry) writePrepared(ctx context.Context, jobID string, scope Scope,
 	if _, ok := r.state(jobID).readVersion(change.key); !ok {
 		return Fail(ErrReadRequired)
 	}
-	exists, err := files.Exists(ctx, change.path)
+	lookupCtx, cancelLookup := context.WithTimeout(ctx, fileToolTimeout)
+	defer cancelLookup()
+	exists, err := files.Exists(lookupCtx, change.path)
 	if err != nil {
+		if failure, timedOut := toolTimeout(ctx, lookupCtx, call.Name, fileToolTimeout); timedOut {
+			return failure
+		}
 		return Fail(err)
 	}
+	writeCtx, cancelWrite := context.WithTimeout(ctx, fileWriteTimeout)
+	defer cancelWrite()
 	change.create = !change.version.Exists || !exists
 	var writeErr error
 	if change.create {
@@ -138,15 +161,24 @@ func (r *Registry) writePrepared(ctx context.Context, jobID string, scope Scope,
 		if err := ctx.Err(); err != nil {
 			return Fail(err)
 		}
-		writeErr = writer.WriteFileVersion(ctx, change.path, []byte(change.after), false, conditional.Absent())
+		writeErr = writer.WriteFileVersion(writeCtx, change.path, []byte(change.after), false, conditional.Absent())
 	} else {
 		if err := ctx.Err(); err != nil {
 			return Fail(err)
 		}
 		change.backup = r.deps.BackupBeforeOverwrite != nil && r.deps.BackupBeforeOverwrite(ctx, scope)
-		writeErr = files.WriteFile(ctx, change.path, []byte(change.after), change.backup)
+		writeErr = files.WriteFile(writeCtx, change.path, []byte(change.after), change.backup)
 	}
 	if writeErr != nil {
+		if errors.Is(writeErr, base.ErrWriteOutcomeUnknown) {
+			return r.unknownWriteOutcome(ctx, jobID, change, writeErr)
+		}
+		// An SFTP write that returns its context's error rather than an unknown outcome stopped before modifying the
+		// file; other backends promise less, so the version is dropped and the next write re-reads the file.
+		if failure, timedOut := toolTimeout(ctx, writeCtx, call.Name, fileWriteTimeout); timedOut {
+			r.state(jobID).forgetRead(change.key)
+			return failure
+		}
 		if errors.Is(writeErr, conditional.ErrVersionMismatch) {
 			return Fail(ErrFileChanged)
 		}
@@ -156,6 +188,23 @@ func (r *Registry) writePrepared(ctx context.Context, jobID string, scope Scope,
 		return Fail(writeErr)
 	}
 	return r.completeWrite(ctx, jobID, scope, call, change, "committed")
+}
+
+// unknownWriteOutcome reports a write that stopped waiting during a mutating step. The remote side may still apply it,
+// so it is neither a failure nor a cancellation, and reading the file back now could not settle it either, because the
+// late step may still commit after the read. The read version is dropped, so the next write_file or edit_file of the
+// path requires a fresh read_file.
+func (r *Registry) unknownWriteOutcome(ctx context.Context, jobID string, change *preparedChange, writeErr error) Output {
+	r.state(jobID).forgetRead(change.key)
+	var result Output
+	var unknown *base.WriteOutcomeUnknownError
+	if ctx.Err() != nil || errors.As(writeErr, &unknown) && errors.Is(unknown.Reason, context.Canceled) {
+		result = Fail(fmt.Errorf("写入 %s 的结果未知：运行已取消时远端尚未答复写入步骤，已停止等待，但该步骤可能仍在远端执行；文件可能已被写入或替换，也可能没有。请先用 read_file 重新读取该文件确认当前内容，再决定是否重试", change.path))
+	} else {
+		result = Fail(fmt.Errorf("写入 %s 的结果未知：远端在 %d 秒内未答复写入步骤，已停止等待，但该步骤可能仍在远端执行；文件可能已被写入或替换，也可能没有。请先用 read_file 重新读取该文件确认当前内容，再决定是否重试", change.path, int(fileWriteTimeout/time.Second)))
+	}
+	result.OutcomeUnknown = true
+	return result
 }
 
 func (r *Registry) reconcileIndeterminateWrite(ctx context.Context, jobID string, scope Scope, call Call, change *preparedChange, writeErr error) Output {

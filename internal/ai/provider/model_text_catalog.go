@@ -559,6 +559,8 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "文件名 glob 无效: %v", target: "invalid filename glob: %v"},
 	{source: "offset 必须从 1 开始，limit 必须在 1-%d 行之间", target: "offset must start at 1, and limit must be between 1 and %d lines"},
 	{source: "%s 超时（%d 秒）：远端未在时限内响应，已停止等待", target: "%s timed out after %d seconds: the remote side did not respond in time; stopped waiting"},
+	{source: "写入 %s 的结果未知：远端在 %d 秒内未答复写入步骤，已停止等待，但该步骤可能仍在远端执行；文件可能已被写入或替换，也可能没有。请先用 read_file 重新读取该文件确认当前内容，再决定是否重试", target: "the outcome of writing %s is unknown: the remote side did not answer a write step within %d seconds, so it is no longer awaited, but the step may still run remotely; the file may or may not have been written or replaced. Read the file again with read_file to check its current content before deciding whether to retry"},
+	{source: "写入 %s 的结果未知：运行已取消时远端尚未答复写入步骤，已停止等待，但该步骤可能仍在远端执行；文件可能已被写入或替换，也可能没有。请先用 read_file 重新读取该文件确认当前内容，再决定是否重试", target: "the outcome of writing %s is unknown: the run was cancelled before the remote side answered a write step, so it is no longer awaited, but the step may still run remotely; the file may or may not have been written or replaced. Read the file again with read_file to check its current content before deciding whether to retry"},
 	{source: "操作 %s 没有执行记录：该操作未被记录或仍在执行中，这不代表它没有执行；请先检查实际状态（屏幕、文件、进程等）再决定是否重试", target: "operation %s has no record: it was not recorded or is still running, which does not mean it never ran; check the actual state (screen, files, processes) before deciding whether to retry"},
 	{source: "内容正则无效: %v", target: "invalid content regex: %v"},
 	{source: "正则无效: %v", target: "invalid regex: %v"},

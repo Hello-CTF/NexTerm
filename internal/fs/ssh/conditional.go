@@ -26,16 +26,21 @@ func (f *FS) WriteFileVersion(ctx context.Context, remotePath string, data []byt
 	if expected.Exists {
 		return fmt.Errorf("SFTP conditional replace %s: %w: the protocol has no compare-and-commit or file-lock primitive against non-cooperating writers", remotePath, base.ErrUnsupported)
 	}
-	return f.createFileVersion(ctx, remotePath, data, expected)
+	return f.boundWrite(ctx, remotePath, func(begin func() error) error {
+		return f.createFileVersion(ctx, remotePath, data, expected, begin)
+	})
 }
 
-func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []byte, expected conditional.Expectation) error {
+func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []byte, expected conditional.Expectation, begin func() error) error {
 	occupied, err := f.lstatOccupied(ctx, remotePath)
 	if err != nil {
 		return err
 	}
 	if occupied {
 		return remoteAlreadyExists(expected)
+	}
+	if err := begin(); err != nil {
+		return err
 	}
 	stage, err := f.uploadTemporary(ctx, remotePath, data, 0o600)
 	if err != nil {

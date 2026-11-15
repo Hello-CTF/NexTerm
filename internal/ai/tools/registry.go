@@ -995,12 +995,15 @@ func (r *Registry) recordOperationOutcome(ctx context.Context, call Call, operat
 		}
 		attempt.Error = string(excerpt)
 	}
+	// The durable states are only succeeded and failed, so an effect that may still have happened is recorded as
+	// failed with outcome_unknown in its result.
 	encoded, err := json.Marshal(struct {
-		OK          bool `json:"ok"`
-		ExitCode    int  `json:"exit_code"`
-		ExitUnknown bool `json:"exit_unknown,omitempty"`
-		Truncated   bool `json:"truncated,omitempty"`
-	}{result.OK, result.ExitCode, result.ExitUnknown, result.Truncated})
+		OK             bool `json:"ok"`
+		ExitCode       int  `json:"exit_code"`
+		ExitUnknown    bool `json:"exit_unknown,omitempty"`
+		OutcomeUnknown bool `json:"outcome_unknown,omitempty"`
+		Truncated      bool `json:"truncated,omitempty"`
+	}{result.OK, result.ExitCode, result.ExitUnknown, result.OutcomeUnknown, result.Truncated})
 	if err == nil {
 		attempt.Result = encoded
 	}

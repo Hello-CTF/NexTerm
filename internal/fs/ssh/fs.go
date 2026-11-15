@@ -40,6 +40,10 @@ type FS struct {
 	chown                    func(*sftp.Client, string, int, int) error
 	stageWrittenHook         func(temporary string)
 	replacePreCommitHook     func()
+	// abandoned counts, per resolved path, the writes boundWrite stopped waiting for that have not returned yet.
+	abandonedMu    sync.Mutex
+	abandoned      map[string]int
+	abandonedTotal int
 }
 
 // ClientOptions returns the SFTP client options NexTerm uses everywhere. Concurrent
@@ -185,24 +189,31 @@ func (f *FS) ReadFile(ctx context.Context, remotePath string, maxBytes int64) ([
 	return data, nil
 }
 
+// WriteFile replaces remotePath with data and stops waiting when ctx ends (see boundWrite): before its first mutating
+// request it returns ctx's error with nothing changed, afterwards a *base.WriteOutcomeUnknownError.
 func (f *FS) WriteFile(ctx context.Context, remotePath string, data []byte, backup bool) error {
 	remotePath, err := f.real(ctx, remotePath)
 	if err != nil {
 		return err
 	}
-	if backup {
-		info, err := f.stat(ctx, remotePath)
-		switch {
-		case err == nil:
-			if err := f.backup(ctx, remotePath, info.Mode()); err != nil {
-				return err
+	return f.boundWrite(ctx, remotePath, func(begin func() error) error {
+		if backup {
+			info, err := f.stat(ctx, remotePath)
+			switch {
+			case err == nil:
+				if err := begin(); err != nil {
+					return err
+				}
+				if err := f.backup(ctx, remotePath, info.Mode()); err != nil {
+					return err
+				}
+			case errors.Is(err, fs.ErrNotExist):
+			default:
+				return fmt.Errorf("SFTP stat before backup: %w", err)
 			}
-		case errors.Is(err, fs.ErrNotExist):
-		default:
-			return fmt.Errorf("SFTP stat before backup: %w", err)
 		}
-	}
-	return f.replaceFile(ctx, remotePath, data)
+		return f.replaceFile(ctx, remotePath, data, begin)
+	})
 }
 
 func (f *FS) Mkdir(ctx context.Context, remotePath string) error {

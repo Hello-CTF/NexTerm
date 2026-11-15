@@ -159,6 +159,10 @@ type Output struct {
 	OperationID string          `json:"operation_id,omitempty"`
 	Wait        *WaitOutcome    `json:"wait,omitempty"`
 	Terminals   []TerminalBrief `json:"terminals,omitempty"`
+
+	// OutcomeUnknown marks a failed result whose mutation may still have taken effect, such as a file write that
+	// stopped waiting during a mutating step; the durable outcome record keeps it apart from a plain failure.
+	OutcomeUnknown bool `json:"-"`
 }
 
 type ExecBatchProductionChallenge struct {

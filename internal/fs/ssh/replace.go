@@ -9,6 +9,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/pkg/sftp"
 )
 
@@ -30,9 +31,14 @@ const (
 // a target that is not a regular file, a symlink that cannot be resolved lexically, a directory where nothing can be
 // staged or only a world-visible sibling could be staged for content that is not group or other readable, a server that refuses the original's mode or owner, or a server that refuses the rename itself (a
 // bind-mounted file such as /etc/hosts in a container, a sticky directory, a locked Windows file).
-func (f *FS) replaceFile(ctx context.Context, remotePath string, data []byte) error {
+//
+// begin is called once the lookups are done, before the first mutating request (see boundWrite).
+func (f *FS) replaceFile(ctx context.Context, remotePath string, data []byte, begin func() error) error {
 	target, info, ok := f.replaceTarget(ctx, remotePath)
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := begin(); err != nil {
 		return err
 	}
 	if !ok || (info != nil && !info.Mode().IsRegular()) {
@@ -179,11 +185,18 @@ func (f *FS) writeInPlace(ctx context.Context, remotePath string, data []byte) e
 		return err
 	}
 	defer writer.Close()
+	// The open truncated the file, so a write that ctx stops from here on has left it partly rewritten.
+	stopped := func(err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return &base.WriteOutcomeUnknownError{Path: remotePath, Reason: ctxErr}
+		}
+		return err
+	}
 	if err := writeAll(ctx, writer, data); err != nil {
-		return fmt.Errorf("SFTP write %s: %w", remotePath, err)
+		return stopped(fmt.Errorf("SFTP write %s: %w", remotePath, err))
 	}
 	if err := writer.Sync(); err != nil {
-		return fmt.Errorf("SFTP sync %s: %w", remotePath, err)
+		return stopped(fmt.Errorf("SFTP sync %s: %w", remotePath, err))
 	}
 	if err := writer.Close(); err != nil {
 		return fmt.Errorf("SFTP close %s: %w", remotePath, err)

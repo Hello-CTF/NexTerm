@@ -176,7 +176,9 @@ func TestWriteFileWithoutPosixRenameMovesTheOriginalAsideSafely(t *testing.T) {
 }
 
 // stagedExposure reports how the content written so far could be reached by another account: the staged file's own
-// mode and, when it sits in a staging directory, that directory's mode.
+// mode and, when it sits in a staging directory, that directory's mode. It runs inside a stage hook, on the goroutine
+// boundWrite starts, so a failure is reported with Errorf (FailNow would end that goroutine and leave the write
+// unfinished) and the all-permissive mode returned makes the caller's check fail too.
 func stagedExposure(t *testing.T, root, temporary string) (file, dir fs.FileMode) {
 	t.Helper()
 	local := filepath.Join(root, filepath.FromSlash(temporary))
@@ -185,14 +187,15 @@ func stagedExposure(t *testing.T, root, temporary string) (file, dir fs.FileMode
 	}
 	info, err := os.Lstat(local)
 	if err != nil {
-		t.Fatalf("staged file %s: %v", local, err)
+		t.Errorf("staged file %s: %v", local, err)
+		return fs.ModePerm, fs.ModePerm
 	}
-	file = info.Mode().Perm()
 	parent, err := os.Lstat(filepath.Dir(local))
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
+		return fs.ModePerm, fs.ModePerm
 	}
-	return file, parent.Mode().Perm()
+	return info.Mode().Perm(), parent.Mode().Perm()
 }
 
 func refusePrivateStaging(filesystem *FS) {

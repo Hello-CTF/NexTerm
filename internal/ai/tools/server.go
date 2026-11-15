@@ -500,17 +500,26 @@ func (r *Registry) readFile(ctx context.Context, jobID string, scope Scope, raw 
 // maxReadFileLines bounds one read_file range; MaxOutputBytes still caps the bytes shown.
 const maxReadFileLines = 2000
 
-// fileToolTimeout bounds read_file and list_dir, so a remote file system that stops answering fails the call instead
-// of holding it until the run is canceled.
+// fileToolTimeout bounds read_file, list_dir and the lookups of write_file and edit_file, so a remote file system that
+// stops answering fails the call instead of holding it until the run is canceled. The writes themselves are bounded
+// by fileWriteTimeout.
 var fileToolTimeout = 60 * time.Second
 
 // toolTimeout reports whether the tool's own deadline (not the run's cancellation) ended the call, and the failure
 // to return for it.
 func toolTimeout(runCtx, toolCtx context.Context, tool string, timeout time.Duration) (Output, bool) {
-	if runCtx.Err() != nil || !errors.Is(toolCtx.Err(), context.DeadlineExceeded) {
-		return Output{}, false
+	if err := toolTimeoutError(runCtx, toolCtx, tool, timeout); err != nil {
+		return Fail(err), true
 	}
-	return Fail(fmt.Errorf("%s 超时（%d 秒）：远端未在时限内响应，已停止等待", tool, int(timeout/time.Second))), true
+	return Output{}, false
+}
+
+// toolTimeoutError is toolTimeout's failure as an error, nil when the tool's own deadline did not end the call.
+func toolTimeoutError(runCtx, toolCtx context.Context, tool string, timeout time.Duration) error {
+	if runCtx.Err() != nil || !errors.Is(toolCtx.Err(), context.DeadlineExceeded) {
+		return nil
+	}
+	return fmt.Errorf("%s 超时（%d 秒）：远端未在时限内响应，已停止等待", tool, int(timeout/time.Second))
 }
 
 // readFileWindow shows lines offset..offset+limit-1 (1-based) of a file read in full. A whole file that fits keeps
