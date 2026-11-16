@@ -68,7 +68,19 @@ type messageDTO struct {
 	CreatedAt      int64           `json:"createdAt"`
 }
 
+// conversationRunGuard refuses changes to a conversation while one of its
+// runs is active; *agent.Runner implements it.
+type conversationRunGuard interface {
+	DeleteConversation(ctx context.Context, conversationID string, remove func(context.Context) error) error
+}
+
 func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, database *store.Store, validators ...agent.ScopeValidator) error {
+	return registerAICommandsGuarded(dispatcher, manager, database, nil, validators...)
+}
+
+// registerAICommandsGuarded registers the AI commands; runs is the AI
+// runtime's run guard, nil when no AI runtime is installed.
+func registerAICommandsGuarded(dispatcher *ipc.Dispatcher, manager *profiles.Manager, database *store.Store, runs conversationRunGuard, validators ...agent.ScopeValidator) error {
 	registrations := []func() error{
 		func() error {
 			return ipc.Register(dispatcher, "ai_models", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]string, error) {
@@ -153,7 +165,11 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 		},
 		func() error {
 			return ipc.Register(dispatcher, "ai_conversation_delete", func(ctx context.Context, _ *ipc.Call, input aiConversationRequest) (any, error) {
-				return nil, database.ConvDelete(ctx, input.ID)
+				remove := func(ctx context.Context) error { return database.ConvDelete(ctx, input.ID) }
+				if runs != nil {
+					return nil, runs.DeleteConversation(ctx, input.ID, remove)
+				}
+				return nil, remove(ctx)
 			})
 		},
 		func() error {

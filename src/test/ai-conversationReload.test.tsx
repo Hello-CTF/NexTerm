@@ -254,6 +254,99 @@ describe("AiSidebar history reload", () => {
   });
 });
 
+describe("AiSidebar partial answers on reload", () => {
+  let view: MountedView | null = null;
+
+  const run = (id: string, status: string, createdAt: number) => ({
+    id,
+    conversationId: "conv-1",
+    status,
+    attempt: 1,
+    seq: createdAt,
+    planMode: false,
+    source: "chat",
+    answer: "",
+    turns: 1,
+    tokensIn: 1,
+    tokensOut: 1,
+    cacheCreationTokens: 0,
+    latencyMs: 1,
+    retries: 0,
+    failures: 0,
+    createdAt,
+    updatedAt: createdAt,
+    finishedAt: createdAt,
+  });
+
+  beforeEach(async () => {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      setTimeout(cb, 0);
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    mocks.channels.length = 0;
+    // job-old is older than the loaded run list, so only its saved rows show it.
+    mocks.runs.mockResolvedValue([run("job-recent", "canceled", 5)]);
+    mocks.runEvents.mockImplementation((jobId: string) =>
+      Promise.resolve(
+        jobId === "job-recent"
+          ? [
+              { type: "delta", text: "最近的部分回答", seq: 1 },
+              { type: "canceled", message: "已停止本轮", seq: 2 },
+            ]
+          : [],
+      ),
+    );
+    mocks.hitlSnapshot.mockRejectedValue(new Error("none"));
+    mocks.hitlEvents.mockResolvedValue([]);
+    mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
+    mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "Demo", createdAt: 0, updatedAt: 0, scope: {} }]);
+    mocks.messages.mockResolvedValue([
+      message("p1", "user", { role: "user", content: "旧问题", jobId: "job-old" }),
+      message("p2", "assistant", { role: "assistant", content: "旧的部分回答", jobId: "job-old", partial: true }),
+      message("p3", "user", { role: "user", content: "新问题", jobId: "job-recent" }),
+      message("p4", "assistant", { role: "assistant", content: "最近的部分回答", jobId: "job-recent", partial: true }),
+    ]);
+    mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
+    mocks.usageSummary.mockResolvedValue([]);
+    useUi.setState({
+      rightOpen: true,
+      aiBusy: false,
+      takeover: null,
+      pushToast: mocks.toast,
+      workspaces: [],
+      aiBoards: {
+        [GLOBAL_AI_BOARD_KEY]: {
+          tabs: [{ id: "tab-bound", title: "Demo", conversationId: "conv-1" }],
+          activeTabId: "tab-bound",
+        },
+      },
+      sessions: [],
+    });
+    view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+    await flush();
+  });
+
+  afterEach(() => {
+    view?.unmount();
+    view = null;
+    vi.unstubAllGlobals();
+  });
+
+  it("shows an old run's saved partial answer as interrupted and a replayed run's text once", async () => {
+    const text = () => view!.container.textContent ?? "";
+    await flushUntil(() => text().includes("已停止本轮"));
+    await flush();
+
+    const occurrences = (needle: string) => text().split(needle).length - 1;
+    expect(occurrences("旧的部分回答")).toBe(1);
+    expect(occurrences("最近的部分回答")).toBe(1);
+    expect(occurrences("回答已中断")).toBe(1);
+    expect(text().indexOf("旧的部分回答")).toBeLessThan(text().indexOf("回答已中断"));
+    expect(text().indexOf("回答已中断")).toBeLessThan(text().indexOf("新问题"));
+  });
+});
+
 describe("aiCreatedTerminalOf", () => {
   it("extracts the foreground terminal payload and rejects anything else", () => {
     expect(aiCreatedTerminalOf({ type: "toolResult", ok: true, terminal: { tabId: "tab-9", sessionId: "s1", title: "构建机" } })).toEqual({

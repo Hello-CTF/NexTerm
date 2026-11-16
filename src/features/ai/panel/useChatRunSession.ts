@@ -140,6 +140,13 @@ export function useChatRunSession(p: AiChatBase) {
     dispose: () => void;
     generation: number;
   } | null>(null);
+  // When a channel last delivered an event for a generation. Only a recent
+  // delivery spares the terminal poll from catching up persisted events; an
+  // open channel alone proves nothing (a restored one may never be attached).
+  const liveDeliveryRef = useRef<{ generation: number; at: number } | null>(null);
+  const noteLiveDelivery = useCallback((generation: number) => {
+    liveDeliveryRef.current = { generation, at: Date.now() };
+  }, []);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resyncTimerRef = useRef<{ generation: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const restoredChannelRef = useRef<{
@@ -289,7 +296,7 @@ export function useChatRunSession(p: AiChatBase) {
   const onConversationChangeRef = useRef(onConversationChange);
   onConversationChangeRef.current = onConversationChange;
 
-  return { isLifecycleActive, conversationIdRef, toolHandlesRef, setToolHandleVersion, lastRefreshedHandleVersionRef, restoreBindingRef, restoreGenerationRef, setConversationId, onConversationChangeRef, stream, conv, permScope, conversationId, pushToast, input, workspaces, activeRunRef, cancelWaitersRef, cancelOperationRef, setActiveRun, pushAgentEvent, setBusy, runChannelRef, restoredChannelRef, disposeRestoredChannel, clearResyncState, activeRef, catchupChains, clearResyncTimer, markSyncing, markSynced, markSyncFailed, resyncTimerRef, terminalPollRef, terminalPollFailuresRef, activeRun, runSequenceRef, runControl, setConversationError, images, refs, planMode, busyRef, beginRun, requestSnapshotsRef, setInput, setRefs, setImages, aiScope, setPlanMode, busy, submittingCardIdRef, setSubmittingCardId, confirmCard, submittingCardId, currentProductionConfirm, questionCard, questionInput, productionConfirmRef, toolHandleVersion, stopRef, takeoverState, anyAiBusy, bindings, reclaimKeyLabel, aiScopeAssetId, activeWorkspace, conversationError, confirmCardRef, productionNames, handleProductionState, productionBlocked, setQuestionInput, syncNotice, activeGeneration, hitlWaiting, aiScopeProduction, setModelPanelOpen, modelPanelOpen, rightOpen, rightOpenRef };
+  return { liveDeliveryRef, noteLiveDelivery, isLifecycleActive, conversationIdRef, toolHandlesRef, setToolHandleVersion, lastRefreshedHandleVersionRef, restoreBindingRef, restoreGenerationRef, setConversationId, onConversationChangeRef, stream, conv, permScope, conversationId, pushToast, input, workspaces, activeRunRef, cancelWaitersRef, cancelOperationRef, setActiveRun, pushAgentEvent, setBusy, runChannelRef, restoredChannelRef, disposeRestoredChannel, clearResyncState, activeRef, catchupChains, clearResyncTimer, markSyncing, markSynced, markSyncFailed, resyncTimerRef, terminalPollRef, terminalPollFailuresRef, activeRun, runSequenceRef, runControl, setConversationError, images, refs, planMode, busyRef, beginRun, requestSnapshotsRef, setInput, setRefs, setImages, aiScope, setPlanMode, busy, submittingCardIdRef, setSubmittingCardId, confirmCard, submittingCardId, currentProductionConfirm, questionCard, questionInput, productionConfirmRef, toolHandleVersion, stopRef, takeoverState, anyAiBusy, bindings, reclaimKeyLabel, aiScopeAssetId, activeWorkspace, conversationError, confirmCardRef, productionNames, handleProductionState, productionBlocked, setQuestionInput, syncNotice, activeGeneration, hitlWaiting, aiScopeProduction, setModelPanelOpen, modelPanelOpen, rightOpen, rightOpenRef };
 }
 
 export type UseChatRunSessionOut = ReturnType<typeof useChatRunSession>;

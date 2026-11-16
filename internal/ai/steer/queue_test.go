@@ -51,6 +51,23 @@ func TestQueueBoundedAndReusableAfterDrain(t *testing.T) {
 	}
 }
 
+func TestQueueCloseReturnsLeftoverAndRefusesLaterPushes(t *testing.T) {
+	queue := NewQueue(4)
+	if err := queue.Push(schema.UserMessage("queued")); err != nil {
+		t.Fatal(err)
+	}
+	leftover := queue.Close()
+	if len(leftover) != 1 || leftover[0].Content != "queued" {
+		t.Fatalf("Close leftover = %#v", leftover)
+	}
+	if err := queue.Push(schema.UserMessage("late")); !errors.Is(err, ErrQueueClosed) {
+		t.Fatalf("Push after Close = %v, want ErrQueueClosed", err)
+	}
+	if drained := queue.Drain(); len(drained) != 0 {
+		t.Fatalf("Drain after Close = %#v", drained)
+	}
+}
+
 func TestQueueConcurrentPushAndDrain(t *testing.T) {
 	queue := NewQueue(32)
 	var wg sync.WaitGroup

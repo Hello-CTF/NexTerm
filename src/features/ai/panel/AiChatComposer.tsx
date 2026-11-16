@@ -348,7 +348,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
-              className={`nx-cbar-btn ${permError ? "is-error" : ""} ${perm?.mode === "silent" ? "is-attention" : ""} ${permOpen ? "is-open" : ""}`}
+              className={`nx-cbar-btn ${permError ? "is-error" : ""} ${perm?.mode === "silent" || perm?.mode === "full_access" ? "is-attention" : ""} ${permOpen ? "is-open" : ""}`}
               title={permTitle}
               aria-label={permTitle}
               aria-expanded={permOpen}

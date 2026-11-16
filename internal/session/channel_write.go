@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
@@ -49,11 +50,24 @@ func writeChannelInput(ctx context.Context, channel *channelHandle, data []byte)
 	return nil
 }
 
-// writeChannelContext writes data to the channel honoring ctx when the
-// channel supports context writes; channels without the capability keep the
-// plain blocking write. A cancelled context write terminates the underlying
-// stream (reattach-only, per the supervisor contract): the unconfirmed
-// bytes are never replayed, so the caller must not retry blindly.
+// ErrWriteStalled reports a channel write the caller stopped waiting for, or
+// one refused because an earlier abandoned write is still blocked in the
+// transport. The abandoned bytes may still reach the terminal later, so the
+// caller must not retry blindly.
+var ErrWriteStalled = errors.New("terminal input write is blocked: the terminal is not accepting input; earlier input may still be delivered later, do not retry blindly")
+
+// stalledWriteWait bounds how long a write waits behind an abandoned write
+// that is still blocked in the transport before it fails with
+// ErrWriteStalled, so a stalled channel never parks later writers (and the
+// tab write gate they hold) indefinitely.
+var stalledWriteWait = 5 * time.Second
+
+// writeChannelContext writes data to the channel honoring ctx. Channels with
+// the context-write capability abort the write itself; a cancelled context
+// write terminates the underlying stream (reattach-only, per the supervisor
+// contract): the unconfirmed bytes are never replayed, so the caller must not
+// retry blindly. Other channels cannot abort a blocked Write, so the caller
+// stops waiting for it instead (see writeBlocking).
 func writeChannelContext(ctx context.Context, channel *channelHandle, data []byte) error {
 	if writer, ok := channel.Channel.(channelContextWriter); ok {
 		for len(data) > 0 {
@@ -68,7 +82,88 @@ func writeChannelContext(ctx context.Context, channel *channelHandle, data []byt
 		}
 		return nil
 	}
-	if err := writeAll(channel, data); err != nil {
+	return channel.writeBlocking(ctx, data)
+}
+
+// writeBlocking performs a plain blocking channel write that the caller stops
+// waiting for when ctx ends. The transport Write cannot be recalled, so it
+// keeps running and still delivers its bytes if the channel recovers; until
+// it returns, later writes wait for it (bounded by their context and
+// stalledWriteWait) so input is never interleaved into its remainder.
+func (c *channelHandle) writeBlocking(ctx context.Context, data []byte) error {
+	done, err := c.beginWrite(ctx)
+	if err != nil {
+		return err
+	}
+	if err := context.Cause(ctx); err != nil {
+		// Nothing was sent: report the plain context error, not a stall.
+		c.endWrite(done)
+		return err
+	}
+	if ctx.Done() == nil {
+		err := writeAll(c.Channel, data)
+		c.endWrite(done)
+		return convertWriteResult(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		err := writeAll(c.Channel, data)
+		c.endWrite(done)
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		return convertWriteResult(err)
+	case <-ctx.Done():
+	}
+	select {
+	case err := <-result:
+		return convertWriteResult(err)
+	default:
+		return fmt.Errorf("%w: %w", ErrWriteStalled, context.Cause(ctx))
+	}
+}
+
+// beginWrite claims the channel for one blocking write, first waiting for a
+// write that is still in flight.
+func (c *channelHandle) beginWrite(ctx context.Context) (chan struct{}, error) {
+	var expired <-chan time.Time
+	for {
+		c.writeMu.Lock()
+		previous := c.writing
+		if previous == nil {
+			done := make(chan struct{})
+			c.writing = done
+			c.writeMu.Unlock()
+			return done, nil
+		}
+		c.writeMu.Unlock()
+		if expired == nil {
+			timer := time.NewTimer(stalledWriteWait)
+			defer timer.Stop()
+			expired = timer.C
+		}
+		select {
+		case <-previous:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%w: %w", ErrWriteStalled, context.Cause(ctx))
+		case <-expired:
+			return nil, ErrWriteStalled
+		}
+	}
+}
+
+func (c *channelHandle) endWrite(done chan struct{}) {
+	c.writeMu.Lock()
+	if c.writing == done {
+		c.writing = nil
+	}
+	c.writeMu.Unlock()
+	close(done)
+}
+
+func convertWriteResult(err error) error {
+	if err != nil {
 		return convertChannelWriteError(err)
 	}
 	return nil

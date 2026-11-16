@@ -271,7 +271,10 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
         );
         return;
       }
-    } catch {
+    } catch (e) {
+      // Deleting removes the run records too, so an unchecked conversation is kept.
+      pushToast("error", t("无法确认此会话中是否有 AI 任务正在运行，暂未删除，请稍后重试：{value}", { value: describeError(e) }));
+      return;
     }
     const ok = await ask(t("确定要删除会话「{value}」吗？消息记录、运行记录和定时任务将一并清除，不可恢复。", { value: c.title || t("（未命名会话）") }), {
       kind: "warning",

@@ -69,7 +69,15 @@ func (s *sessionTerminal) WritePaste(ctx context.Context, tabID, text string) er
 }
 
 func (s *sessionTerminal) WaitSnapshot(ctx context.Context, tabID string) (Screen, error) {
-	snapshot, tail, err := s.manager.TerminalWaitSnapshotFor(sessionRequestContext(ctx), tabID)
+	ctx = sessionRequestContext(ctx)
+	// The sequence is read before the synchronized snapshot: it never runs
+	// ahead of the screen it is reported with, so resuming from it can
+	// repeat output but never skip it.
+	seq, seqErr := s.manager.ScreenSeqFor(ctx, tabID)
+	if seqErr != nil {
+		seq = 0
+	}
+	snapshot, tail, err := s.manager.TerminalWaitSnapshotFor(ctx, tabID)
 	if err != nil {
 		return Screen{}, err
 	}
@@ -77,7 +85,7 @@ func (s *sessionTerminal) WaitSnapshot(ctx context.Context, tabID string) (Scree
 	if snapshot.LastOutputMsAgo <= math.MaxInt64 {
 		idle = int64(snapshot.LastOutputMsAgo)
 	}
-	return Screen{Text: snapshot.Text, Tail: tail, CursorRow: snapshot.CursorRow, CursorCol: snapshot.CursorCol, Cols: snapshot.Cols, Rows: snapshot.Rows, IdleMS: idle, AltScreen: snapshot.AltScreen}, nil
+	return Screen{Text: snapshot.Text, Tail: tail, CursorRow: snapshot.CursorRow, CursorCol: snapshot.CursorCol, Cols: snapshot.Cols, Rows: snapshot.Rows, IdleMS: idle, Seq: seq, AltScreen: snapshot.AltScreen}, nil
 }
 
 func (s *sessionTerminal) CommandState(ctx context.Context, tabID string) (CommandState, error) {

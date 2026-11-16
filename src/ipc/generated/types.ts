@@ -1962,6 +1962,7 @@ export type Link = {
   url: string;
   username: string;
   insecure: boolean;
+  proxy: LinkProxy;
   hasPassword: boolean;
   verifiedAt: number;
   lastError: string;
@@ -1976,6 +1977,23 @@ export type LinkPatch = {
   username: string | null;
   password: string | null;
   insecure: boolean | null;
+  proxy: LinkProxyPatch | null;
+};
+
+export type LinkProxy = {
+  type: string;
+  host: string;
+  port: number;
+  username: string;
+  hasPassword: boolean;
+};
+
+export type LinkProxyPatch = {
+  type: string;
+  host: string;
+  port: number;
+  username: string;
+  password: string | null;
 };
 
 export type LinkResetPasswordRequest = {
@@ -2916,6 +2934,14 @@ export type RunHistoryPage = {
 
 export type RunRequest = {
   runId: string;
+};
+
+export type RunSettings = {
+  maxTurns: number;
+};
+
+export type RunSettingsInput = {
+  maxTurns: number;
 };
 
 export type RunState = {

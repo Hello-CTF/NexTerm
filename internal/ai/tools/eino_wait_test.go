@@ -22,7 +22,8 @@ func TestEinoWaitForPatternThreeStates(t *testing.T) {
 		wantText string
 	}{
 		{name: "nonempty pattern", args: `{"pattern":"READY"}`, wantOK: true, wantText: "模式已出现"},
-		{name: "explicit empty pattern", args: `{"pattern":""}`, wantOK: true, wantText: "模式已出现"},
+		{name: "explicit empty pattern", args: `{"pattern":""}`, wantOK: false, wantText: "pattern"},
+		{name: "empty pattern with quiet", args: `{"pattern":"","quiet_ms":50}`, wantOK: true, wantText: "安静"},
 		{name: "missing pattern without quiet", args: `{}`, wantOK: false, wantText: "pattern"},
 		{name: "quiet only", args: `{"quiet_ms":50}`, wantOK: true, wantText: "安静"},
 	} {

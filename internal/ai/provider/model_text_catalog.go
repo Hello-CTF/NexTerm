@@ -185,9 +185,9 @@ func projectModelResult(view modelResultView) string {
 	case "read_screen":
 		if view.OK {
 			if projected, ok := projectReadScreenText(view.Text); ok {
-				return projected
+				return projectOmissionMarker(projected, view.Truncated)
 			}
-			return view.Text
+			return projectOmissionMarker(view.Text, view.Truncated)
 		}
 	case "send_keys", "wait_for":
 		if projected, ok := projectTerminalWaitText(view.Text); ok {
@@ -242,6 +242,25 @@ func splitModelAuditSuffix(text string, depth int) (string, string, bool) {
 	}
 	nested := text[index+len(marker) : len(text)-1]
 	return text[:index], "\n[audit write failed: " + projectMachineTextDepth(nested, depth+1) + "]", true
+}
+
+var omissionMarkerPattern = regexp.MustCompile(`\n\[\.\.\. 已省略 ([0-9]+) 行 / ([0-9]+) 字节 \.\.\.\]\n`)
+
+// projectOmissionMarker translates the head-and-tail truncation marker of a capped result. It only runs on
+// results flagged truncated, so a marker-like line in untruncated output is left alone.
+func projectOmissionMarker(text string, truncated bool) string {
+	if !truncated {
+		return text
+	}
+	replaced := false
+	return omissionMarkerPattern.ReplaceAllStringFunc(text, func(match string) string {
+		if replaced {
+			return match
+		}
+		replaced = true
+		parts := omissionMarkerPattern.FindStringSubmatch(match)
+		return "\n[... omitted " + parts[1] + " lines / " + parts[2] + " bytes ...]\n"
+	})
 }
 
 func projectFreeResultText(text string, truncated bool) string {
@@ -457,7 +476,7 @@ func projectTerminalCreateDetail(detail string) string {
 }
 
 func projectShellHistoryText(text string, truncated bool) string {
-	body := projectFreeResultText(text, truncated)
+	body := projectOmissionMarker(projectFreeResultText(text, truncated), truncated)
 	prefix := ""
 	const remote = "[注意] 当前会话连接的是远端资产；以下是运行 NexTerm 的本机 shell 历史，不是远端机器的历史。\n"
 	if strings.HasPrefix(body, remote) {
@@ -503,6 +522,7 @@ func projectMemoryListText(text string) string {
 var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "工具参数无效: %w", target: "invalid tool arguments: %w"},
 	{source: "权限策略已拒绝: %w", target: "permission policy denied: %w"},
+	{source: "此操作需要用户确认（%w），但子代理内无法请求确认，操作未执行。不要重试；请在结果中说明需要执行的操作，由主代理执行（主代理可以请求用户确认）", target: "this operation needs user confirmation (%w), but confirmation is not available inside a subagent, so it was not executed. Do not retry it; state the needed action in your result so the parent agent can perform it (the parent agent can ask the user to confirm)"},
 	{source: "用户回答：%s", target: "user answer: %s"},
 	{source: "未知参数 %s", target: "unknown argument %s"},
 	{source: "缺少必填参数 %s", target: "missing required argument %s"},
@@ -511,6 +531,9 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "%s 的这个子命令没有对应规则", target: "there is no rule for this %s subcommand"},
 	{source: "参数 %s 的值 %q 不在允许范围", target: "value %[2]q of argument %[1]s is not allowed"},
 	{source: "未知工具 %s", target: "unknown tool %s"},
+	{source: "工具参数无法解析：%s", target: "tool arguments could not be parsed: %s"},
+	{source: "工具执行出错：%s", target: "tool execution failed: %s"},
+	{source: "工具 %s 不存在；可用工具：%s", target: "tool %s does not exist; available tools: %s"},
 	{source: "相同调用正在执行中，未重复执行: %w", target: "the same call is already running; did not execute it again: %w"},
 	{source: "调用与已记录的执行冲突（授权或参数不一致）: %w", target: "call conflicts with the recorded execution because authorization or arguments differ: %w"},
 	{source: "执行结果记录失败: %w", target: "failed to record execution result: %w"},
@@ -529,6 +552,7 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "未备份原文件（资产未开启覆盖前备份）", target: "original file not backed up (the asset has not enabled backup before overwrite)"},
 	{source: "已备份原文件为 .nexterm-bak", target: "original file backed up as .nexterm-bak"},
 	{source: "仅显示前 %d 行（查询返回 %d 行）\n", target: "showing only the first %d rows (query returned %d rows)\n"},
+	{source: "[... 已省略 %d 行 / %d 字节 ...]", target: "[... omitted %d lines / %d bytes ...]"},
 	{source: "数据库连接 %s 不存在或已关闭", target: "database connection %s does not exist or is closed"},
 	{source: "参数错误: %w", target: "invalid parameters: %w"},
 	{source: "MySQL 配置无效: %e", target: "invalid MySQL configuration: %e"},
@@ -547,7 +571,8 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "未知待办状态 %s", target: "unknown todo status %s"},
 	{source: "读取 %s 历史失败: %w", target: "failed to read %s history: %w"},
 	{source: "未找到本机 shell 历史文件（已尝试: %s）", target: "no local shell history file found (tried: %s)"},
-	{source: "未知控制键 <%s>", target: "unknown control key <%s>"},
+	{source: "未知控制键 <%s>；ctrl+ 仅支持字母与 [ \\ ] ^ _ ?，字面文本请用 <lt> 代替 <，或设置 paste=true 按字面发送", target: "unknown control key <%s>; ctrl+ supports only letters and [ \\ ] ^ _ ?; for literal text write <lt> instead of <, or set paste=true to send it literally"},
+	{source: "不支持的按键 <%s>；请使用 send_keys 说明中列出的按键名，字面文本请用 <lt> 代替 <，或设置 paste=true 按字面发送", target: "unsupported key <%s>; use a key name listed in the send_keys description; for literal text write <lt> instead of <, or set paste=true to send it literally"},
 	{source: "工具 %s 执行时崩溃：%s", target: "tool %s panicked during execution: %s"},
 	{source: "提醒内容过长或不是有效 UTF-8（上限 %d 字符）", target: "reminder content is too long or is not valid UTF-8 (maximum %d characters)"},
 	{source: "delay_minutes 超过 30 天上限（%d 分钟）", target: "delay_minutes exceeds the 30-day limit (%d minutes)"},
@@ -555,6 +580,11 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "提醒已创建（任务 %s），将于 %s 投递到当前会话；可在定时任务列表查看投递状态", target: "reminder created (job %s) and will be delivered to this conversation at %s; delivery status is available in the scheduled jobs list"},
 
 	{source: "文件名 glob 无效: %v", target: "invalid filename glob: %v"},
+	{source: "offset 必须从 1 开始，limit 必须在 1-%d 行之间", target: "offset must start at 1, and limit must be between 1 and %d lines"},
+	{source: "%s 超时（%d 秒）：远端未在时限内响应，已停止等待", target: "%s timed out after %d seconds: the remote side did not respond in time; stopped waiting"},
+	{source: "写入 %s 的结果未知：远端在 %d 秒内未答复写入步骤，已停止等待，但该步骤可能仍在远端执行；文件可能已被写入或替换，也可能没有。请先用 read_file 重新读取该文件确认当前内容，再决定是否重试", target: "the outcome of writing %s is unknown: the remote side did not answer a write step within %d seconds, so it is no longer awaited, but the step may still run remotely; the file may or may not have been written or replaced. Read the file again with read_file to check its current content before deciding whether to retry"},
+	{source: "写入 %s 的结果未知：运行已取消时远端尚未答复写入步骤，已停止等待，但该步骤可能仍在远端执行；文件可能已被写入或替换，也可能没有。请先用 read_file 重新读取该文件确认当前内容，再决定是否重试", target: "the outcome of writing %s is unknown: the run was cancelled before the remote side answered a write step, so it is no longer awaited, but the step may still run remotely; the file may or may not have been written or replaced. Read the file again with read_file to check its current content before deciding whether to retry"},
+	{source: "操作 %s 没有执行记录：该操作未被记录或仍在执行中，这不代表它没有执行；请先检查实际状态（屏幕、文件、进程等）再决定是否重试", target: "operation %s has no record: it was not recorded or is still running, which does not mean it never ran; check the actual state (screen, files, processes) before deciding whether to retry"},
 	{source: "内容正则无效: %v", target: "invalid content regex: %v"},
 	{source: "正则无效: %v", target: "invalid regex: %v"},
 	{source: "正则无效: %w", target: "invalid regex: %w"},
@@ -566,8 +596,11 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "命令状态：%s，序号 %d", target: "command state: %s, sequence %d"},
 	{source: "新输出（序号 %d → %d，最新 %d）", target: "new output (sequence %d -> %d, latest %d)"},
 	{source: "已发送（屏幕序号 %d）", target: "sent (screen sequence %d)"},
+	{source: "since_seq=%d 超过该终端的最新序号 %d；它可能是另一个终端的锚点，请先 read_screen 获取该终端的屏幕序号", target: "since_seq=%d is beyond this terminal's latest sequence %d; it may be an anchor from another terminal, so read_screen this terminal for its screen sequence first"},
 	{source: "已发送（屏幕序号 %d）；该终端不支持 OSC 133 命令跟踪，无法确认命令是否完成，请用 wait_for 校验新输出", target: "sent (screen sequence %d); this terminal does not support OSC 133 command tracking, so command completion cannot be confirmed; use wait_for to verify new output"},
 	{source: "模式已出现（新输出，屏幕序号 %d）", target: "pattern appeared (new output, screen sequence %d)"},
+	{source: "发送按键超时：%s 内终端未接受输入，终端可能无响应；按键可能稍后仍会送达，请先读取屏幕确认再决定是否重试: %w", target: "sending keys timed out: the terminal accepted no input within %s and may be unresponsive; the keys may still be delivered later, so read the screen before deciding whether to retry: %w"},
+	{source: "工具 %s 执行超过 %s 仍未返回，已停止等待；操作可能仍在后台进行，结果未知，请先读取状态确认再决定是否重试", target: "tool %s did not return within %s, so it is no longer awaited; the operation may still be running in the background and its result is unknown, so check the state before deciding whether to retry"},
 	{source: "等待超时，锚点 %d 之后的新输出", target: "wait timed out, new output after anchor %d"},
 	{source: "已将终端标签页 %s 重命名为「%s」", target: "renamed terminal tab %s to \"%s\""},
 	{source: "已在后台创建分离终端（%s），AI 可在其中工作，用户可在「后台会话」中接管", target: "created detached terminal in the background (%s); AI can work in it, and the user can take over in 「后台会话」"},
@@ -968,25 +1001,26 @@ var modelStaticText = map[string]string{
 }
 
 var modelAdditionalStaticText = map[string]string{
-	"设备授权至少需要一个种类":                                           "device grant requires at least one kind",
-	"设备授权种类仅支持 terminal_write/session_exec":                  "device grant kinds only support terminal_write/session_exec",
-	"设备授权缺少设备 ID":                                            "device grant requires a device ID",
-	"授权规则缺少设备 ID":                                            "grant rule requires a device ID",
-	"授权规则动作仅支持 write_file/edit_file/exec_commands/send_keys": "grant rule action only supports write_file/edit_file/exec_commands/send_keys",
-	"文件写入规则必须限定路径范围":                                         "file write rules must specify a path scope",
-	"该动作的规则不支持路径范围":                                          "rules for this action do not support a path scope",
-	"授权规则过期时间必须晚于当前时间":                                       "grant rule expiration must be later than the current time",
-	"授权规则缺少规则 ID":                                            "grant rule requires a rule ID",
-	"命令类授权规则必须限定操作种类，不能整机放行":                                 "command grant rules must be limited to operation kinds and cannot allow the whole device",
-	"路径类授权规则不支持操作种类范围":                                       "path grant rules do not support an operation kind scope",
-	"设备权限模式缺少设备 ID":                                          "device permission mode requires a device ID",
-	"权限模式仅支持 read_only/read_write/silent/unattended":         "permission mode only supports read_only/read_write/silent/unattended",
-	"模型返回了空 tool call ID":                                    "model returned an empty tool call ID",
-	"等待结束，未观察到新命令开始（终端可能不支持 OSC 133，结果未验证）":                  "wait ended; no new command start was observed (terminal may not support OSC 133; result is unverified)",
-	"等待结束，未观察到新命令开始（若仅发送文本未回车，属预期）":                          "wait ended; no new command start was observed (expected if only text without Enter was sent)",
-	"发送时已有命令在运行，该命令已结束":                                      "a command was already running when keys were sent; that command has finished",
-	"发送前已有命令在运行，该命令仍在运行（本次按键已送入该程序）":                         "a command was already running before keys were sent and is still running; these keys were delivered to that program",
-	"timeout_ms 必须在 1-60000 之间":                              "timeout_ms must be between 1 and 60000",
+	"未说明原因":                                                      "no reason given",
+	"设备授权至少需要一个种类":                                               "device grant requires at least one kind",
+	"设备授权种类仅支持 terminal_write/session_exec":                      "device grant kinds only support terminal_write/session_exec",
+	"设备授权缺少设备 ID":                                                "device grant requires a device ID",
+	"授权规则缺少设备 ID":                                                "grant rule requires a device ID",
+	"授权规则动作仅支持 write_file/edit_file/exec_commands/send_keys":     "grant rule action only supports write_file/edit_file/exec_commands/send_keys",
+	"文件写入规则必须限定路径范围":                                             "file write rules must specify a path scope",
+	"该动作的规则不支持路径范围":                                              "rules for this action do not support a path scope",
+	"授权规则过期时间必须晚于当前时间":                                           "grant rule expiration must be later than the current time",
+	"授权规则缺少规则 ID":                                                "grant rule requires a rule ID",
+	"命令类授权规则必须限定操作种类，不能整机放行":                                     "command grant rules must be limited to operation kinds and cannot allow the whole device",
+	"路径类授权规则不支持操作种类范围":                                           "path grant rules do not support an operation kind scope",
+	"设备权限模式缺少设备 ID":                                              "device permission mode requires a device ID",
+	"权限模式仅支持 read_only/read_write/silent/full_access/unattended": "permission mode only supports read_only/read_write/silent/full_access/unattended",
+	"模型返回了空 tool call ID":                                        "model returned an empty tool call ID",
+	"等待结束，未观察到新命令开始（终端可能不支持 OSC 133，结果未验证）":                      "wait ended; no new command start was observed (terminal may not support OSC 133; result is unverified)",
+	"等待结束，未观察到新命令开始（若仅发送文本未回车，属预期）":                              "wait ended; no new command start was observed (expected if only text without Enter was sent)",
+	"发送时已有命令在运行，该命令已结束":                                          "a command was already running when keys were sent; that command has finished",
+	"发送前已有命令在运行，该命令仍在运行（本次按键已送入该程序）":                             "a command was already running before keys were sent and is still running; these keys were delivered to that program",
+	"timeout_ms 必须在 1-60000 之间":                                  "timeout_ms must be between 1 and 60000",
 
 	"接管任务不存在或已结束":                 "takeover task not found or already ended",
 	"接管令牌已过期":                     "takeover token expired",
@@ -1059,4 +1093,7 @@ var modelAdditionalStaticText = map[string]string{
 	"开启 AI 授权同步需要先登录账号":   "enabling AI grant sync requires signing in",
 	"AI 运行不存在":            "AI run not found",
 	"数据库清理被读事务阻塞":         "database cleanup is blocked by a read transaction",
+
+	"该终端正处于终端接管中，AI 对话不能同时向其写入；请等待接管结束，或改用其他终端":                                  "this terminal is under a terminal takeover, so the AI chat cannot write to it at the same time; wait for the takeover to end or use another terminal",
+	"history_lines 不能与 since_seq、cursor 或 max_bytes 同时使用；按序号翻页请去掉 history_lines": "history_lines cannot be combined with since_seq, cursor, or max_bytes; drop history_lines to page by sequence",
 }

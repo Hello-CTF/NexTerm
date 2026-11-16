@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	aicontext "github.com/Hello-CTF/NexTerm/internal/ai/context"
@@ -29,6 +31,9 @@ var (
 	ErrInvalidConfirmation = errors.New("确认必须包含 callId、nonce 和有效 decision")
 	ErrSteerQueueFull      = errors.New("AI 补充指令队列已满，请稍后再试")
 	errRunPaused           = errors.New("AI 任务等待用户交互")
+	// errRunShutdown records a run stopped because the app closed; it reuses
+	// the restart wording and stays retryable.
+	errRunShutdown = errors.New("AI 任务因应用重启而中断")
 )
 
 type openAccessContextKey struct{}
@@ -120,6 +125,10 @@ type Config struct {
 	MaxImageBytes int
 
 	MaxPendingSteers int
+
+	// Settings holds the user's step limit, read when each run starts; MaxTurns
+	// applies when it holds no valid value.
+	Settings RunSettingsStore
 
 	Memory         *memory.Store
 	MemoryScope    memory.Scope
@@ -228,13 +237,37 @@ type job struct {
 	deliveryCtx context.Context
 	forceCancel context.CancelFunc
 	stream      Stream
-	memory      *guard.Memory
-	eino        *einoRuntime
-	cancelFn    adk.AgentCancelFunc
-	cancelSync  *cancelSync
-	capture     *Capture
+	// downstream is the live delivery below the journal; a confirmation from
+	// a reopened panel switches it to that panel's channel.
+	downstream *switchableStream
+	memory     *guard.Memory
+	// shutdown marks a run stopped because the app is closing; it is recorded
+	// as interrupted and retryable rather than canceled by the user.
+	shutdown atomic.Bool
+	// settled is set once the run's final status is recorded, right before
+	// its terminal event is delivered: the run writes nothing more to the
+	// conversation, so a client may start the next run as soon as it sees
+	// the terminal event even though cleanup is still finishing.
+	settled atomic.Bool
+	// pendingCalls are the call IDs of interactions shown to the user and not
+	// resolved yet, so an expiry can settle each card.
+	pendingCallsMu sync.Mutex
+	pendingCalls   []string
+	resolved       []Event
+	eino           *einoRuntime
+	cancelFn       adk.AgentCancelFunc
+	cancelSync     *cancelSync
+	capture        *Capture
 
 	steer *steer.Queue
+
+	// streamedMu guards streamed: the assistant text of the current model
+	// turn that reached the client but is not saved yet. A run that ends
+	// without a final answer saves it as a partial answer.
+	streamedMu sync.Mutex
+	streamed   strings.Builder
+	// streamedReasoning is the reasoning text of the same turn.
+	streamedReasoning strings.Builder
 
 	emitMu         sync.Mutex
 	emitTurn       uint64
@@ -284,6 +317,42 @@ func (j *job) emit(ctx context.Context, event Event) error {
 		return errors.New("AI job already finished")
 	}
 	return j.stream.Send(ctx, event)
+}
+
+func (j *job) recordStreamed(text string) {
+	j.streamedMu.Lock()
+	j.streamed.WriteString(text)
+	j.streamedMu.Unlock()
+}
+
+func (j *job) recordStreamedReasoning(text string) {
+	j.streamedMu.Lock()
+	j.streamedReasoning.WriteString(text)
+	j.streamedMu.Unlock()
+}
+
+func (j *job) resetStreamed() {
+	j.streamedMu.Lock()
+	j.streamed.Reset()
+	j.streamedReasoning.Reset()
+	j.streamedMu.Unlock()
+}
+
+// takeStreamed returns the unsaved streamed text and clears it, so it is
+// saved at most once.
+func (j *job) takeStreamed() string {
+	text, _ := j.takeStreamedWithReasoning()
+	return text
+}
+
+// takeStreamedWithReasoning is takeStreamed plus the turn's reasoning text.
+func (j *job) takeStreamedWithReasoning() (string, string) {
+	j.streamedMu.Lock()
+	defer j.streamedMu.Unlock()
+	text, reasoning := j.streamed.String(), j.streamedReasoning.String()
+	j.streamed.Reset()
+	j.streamedReasoning.Reset()
+	return text, reasoning
 }
 
 func (j *job) queueTurnEmits(events ...Event) {

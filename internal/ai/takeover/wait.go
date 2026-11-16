@@ -3,7 +3,6 @@ package takeover
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -11,7 +10,7 @@ import (
 )
 
 func (m *Manager) waitFor(ctx context.Context, tabID, pattern string, timeoutMS int64) (tools.Output, error) {
-	regex, err := regexp.Compile(pattern)
+	regex, err := tools.CompileWaitPattern(pattern)
 	if err != nil {
 		return tools.Fail(fmt.Errorf("正则无效: %w", err)), nil
 	}
@@ -40,7 +39,7 @@ func (m *Manager) waitFor(ctx context.Context, tabID, pattern string, timeoutMS 
 		if len(tail) > 30 {
 			tail = tail[len(tail)-30:]
 		}
-		if regex.MatchString(strings.Join(tail, "\n")) {
+		if tools.MatchWaitLines(regex, tail) {
 			return tools.OK("模式已出现"), nil
 		}
 		select {

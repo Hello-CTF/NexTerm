@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"errors"
+	"sync"
+	"time"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
@@ -36,13 +38,47 @@ func (m *resilientChatModel) Generate(ctx context.Context, input []*schema.Messa
 	return result.message, nil
 }
 
+// streamClosePollInterval bounds how long a consumer-side Close goes unnoticed
+// while the upstream is silent.
+const streamClosePollInterval = 50 * time.Millisecond
+
 func (m *resilientChatModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	ctx, cancel := context.WithCancel(ctx)
 	reader, writer := schema.Pipe[*schema.Message](1)
 	options := m.withBoundTools(opts)
+	// Pipe offers no close notification, so a watcher probes the writer with a
+	// sentinel frame that the returned reader drops. A closed reader makes
+	// Send report it at once and cancels the in-flight upstream request.
+	probe := &schema.Message{}
+	done := make(chan struct{})
+	var watcher sync.WaitGroup
+	watcher.Add(1)
 	go func() {
-		defer writer.Close()
+		defer watcher.Done()
+		ticker := time.NewTicker(streamClosePollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if writer.Send(probe, nil) {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	go func() {
+		defer func() {
+			close(done)
+			watcher.Wait()
+			cancel()
+			writer.Close()
+		}()
 		onFrame := func(message *schema.Message) error {
 			if writer.Send(message, nil) {
+				cancel()
 				return errStreamClosed
 			}
 			return nil
@@ -52,7 +88,12 @@ func (m *resilientChatModel) Stream(ctx context.Context, input []*schema.Message
 			writer.Send(nil, err)
 		}
 	}()
-	return reader, nil
+	return schema.StreamReaderWithConvert(reader, func(message *schema.Message) (*schema.Message, error) {
+		if message == probe {
+			return nil, schema.ErrNoValue
+		}
+		return message, nil
+	}), nil
 }
 
 func (m *resilientChatModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {

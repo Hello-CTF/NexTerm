@@ -49,6 +49,7 @@ import { isMobileShell } from "../../app/shell/shellMode";
 import { ModelManager } from "../ai/ModelPanel";
 import { PrivacyCard } from "./PrivacyCard";
 import { AiRulesCard } from "./AiRulesCard";
+import { AiRunSettingsCard } from "./AiRunSettingsCard";
 import { VaultCard } from "./VaultCard";
 import { AppLockCard } from "./AppLockCard";
 import { AppearanceCard } from "./AppearanceCard";
@@ -1078,6 +1079,8 @@ export function SettingsView({ active = true }: { active?: boolean }) {
         <PrivacyCard />
 
         <AiRulesCard />
+
+        <AiRunSettingsCard />
 
         <div id="settings-ai-skills" className="scroll-mt-12">
           <SkillsCard api={productionSkillsApi} />

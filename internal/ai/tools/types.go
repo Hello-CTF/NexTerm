@@ -46,6 +46,9 @@ var (
 	// present and must be looked at (read_screen) or explicitly forced
 	// through, never silently overwritten.
 	ErrUserInputPending = errors.New("终端存在自上次查看以来的新输入（可能是用户输入）；请先 read_screen 查看，确认后再发送，或用 force=true 强制发送")
+	// ErrTakeoverActive marks a chat-agent write refused because a terminal
+	// takeover currently owns the tab.
+	ErrTakeoverActive = errors.New("该终端正处于终端接管中，AI 对话不能同时向其写入；请等待接管结束，或改用其他终端")
 	// ErrNoLiveSession marks the resolver verdict that an asset has no live
 	// session right now — the only condition under which terminal_create
 	// may establish a new connection on explicit opt-in. Forbidden,
@@ -156,6 +159,10 @@ type Output struct {
 	OperationID string          `json:"operation_id,omitempty"`
 	Wait        *WaitOutcome    `json:"wait,omitempty"`
 	Terminals   []TerminalBrief `json:"terminals,omitempty"`
+
+	// OutcomeUnknown marks a failed result whose mutation may still have taken effect, such as a file write that
+	// stopped waiting during a mutating step; the durable outcome record keeps it apart from a plain failure.
+	OutcomeUnknown bool `json:"-"`
 }
 
 type ExecBatchProductionChallenge struct {
@@ -241,8 +248,8 @@ func Fail(err error) Output {
 }
 
 type TodoItem struct {
-	Content string `json:"content"`
-	Status  string `json:"status"`
+	Content string `json:"content" jsonschema_description:"What the item is"`
+	Status  string `json:"status" jsonschema:"enum=pending,enum=in_progress,enum=completed" jsonschema_description:"Progress of the item"`
 }
 
 type Question struct {
@@ -638,6 +645,10 @@ type Dependencies struct {
 	Reminders                   ReminderScheduler
 	Notify                      func(context.Context, string) error
 	Grants                      *guard.Grants
+	// TakeoverActive reports whether a terminal takeover currently owns the
+	// tab; chat-agent terminal writes to such a tab are refused. Nil means
+	// no takeover service is wired.
+	TakeoverActive func(tabID string) bool
 	// BackupBeforeOverwrite reports whether the session's asset currently enables the .nexterm-bak copy when an
 	// existing file is overwritten. It reads the stored asset options on every call; nil means off.
 	BackupBeforeOverwrite func(context.Context, Scope) bool

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { assetApi, localHelperApi, syncApi, transcriptApi, type TranscriptChunk, type TranscriptSummary } from "../../ipc/commands";
-import type { AccountLink, SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncStatus } from "../../ipc/types";
+import type { AccountLink, AccountLinkProxyPatch, AccountLinkProxyType, SyncCollectAsset, SyncCollectCredential, SyncCollectTombstone, SyncKindOptIn, SyncStatus } from "../../ipc/types";
 import { AuthApiError, syncV2Api } from "../../ipc/authApi";
 import { remoteLinkApi, syncCompareApi, type SyncCompareRow } from "../../ipc/remoteApi";
 import { useAuth } from "../auth/store";
@@ -36,6 +36,7 @@ import { WEB_SYNC_ERROR_EVENT, WEB_SYNC_REQUEST_EVENT, WEB_SYNC_RESULT_EVENT } f
 import { WEB } from "../../ipc/env";
 import { listenEvent } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import { formatTime } from "../../ui/format";
 import { AuthCard } from "./AuthCard";
 import { DesktopAccountSummary } from "./DesktopAccountSummary";
@@ -94,13 +95,64 @@ type LinkStep =
 
 type DesktopSyncStatus = SyncStatus & { paused?: boolean; vaultLocked?: boolean };
 
+type LinkDraft = {
+  url: string;
+  username: string;
+  password: string;
+  insecure: boolean;
+  proxyType: AccountLinkProxyType;
+  proxyHost: string;
+  proxyPort: string;
+  proxyUsername: string;
+  proxyPassword: string;
+};
+
+const EMPTY_LINK_DRAFT: LinkDraft = {
+  url: "", username: "", password: "", insecure: false,
+  proxyType: "", proxyHost: "", proxyPort: "", proxyUsername: "", proxyPassword: "",
+};
+
+// withHttps completes an address typed without a scheme as HTTPS; plain HTTP has to be typed out.
+function withHttps(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed || trimmed.includes("://")) return trimmed;
+  return `https://${trimmed.replace(/^\/+/, "")}`;
+}
+
+function draftFromLink(link: AccountLink): Pick<LinkDraft, "url" | "username" | "insecure" | "proxyType" | "proxyHost" | "proxyPort" | "proxyUsername"> {
+  const proxy = link.proxy;
+  return {
+    url: link.url, username: link.username, insecure: link.insecure,
+    proxyType: proxy?.type ?? "", proxyHost: proxy?.host ?? "", proxyPort: proxy?.port ? String(proxy.port) : "",
+    proxyUsername: proxy?.username ?? "",
+  };
+}
+
+function proxyPort(text: string): number | null {
+  const port = Number(text.trim());
+  return /^\d+$/.test(text.trim()) && port >= 1 && port <= 65535 ? port : null;
+}
+
+// proxyPatch turns the form into the saved proxy. A blank password keeps the saved one; SOCKS4 takes none.
+function proxyPatch(draft: LinkDraft): AccountLinkProxyPatch {
+  if (!draft.proxyType) return { type: "", host: "", port: 0, username: "" };
+  const username = draft.proxyUsername.trim();
+  return {
+    type: draft.proxyType,
+    host: draft.proxyHost.trim(),
+    port: proxyPort(draft.proxyPort) ?? 0,
+    username,
+    ...(draft.proxyType !== "socks4" && username && draft.proxyPassword ? { password: draft.proxyPassword } : {}),
+  };
+}
+
 function DesktopLinkCard() {
   const pushToast = useUi((s) => s.pushToast);
   const qc = useQueryClient();
 
   const [link, setLink] = useState<AccountLink | null>(null);
   const [status, setStatus] = useState<DesktopSyncStatus | null>(null);
-  const [draft, setDraft] = useState({ url: "", username: "", password: "", insecure: false });
+  const [draft, setDraft] = useState<LinkDraft>(EMPTY_LINK_DRAFT);
   const draftEdited = useRef(false);
   const [step, setStep] = useState<LinkStep>({ kind: "form" });
   const [busy, setBusy] = useState<null | "login" | "mfa" | "reset" | "logout">(null);
@@ -120,14 +172,15 @@ function DesktopLinkCard() {
   const [keyCopied, setKeyCopied] = useState(false);
   const [keyConfirmed, setKeyConfirmed] = useState(false);
   const [keyCopyError, setKeyCopyError] = useState<string | null>(null);
-  const insecurePanelId = useId();
-  const [insecureOpen, setInsecureOpen] = useState(false);
-  const savedInsecure = link?.insecure ?? false;
+  const advancedPanelId = useId();
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // A saved non-default advanced setting keeps the section open, so it is not applied out of sight.
+  const savedAdvanced = !!link?.insecure || !!link?.proxy?.type;
   useEffect(() => {
-    if (savedInsecure) setInsecureOpen(true);
-  }, [savedInsecure]);
+    if (savedAdvanced) setAdvancedOpen(true);
+  }, [savedAdvanced]);
 
-  const updateDraft = (patch: Partial<{ url: string; username: string; password: string; insecure: boolean }>) => {
+  const updateDraft = (patch: Partial<LinkDraft>) => {
     draftEdited.current = true;
     setDraft((d) => ({ ...d, ...patch }));
   };
@@ -141,8 +194,8 @@ function DesktopLinkCard() {
         setLink(l);
         setStatus(s);
         setLoaded(true);
-        // On first load, backfill URL/username/insecure from the saved link; the password stays blank; unsaved edits are not overwritten
-        setDraft((d) => (draftEdited.current ? d : { ...d, url: l.url, username: l.username, insecure: l.insecure }));
+        // On first load, backfill the saved link; the passwords stay blank; unsaved edits are not overwritten
+        setDraft((d) => (draftEdited.current ? d : { ...d, ...draftFromLink(l) }));
         const identity = JSON.stringify([l.url, s.loggedIn, s.userId, s.username]);
         if (lastIdentity.current !== identity) {
           lastIdentity.current = identity;
@@ -185,14 +238,17 @@ function DesktopLinkCard() {
   const login = async () => {
     setBusy("login");
     setError(null);
+    const url = withHttps(draft.url);
+    if (url !== draft.url) setDraft((d) => ({ ...d, url }));
     try {
       const r = await remoteLinkApi.linkSet({
-        url: draft.url.trim(),
+        url,
         username: draft.username.trim(),
         ...(draft.password ? { password: draft.password } : {}),
         insecure: draft.insecure,
+        proxy: proxyPatch(draft),
       });
-      setDraft((d) => ({ ...d, password: "" }));
+      setDraft((d) => ({ ...d, password: "", proxyPassword: "" }));
       if (r.connect === "mfa_required") {
         setMfaCode("");
         setStep({ kind: "mfa" });
@@ -305,7 +361,7 @@ function DesktopLinkCard() {
       setStatus(null);
       setLoaded(false);
       draftEdited.current = false;
-      setDraft((d) => ({ ...d, username: "", password: "" }));
+      setDraft((d) => ({ ...d, username: "", password: "", proxyPassword: "" }));
       void qc.invalidateQueries({ queryKey: ["sync-link"] });
       await load();
       pushToast("success", tr("已退出登录"));
@@ -319,7 +375,10 @@ function DesktopLinkCard() {
 
   const syncPaused = !!status?.paused || !!status?.vaultLocked;
   const connected = !!status?.loggedIn && !status.lastError && !syncPaused;
-  const loginReady = busy === null && !!draft.url.trim() && !!draft.username.trim() && (!!draft.password || !!link?.hasPassword);
+  const proxyReady = !draft.proxyType || (!!draft.proxyHost.trim() && proxyPort(draft.proxyPort) !== null);
+  const proxyPortInvalid = !!draft.proxyType && !!draft.proxyPort.trim() && proxyPort(draft.proxyPort) === null;
+  const savedProxyPassword = !!link?.proxy?.hasPassword && link.proxy.type === draft.proxyType;
+  const loginReady = busy === null && !!draft.url.trim() && !!draft.username.trim() && (!!draft.password || !!link?.hasPassword) && proxyReady;
 
   return (
     <>
@@ -382,10 +441,14 @@ function DesktopLinkCard() {
               <input
                 id="sync-url"
                 className="nx-input min-w-0 flex-1 font-mono"
-                placeholder="https://nexterm.example.com"
+                placeholder="nexterm.example.com"
                 value={draft.url}
                 autoComplete="url"
                 onChange={(e) => updateDraft({ url: e.target.value })}
+                onBlur={() => {
+                  const url = withHttps(draft.url);
+                  if (url !== draft.url) updateDraft({ url });
+                }}
               />
             </div>
             <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
@@ -419,19 +482,107 @@ function DesktopLinkCard() {
               <button
                 type="button"
                 className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
-                aria-expanded={insecureOpen}
-                aria-controls={insecurePanelId}
-                onClick={() => setInsecureOpen((v) => !v)}
+                aria-expanded={advancedOpen}
+                aria-controls={advancedPanelId}
+                onClick={() => setAdvancedOpen((v) => !v)}
               >
-                {insecureOpen ? (
+                {advancedOpen ? (
                   <IconChevronDown size={12} className="shrink-0" />
                 ) : (
                   <IconChevronRight size={12} className="shrink-0" />
                 )}
                 {tr("高级选项")}
               </button>
-              {insecureOpen && (
-                <div id={insecurePanelId} className="mt-2">
+              {advancedOpen && (
+                <div id={advancedPanelId} className="mt-2 flex flex-col gap-2">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                    <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-proxy-type">
+                      {tr("代理")}
+                    </label>
+                    <Select
+                      id="sync-proxy-type"
+                      ariaLabel={tr("代理类型")}
+                      className="min-w-0 flex-1"
+                      value={draft.proxyType}
+                      options={[
+                        { value: "", label: tr("不使用") },
+                        { value: "http", label: "HTTP" },
+                        { value: "socks4", label: "SOCKS4" },
+                        { value: "socks5", label: "SOCKS5" },
+                      ]}
+                      onChange={(value) => updateDraft({ proxyType: value as AccountLinkProxyType })}
+                    />
+                  </div>
+                  {!draft.proxyType && (
+                    <p className="nx-hint sm:pl-[84px]">{tr("不使用时沿用系统的 HTTPS_PROXY 等代理环境变量。")}</p>
+                  )}
+                  {draft.proxyType && (
+                    <>
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                        <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-proxy-host">
+                          {tr("代理地址")}
+                        </label>
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          <input
+                            id="sync-proxy-host"
+                            className="nx-input min-w-0 flex-1 font-mono"
+                            placeholder="127.0.0.1"
+                            value={draft.proxyHost}
+                            autoComplete="off"
+                            onChange={(e) => updateDraft({ proxyHost: e.target.value })}
+                          />
+                          <input
+                            id="sync-proxy-port"
+                            className="nx-input w-[84px] shrink-0 font-mono"
+                            inputMode="numeric"
+                            aria-label={tr("代理端口")}
+                            aria-invalid={proxyPortInvalid || undefined}
+                            placeholder={draft.proxyType === "http" ? "8080" : "1080"}
+                            value={draft.proxyPort}
+                            autoComplete="off"
+                            onChange={(e) => updateDraft({ proxyPort: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                      {proxyPortInvalid && <p className="nx-hint text-amber-300 sm:pl-[84px]">{tr("代理端口须在 1-65535 之间")}</p>}
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                        <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-proxy-user">
+                          {tr("代理账号")}
+                        </label>
+                        <input
+                          id="sync-proxy-user"
+                          className="nx-input min-w-0 flex-1"
+                          placeholder={draft.proxyType === "socks4" ? tr("用户 ID（可选）") : tr("用户名（可选）")}
+                          value={draft.proxyUsername}
+                          autoComplete="off"
+                          onChange={(e) => updateDraft({ proxyUsername: e.target.value })}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                        <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-proxy-pass">
+                          {tr("代理密码")}
+                        </label>
+                        <input
+                          id="sync-proxy-pass"
+                          type="password"
+                          className="nx-input min-w-0 flex-1"
+                          disabled={draft.proxyType === "socks4" || !draft.proxyUsername.trim()}
+                          placeholder={
+                            draft.proxyType === "socks4"
+                              ? tr("SOCKS4 不支持密码")
+                              : !draft.proxyUsername.trim()
+                                ? tr("填写代理账号后可设置")
+                                : savedProxyPassword
+                                  ? tr("留空则不修改已保存的密码")
+                                  : tr("可选")
+                          }
+                          value={draft.proxyType === "socks4" ? "" : draft.proxyPassword}
+                          autoComplete="new-password"
+                          onChange={(e) => updateDraft({ proxyPassword: e.target.value })}
+                        />
+                      </div>
+                    </>
+                  )}
                   <label className="flex items-start gap-2">
                     <input
                       type="checkbox"

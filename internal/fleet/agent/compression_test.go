@@ -36,7 +36,7 @@ func TestDialBridgeOffersCompressionByPurpose(t *testing.T) {
 		"": true, PurposeTerminal: true, "file": true,
 		"forward": false, "listen": false, "accept": false,
 	} {
-		conn, err := DialBridge(context.Background(), wsURL, HelloMessage{Type: "hello", BridgeID: "b1", Purpose: purpose}, false)
+		conn, err := DialBridge(context.Background(), wsURL, HelloMessage{Type: "hello", BridgeID: "b1", Purpose: purpose}, DialPolicy{})
 		if err != nil {
 			t.Fatalf("purpose %q: %v", purpose, err)
 		}

@@ -23,6 +23,8 @@ func TestEventGoldenJSON(t *testing.T) {
 		{Event{Type: "toolResult", ID: "c", OK: true, Summary: "s", Text: "full", ExitCode: 0, Terminal: &tools.CreatedTerminal{TabID: "tab-1", SessionID: "s-1", Title: "构建"}}, `{"exitCode":0,"id":"c","ok":true,"panic":false,"summary":"s","terminal":{"sessionId":"s-1","tabId":"tab-1","title":"构建"},"text":"full","truncated":false,"type":"toolResult"}`},
 		{Event{Type: "confirmRequired", ID: "c", Tool: "write_file", Args: json.RawMessage(`{}`), Risk: "needs_confirm", Nonce: "n", RequestID: "itr_1", Attempt: 2}, `{"args":{},"attempt":2,"confirmationNonce":"n","id":"c","preview":null,"reason":"","rendered":"","requestId":"itr_1","risk":"needs_confirm","tool":"write_file","type":"confirmRequired"}`},
 		{Event{Type: "questionRequired", ID: "q", Nonce: "n", Question: &tools.Question{Question: "继续？"}, RequestID: "itr_2", Attempt: 1}, `{"attempt":1,"confirmationNonce":"n","id":"q","question":{"question":"继续？"},"requestId":"itr_2","type":"questionRequired"}`},
+		{Event{Type: "interactionResolved", CallID: "c", Decision: "allow_session"}, `{"callId":"c","decision":"allow_session","type":"interactionResolved"}`},
+		{Event{Type: "interactionResolved", CallID: "q", Decision: "expired"}, `{"callId":"q","decision":"expired","type":"interactionResolved"}`},
 		{Event{Type: "screen", TabID: "t", Text: "screen"}, `{"tabId":"t","text":"screen","type":"screen"}`},
 		{Event{Type: "fileChange", ID: "c", Path: "/a", Before: "a", After: "b"}, `{"after":"b","before":"a","id":"c","path":"/a","type":"fileChange"}`},
 		{Event{Type: "usage", PromptTokens: 1, CompletionTokens: 2, CachedTokens: 3, ContextWindow: 4}, `{"cachedTokens":3,"completionTokens":2,"contextWindow":4,"promptTokens":1,"type":"usage"}`},

@@ -259,6 +259,18 @@
       "channel": false,
       "stream": "none"
     },
+    "ai_run_settings_get": {
+      "scope": "ai-run-settings",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "ai_run_settings_set": {
+      "scope": "ai-run-settings",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "ai_set_permission": {
       "nested": false,
       "channel": false,

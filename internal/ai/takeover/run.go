@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -273,23 +274,17 @@ func (m *Manager) initializeEino(state *runState) error {
 	if err != nil {
 		return err
 	}
+	toolNames, err := tools.ToolNames(state.ctx, einoTools)
+	if err != nil {
+		return err
+	}
+	toolSafety, unknownTool := tools.NewToolSafety(toolNames, ErrResumeMismatch, ErrStaleOwnership)
 	chatAgent, err := adk.NewChatModelAgent(state.ctx, &adk.ChatModelAgentConfig{
 		Name: "nexterm-takeover", Description: "Terminal takeover assistant",
 		Instruction: "Act on the fresh terminal screen provided before each model call; do not repeat stale screens back.",
 		Model:       chatModel, MaxIterations: state.args.MaxSteps,
-		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true}, ReturnDirectly: map[string]bool{"done": true}},
-		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(ctx context.Context, agentState *adk.ChatModelAgentState) error {
-			m.waitIdle(ctx, state.args.TabID)
-			screen, err := m.deps.Snapshot(ctx, state.args.TabID)
-			if err != nil {
-				return err
-			}
-			if err := state.emit(ctx, agent.Event{Type: "screen", TabID: state.args.TabID, Text: screen.Text}); err != nil {
-				return err
-			}
-			agentState.Messages = append(agentState.Messages, schema.UserMessage(fmt.Sprintf("[Current Terminal]\nCursor (%d,%d), idle %dms\n%s", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Text)))
-			return nil
-		}}},
+		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true, UnknownToolsHandler: unknownTool}, ReturnDirectly: map[string]bool{"done": true}},
+		Handlers:    []adk.ChatModelAgentMiddleware{&screenHandler{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, manager: m, state: state}, toolSafety},
 	})
 	if err != nil {
 		return err
@@ -297,6 +292,38 @@ func (m *Manager) initializeEino(state *runState) error {
 	runtime.runner = adk.NewRunner(state.ctx, adk.RunnerConfig{Agent: chatAgent, EnableStreaming: true, CheckPointStore: m.checkpoints})
 	state.eino = runtime
 	return nil
+}
+
+const screenMarker = "[Current Terminal]"
+
+// screenHandler puts the fresh terminal screen in front of each model call.
+// It replaces the previous screen message so checkpointed state keeps exactly
+// one, the latest.
+type screenHandler struct {
+	*adk.BaseChatModelAgentMiddleware
+	manager *Manager
+	state   *runState
+}
+
+func (h *screenHandler) BeforeModelRewriteState(ctx context.Context, agentState *adk.ChatModelAgentState, _ *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	h.manager.waitIdle(ctx, h.state.args.TabID)
+	screen, err := h.manager.deps.Snapshot(ctx, h.state.args.TabID)
+	if err != nil {
+		return ctx, nil, err
+	}
+	if err := h.state.emit(ctx, agent.Event{Type: "screen", TabID: h.state.args.TabID, Text: screen.Text}); err != nil {
+		return ctx, nil, err
+	}
+	next := *agentState
+	next.Messages = make([]*schema.Message, 0, len(agentState.Messages)+1)
+	for _, message := range agentState.Messages {
+		if message.Role == schema.User && strings.HasPrefix(message.Content, screenMarker+"\n") {
+			continue
+		}
+		next.Messages = append(next.Messages, message)
+	}
+	next.Messages = append(next.Messages, schema.UserMessage(fmt.Sprintf(screenMarker+"\nCursor (%d,%d), idle %dms\n%s", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Text)))
+	return ctx, &next, nil
 }
 
 func (m *Manager) consume(iterCtx context.Context, state *runState, iterator *adk.AsyncIterator[*adk.AgentEvent]) runResult {
@@ -519,19 +546,19 @@ type actionExecution struct {
 }
 
 type TakeoverDoneArgs struct {
-	Summary string `json:"summary" jsonschema:"required"`
-	Success bool   `json:"success" jsonschema:"required"`
+	Summary string `json:"summary" jsonschema:"required" jsonschema_description:"What was done and the final state, for the user"`
+	Success bool   `json:"success" jsonschema:"required" jsonschema_description:"True when the task was completed"`
 }
 
 type takeoverSendKeysArgs struct {
-	Keys  string `json:"keys" jsonschema:"required"`
-	Enter bool   `json:"enter,omitempty"`
-	TabID string `json:"tab_id,omitempty"`
+	Keys  string `json:"keys" jsonschema:"required" jsonschema_description:"Text to type; may include key tags such as <enter> and <ctrl+c>"`
+	Enter bool   `json:"enter,omitempty" jsonschema_description:"Press Enter after the keys"`
+	TabID string `json:"tab_id,omitempty" jsonschema_description:"Leave empty; keys always go to the taken-over terminal and a tab_id is rejected"`
 }
 
 type takeoverWaitForArgs struct {
-	Pattern   string `json:"pattern" jsonschema:"required"`
-	TimeoutMS int64  `json:"timeout_ms,omitempty"`
+	Pattern   string `json:"pattern" jsonschema:"required" jsonschema_description:"Regular expression to match against the recent terminal output"`
+	TimeoutMS int64  `json:"timeout_ms,omitempty" jsonschema_description:"Maximum wait in milliseconds (1-60000; default 10000)"`
 }
 
 func (e *actionExecution) tools() ([]tool.BaseTool, error) {
@@ -543,7 +570,7 @@ func (e *actionExecution) tools() ([]tool.BaseTool, error) {
 	if err != nil {
 		return nil, err
 	}
-	sendKeys, err := utils.InferTool("send_keys", "Send keys; enter or <enter> really submits the command.", func(ctx context.Context, input takeoverSendKeysArgs) (tools.Output, error) {
+	sendKeys, err := utils.InferTool("send_keys", "Send keys; enter or <enter> really submits the command. "+tools.SendKeysTagHelp, func(ctx context.Context, input takeoverSendKeysArgs) (tools.Output, error) {
 		return tools.Guarded(ctx, "send_keys", func() (tools.Output, error) {
 			return e.sendKeys(ctx, input)
 		})
@@ -551,7 +578,7 @@ func (e *actionExecution) tools() ([]tool.BaseTool, error) {
 	if err != nil {
 		return nil, err
 	}
-	waitFor, err := utils.InferTool("wait_for", "Wait for the terminal's recent output to match a regex.", func(ctx context.Context, input takeoverWaitForArgs) (tools.Output, error) {
+	waitFor, err := utils.InferTool("wait_for", "Wait for the terminal's recent output to match a regex; ^ and $ match at line boundaries.", func(ctx context.Context, input takeoverWaitForArgs) (tools.Output, error) {
 		return tools.Guarded(ctx, "wait_for", func() (tools.Output, error) {
 			output, err := e.manager.waitFor(ctx, e.state.args.TabID, input.Pattern, input.TimeoutMS)
 			return output, err
@@ -643,6 +670,9 @@ func (e *actionExecution) sendKeys(ctx context.Context, input takeoverSendKeysAr
 	if !e.runtime.allowWrite {
 		return tools.Fail(ErrWriteDisabled), nil
 	}
+	if _, err := tools.EncodeKeys(input.Keys, input.Enter); err != nil {
+		return tools.Fail(err), nil
+	}
 	screen, err := e.manager.deps.Snapshot(ctx, e.state.args.TabID)
 	if err != nil {
 		return tools.Fail(err), nil
@@ -682,7 +712,10 @@ func (e *actionExecution) writeKeys(ctx context.Context, callID string, input ta
 		return tools.Output{}, ErrStaleOwnership
 	}
 	if err := e.manager.verifyJobAsset(ctx, e.state); err != nil {
-		return tools.Output{}, err
+		if errors.Is(err, ErrResumeMismatch) {
+			return tools.Output{}, err
+		}
+		return tools.Output{}, fmt.Errorf("%w: %w", ErrResumeMismatch, err)
 	}
 	records, err := e.manager.loadExecRecords(ctx, e.state.id)
 	if err != nil {

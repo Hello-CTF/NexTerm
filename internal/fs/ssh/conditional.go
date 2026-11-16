@@ -26,16 +26,21 @@ func (f *FS) WriteFileVersion(ctx context.Context, remotePath string, data []byt
 	if expected.Exists {
 		return fmt.Errorf("SFTP conditional replace %s: %w: the protocol has no compare-and-commit or file-lock primitive against non-cooperating writers", remotePath, base.ErrUnsupported)
 	}
-	return f.createFileVersion(ctx, remotePath, data, expected)
+	return f.boundWrite(ctx, remotePath, func(begin func() error) error {
+		return f.createFileVersion(ctx, remotePath, data, expected, begin)
+	})
 }
 
-func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []byte, expected conditional.Expectation) error {
-	occupied, err := f.lstatOccupied(remotePath)
+func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []byte, expected conditional.Expectation, begin func() error) error {
+	occupied, err := f.lstatOccupied(ctx, remotePath)
 	if err != nil {
 		return err
 	}
 	if occupied {
 		return remoteAlreadyExists(expected)
+	}
+	if err := begin(); err != nil {
+		return err
 	}
 	stage, err := f.uploadTemporary(ctx, remotePath, data, 0o600)
 	if err != nil {
@@ -48,7 +53,7 @@ func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []by
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	occupied, err = f.lstatOccupied(remotePath)
+	occupied, err = f.lstatOccupied(ctx, remotePath)
 	if err != nil {
 		return err
 	}
@@ -65,7 +70,7 @@ func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []by
 		if !sftpFailureProvenByServer(err) {
 			return &conditional.IndeterminateError{Expected: expected, New: conditional.VersionOf(data), Cause: fmt.Errorf("SFTP conditional create %s: %w", remotePath, err)}
 		}
-		if occupied, statErr := f.lstatOccupied(remotePath); statErr == nil && occupied {
+		if occupied, statErr := f.lstatOccupied(ctx, remotePath); statErr == nil && occupied {
 			return remoteAlreadyExists(expected)
 		}
 		return fmt.Errorf("SFTP conditional create %s (requires hardlink@openssh.com): %w", remotePath, err)
@@ -81,8 +86,9 @@ func sftpFailureProvenByServer(err error) bool {
 	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission)
 }
 
-func (f *FS) lstatOccupied(remotePath string) (bool, error) {
-	_, err := f.client.Lstat(remotePath)
+// lstatOccupied runs before the commit, so it stops waiting when ctx ends.
+func (f *FS) lstatOccupied(ctx context.Context, remotePath string) (bool, error) {
+	_, err := await(ctx, func() (os.FileInfo, error) { return f.client.Lstat(remotePath) }, nil)
 	if err == nil {
 		return true, nil
 	}

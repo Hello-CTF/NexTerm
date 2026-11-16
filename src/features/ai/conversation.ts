@@ -1,6 +1,7 @@
 import { confirmationNonceOf, interactionIdentityOf, questionFromEvent, requiredEnvironmentNamesFromEvent } from "./aiWire";
 import type { AiHitlInterruptDto } from "../../ipc/types";
 import type { AiUsage } from "./UsageRing";
+import { CONFIRM_RESOLUTION, type ConfirmDecision } from "./panel/aiConfirmLabels";
 import { t } from "../../i18n";
 
 export interface FilePreviewItem {
@@ -42,8 +43,18 @@ export type ChatItem =
       imageCount?: number;
       steer?: SteerDelivery;
       messageId?: string;
+      // History rows keep the job they started (or steered) so a replayed run
+      // can be placed after them and a retry can find its source message.
+      jobId?: string;
+      steered?: boolean;
     })
-  | (ItemBase & { role: "assistant"; text: string })
+  | (ItemBase & {
+      role: "assistant";
+      text: string;
+      // interrupted marks a saved partial answer: text streamed before the run
+      // failed or was stopped.
+      interrupted?: boolean;
+    })
   | (ItemBase & { role: "reasoning"; text: string })
   | (ItemBase & {
       role: "tool";
@@ -356,6 +367,47 @@ export function resolveInteraction(
   return replaceItem(state, itemId, { ...item, resolution: label });
 }
 
+// Labels for an interaction another client (or the server) resolved. A confirm
+// decision keeps the source-language CONFIRM_RESOLUTION label, which the agent
+// approval view maps back to the decision.
+export const INTERACTION_HANDLED_ELSEWHERE = t("已在其他地方处理");
+const INTERACTION_ANSWERED = t("已回答");
+const INTERACTION_EXPIRED = t("等待已过期，无需再处理");
+
+function interactionResolvedLabel(role: "confirm" | "question", decision: unknown): string {
+  if (decision === "expired") return INTERACTION_EXPIRED;
+  if (decision === "answered") return role === "question" ? INTERACTION_ANSWERED : INTERACTION_HANDLED_ELSEWHERE;
+  if (role === "confirm" && typeof decision === "string" && Object.hasOwn(CONFIRM_RESOLUTION, decision)) {
+    return CONFIRM_RESOLUTION[decision as ConfirmDecision];
+  }
+  return INTERACTION_HANDLED_ELSEWHERE;
+}
+
+// resolveInteractionsByCallId closes the open confirm/question cards of one
+// tool call, keeping a resolution this client already stamped.
+export function resolveInteractionsByCallId(
+  state: ConversationState,
+  generation: number,
+  callId: string,
+  label: (role: "confirm" | "question") => string,
+): { state: ConversationState; changed: boolean } {
+  if (!callId) return { state, changed: false };
+  let changed = false;
+  const items = state.items.map((item) => {
+    if (
+      item.attempt !== generation ||
+      (item.role !== "confirm" && item.role !== "question") ||
+      item.callId !== callId ||
+      item.resolution !== undefined
+    ) {
+      return item;
+    }
+    changed = true;
+    return { ...item, resolution: label(item.role) };
+  });
+  return changed ? { state: { ...state, items }, changed } : { state, changed };
+}
+
 export function pendingInteraction<K extends "confirm" | "question">(
   state: ConversationState,
   generation: number | null,
@@ -599,10 +651,15 @@ export function applyAiEvent(
             item.role === "tool" && item.attempt === generation && item.summary === undefined,
         );
       }
-      if (!target) return rejected(state);
-      if (target.summary !== undefined) return rejected(state);
+      // A result means the call's confirmation or question was settled, even when
+      // this client never learned who settled it (servers without interactionResolved).
+      const resolved = resolveInteractionsByCallId(state, generation, target?.callId ?? callId, () => INTERACTION_HANDLED_ELSEWHERE);
+      if (!target || target.summary !== undefined) {
+        return resolved.changed ? accepted(resolved.state) : rejected(state);
+      }
+      const settled = resolved.state;
       return accepted(
-        replaceItem(state, target.id, {
+        replaceItem(settled, target.id, {
           ...target,
           summary: ev.summary as string,
           text: textOf(ev),
@@ -611,6 +668,13 @@ export function applyAiEvent(
           panic: ev.panic === true,
         }),
       );
+    }
+    case "interactionResolved": {
+      const callId = typeof ev.callId === "string" ? ev.callId : kernelId(ev);
+      const resolved = resolveInteractionsByCallId(state, generation, callId, (role) =>
+        interactionResolvedLabel(role, ev.decision),
+      );
+      return resolved.changed ? accepted(resolved.state) : rejected(state);
     }
     case "subagentDelta":
       return foldSubagent(state, generation, ev, (timeline) => ({
@@ -1018,15 +1082,45 @@ export function historyToItems(
       }
       if (structured === "summary") {
         const messages = Number(historyField(raw, "messages") ?? 0);
-        items.push({ id: `h${seq++}`, attempt: null, role: "compact", text: historyString(raw, "summary"), messages: messages || 0 });
+        const compact: ChatItem = { id: `h${seq++}`, attempt: null, role: "compact", text: historyString(raw, "summary"), messages: messages || 0 };
+        // An automatic summary is saved after the run's own message but replaces
+        // the history before that run, so it is shown before the message.
+        const beforeJobId = historyField(raw, "auto") === true ? historyField(raw, "beforeJobId") : undefined;
+        let anchor = -1;
+        if (typeof beforeJobId === "string" && beforeJobId) {
+          for (let i = items.length - 1; i >= 0; i--) {
+            const candidate = items[i];
+            if (candidate.role === "user" && candidate.jobId === beforeJobId && !candidate.steered) {
+              anchor = i;
+              break;
+            }
+          }
+        }
+        if (anchor >= 0) items.splice(anchor, 0, compact);
+        else items.push(compact);
         continue;
       }
       continue;
     }
     const text = historyTextOf(raw);
     if (!text) continue;
+    if (historyField(raw, "interim") === true) {
+      // Assistant text written before a turn's tool calls. An unfinished run is
+      // rebuilt from its events, which carry the same text, so its rows are skipped.
+      if (jobSkipped(raw)) continue;
+      items.push({ id: `h${seq++}`, attempt: null, role: "assistant", text });
+      continue;
+    }
+    if (historyField(raw, "partial") === true) {
+      // Text a run streamed before it failed or was stopped. A replayed run
+      // shows the same text from its events, so its row is skipped.
+      if (jobSkipped(raw) || !text.trim()) continue;
+      items.push({ id: `h${seq++}`, attempt: null, role: "assistant", text, interrupted: true });
+      continue;
+    }
     if (m.role === "user") {
       const n = Number(historyField(raw, "imageCount") ?? 0);
+      const jobId = historyString(raw, "jobId");
       items.push({
         id: `h${seq++}`,
         attempt: null,
@@ -1034,12 +1128,56 @@ export function historyToItems(
         text,
         imageCount: n || undefined,
         ...(typeof m.id === "string" && m.id ? { messageId: m.id } : {}),
+        ...(jobId ? { jobId } : {}),
+        ...(historyField(raw, "steered") === true ? { steered: true } : {}),
       });
     } else if (m.role === "assistant") {
       items.push({ id: `h${seq++}`, attempt: null, role: "assistant", text });
     }
   }
   return items;
+}
+
+export function historyJobIdOf(raw: unknown): string {
+  return historyString(raw, "jobId");
+}
+
+// placeReplayedRuns moves the items of each run replayed from its events to
+// just after that job's saved user rows (its message and any steers), so a
+// rebuilt conversation keeps the message order instead of piling replayed
+// output after all history. A run whose rows lie before the loaded history
+// window (leadingJobIds) goes to the top. Runs sent in this view carry their
+// own user item and stay where they are.
+export function placeReplayedRuns(
+  state: ConversationState,
+  leadingJobIds?: ReadonlySet<string>,
+): ConversationState {
+  let items = state.items;
+  let front = 0;
+  for (const attempt of state.attempts) {
+    const jobId = attempt.jobId;
+    if (!jobId) continue;
+    const generation = attempt.generation;
+    const run = items.filter((item) => item.attempt === generation);
+    if (run.length === 0 || run.some((item) => item.role === "user" && item.steer === undefined)) continue;
+    const rest = items.filter((item) => item.attempt !== generation);
+    let at = -1;
+    for (let i = rest.length - 1; i >= 0; i--) {
+      const item = rest[i];
+      if (item.attempt === null && item.role === "user" && item.jobId === jobId) {
+        at = i + 1;
+        break;
+      }
+    }
+    if (at < 0) {
+      if (!leadingJobIds?.has(jobId)) continue;
+      at = front;
+      front += run.length;
+    }
+    items = [...rest.slice(0, at), ...run, ...rest.slice(at)];
+  }
+  if (items.length === state.items.length && items.every((item, i) => item === state.items[i])) return state;
+  return { ...state, items };
 }
 
 export function truncateItemsAfter(state: ConversationState, itemId: string): ConversationState {

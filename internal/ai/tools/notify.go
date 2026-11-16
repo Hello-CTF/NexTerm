@@ -13,7 +13,7 @@ const (
 )
 
 type NotifyArgs struct {
-	Message string `json:"message" jsonschema:"required"`
+	Message string `json:"message" jsonschema:"required" jsonschema_description:"Notification text (at most 200 characters)"`
 }
 
 type notifyOwnerContextKey struct{}

@@ -85,7 +85,7 @@ describe("SettingsView vault idle auto-lock", () => {
     expect(autoLockInput()!.value).toBe("30");
     setInputValue(autoLockInput()!, "5");
     await act(async () => {
-      clickButton(mounted!.container, "保存");
+      clickButton(mounted!.container.querySelector("#settings-vault")!, "保存");
     });
     await flushUntil(() => mocks.setAutoLock.mock.calls.length > 0);
     expect(mocks.setAutoLock).toHaveBeenCalledWith(5);
@@ -111,7 +111,7 @@ describe("SettingsView vault idle auto-lock", () => {
     await flushUntil(() => autoLockInput() !== null);
     setInputValue(autoLockInput()!, "0");
     await act(async () => {
-      clickButton(mounted!.container, "保存");
+      clickButton(mounted!.container.querySelector("#settings-vault")!, "保存");
     });
     await flushUntil(() => mocks.setAutoLock.mock.calls.length > 0);
     expect(mocks.setAutoLock).toHaveBeenCalledWith(0);
@@ -125,7 +125,7 @@ describe("SettingsView vault idle auto-lock", () => {
     for (const bad of ["1441", "-1", "1.5", ""]) {
       setInputValue(autoLockInput()!, bad);
       await act(async () => {
-        clickButton(mounted!.container, "保存");
+        clickButton(mounted!.container.querySelector("#settings-vault")!, "保存");
       });
       await flush();
       expect(mocks.setAutoLock).not.toHaveBeenCalled();
@@ -140,7 +140,7 @@ describe("SettingsView vault idle auto-lock", () => {
     await flushUntil(() => autoLockInput() !== null);
     setInputValue(autoLockInput()!, "1440");
     await act(async () => {
-      clickButton(mounted!.container, "保存");
+      clickButton(mounted!.container.querySelector("#settings-vault")!, "保存");
     });
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
     expect(mocks.toast).toHaveBeenCalledWith("error", "输入内容不正确，请检查后重试（原因：auto-lock minutes must be between 0 (disabled) and 1440）。凭据未改动，请检查后重试。");

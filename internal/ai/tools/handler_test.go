@@ -215,7 +215,7 @@ func TestExecModelTextUsesKnownFailureAndTruncation(t *testing.T) {
 		transport := &fakeTransport{result: base.ExecResult{Stdout: "stdout [输出已截断]\n" + strings.Repeat("x", MaxOutputBytes)}}
 		registry := NewRegistry(Dependencies{Transport: func(context.Context, string) (base.Transport, error) { return transport, nil }})
 		result := registry.Execute(context.Background(), "job", Scope{SessionID: "session"}, execCall("call", "echo hi"), nil)
-		if !result.OK || !result.Truncated || !strings.HasSuffix(result.Text, "\n[输出已截断]") || !strings.HasSuffix(result.ModelText, "\n[output truncated]") {
+		if !result.OK || !result.Truncated || !omissionPattern.MatchString(result.Text) || !strings.Contains(result.ModelText, "[... omitted ") || strings.Contains(result.ModelText, "已省略") {
 			t.Fatalf("known truncation was not projected from cap state: %+v", result)
 		}
 		if !strings.Contains(result.ModelText, "stdout [输出已截断]") {

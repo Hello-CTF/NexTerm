@@ -8,6 +8,7 @@ import {
   cancelRun,
   createConversation,
   hydrateUserMessageIds,
+  placeReplayedRuns,
   resetConversation,
   resolveInteraction,
   resolveSteerById,
@@ -69,7 +70,8 @@ export interface ConversationStream {
   cancelRun(generation: number, settle: boolean): void;
   restoreUsage(usage: AiUsage): void;
   reset(items?: ChatItem[]): void;
-  replaceHistory(items: ChatItem[]): void;
+  replaceHistory(items: ChatItem[], leadingJobIds?: ReadonlySet<string>): void;
+  placeReplayedRuns(leadingJobIds?: ReadonlySet<string>): void;
   truncateAfterItem(itemId: string): void;
   hydrateUserMessageIds(messages: { id?: string; role: string; content: unknown }[]): void;
   lastSeq(generation: number): number;
@@ -368,11 +370,23 @@ export function createConversationStream(
         publish();
       });
     },
-    replaceHistory(items) {
+    replaceHistory(items, leadingJobIds) {
       mutate(() => {
         const activeItems = state.items.filter((item) => item.attempt !== null);
-        state = { ...state, items: [...items, ...activeItems], seq: state.seq + items.length };
+        state = placeReplayedRuns(
+          { ...state, items: [...items, ...activeItems], seq: state.seq + items.length },
+          leadingJobIds,
+        );
         publish();
+      });
+    },
+    placeReplayedRuns(leadingJobIds) {
+      mutate(() => {
+        const next = placeReplayedRuns(state, leadingJobIds);
+        if (next !== state) {
+          state = next;
+          publish();
+        }
       });
     },
     truncateAfterItem(itemId) {

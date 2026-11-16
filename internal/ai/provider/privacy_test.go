@@ -320,12 +320,15 @@ func TestPrivacyStreamingTextReasoningAndToolJSON(t *testing.T) {
 		content.WriteString(frame.Content)
 		reasoning.WriteString(frame.ReasoningContent)
 		calls = append(calls, frame.ToolCalls...)
-		if runID == "" {
-			runID = extraString(frame.Extra, MessageExtraRunID)
+		if id := extraString(frame.Extra, MessageExtraRunID); id != "" {
+			if runID != "" {
+				t.Fatal("run id repeated on a later frame")
+			}
+			runID = id
 		}
-		if extraString(frame.Extra, MessageExtraRunID) != runID {
-			t.Fatal("restored final frame lost metadata")
-		}
+	}
+	if runID == "" {
+		t.Fatal("restored stream lost run metadata")
 	}
 	if content.String() != secret || reasoning.String() != secret {
 		t.Fatalf("restored content/reasoning differ: %q / %q", content.String(), reasoning.String())

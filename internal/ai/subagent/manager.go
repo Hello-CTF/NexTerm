@@ -17,6 +17,7 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/compact"
 	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
 )
@@ -286,7 +287,7 @@ func (m *Manager) lookupLocked(handle Handle) (*task, error) {
 
 func (m *Manager) run(current *task, request Request, scope Scope, allowed map[string]struct{}) {
 	defer m.wg.Done()
-	output, turns, total, err := m.execute(current, request, scope, allowed)
+	output, turns, total, err := m.safeExecute(current, request, scope, allowed)
 	current.recorder.discardIncomplete()
 	status := StatusCompleted
 	if err != nil {
@@ -340,6 +341,17 @@ func (m *Manager) run(current *task, request Request, scope Scope, allowed map[s
 	m.mu.Unlock()
 }
 
+// safeExecute turns a panic in the subagent loop into a task failure so it
+// is reported to the caller instead of crashing the process.
+func (m *Manager) safeExecute(current *task, request Request, scope Scope, allowed map[string]struct{}) (output string, turns int, total usage.Usage, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("subagent panicked: %v", recovered)
+		}
+	}()
+	return m.execute(current, request, scope, allowed)
+}
+
 func (m *Manager) execute(current *task, request Request, scope Scope, allowed map[string]struct{}) (string, int, usage.Usage, error) {
 	chatModel, err := m.modelFor(current, request)
 	if err != nil {
@@ -353,23 +365,30 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 		return "", 0, usage.Usage{}, err
 	}
 	instruction := strings.TrimSpace(strings.Join([]string{m.config.Instruction, request.Persona}, "\n"))
+	toolsConfig := compose.ToolsNodeConfig{Tools: tools, ExecuteSequentially: true}
+	// The tool filter and the context budget run before the safety guard,
+	// which stays last so it wraps tool calls innermost.
+	handlers := []adk.ChatModelAgentMiddleware{
+		&toolFilterHandler{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, allowed: allowed},
+		compact.NewBudgetHandler(m.config.ContextWindow),
+	}
+	if m.config.ToolSafety != nil {
+		names := make([]string, 0, len(allowed))
+		for name := range allowed {
+			names = append(names, name)
+		}
+		var guard adk.ChatModelAgentMiddleware
+		guard, toolsConfig.UnknownToolsHandler = m.config.ToolSafety(names)
+		handlers = append(handlers, guard)
+	}
 	agent, err := adk.NewChatModelAgent(current.ctx, &adk.ChatModelAgentConfig{
 		Name:          current.handle.ID,
 		Description:   "Bounded isolated task",
 		Instruction:   instruction,
 		Model:         chatModel,
 		MaxIterations: m.config.MaxIterations,
-		ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools, ExecuteSequentially: true}},
-		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(_ context.Context, state *adk.ChatModelAgentState) error {
-			visible := make([]*schema.ToolInfo, 0, len(allowed))
-			for _, info := range state.ToolInfos {
-				if _, ok := allowed[info.Name]; ok {
-					visible = append(visible, info)
-				}
-			}
-			state.ToolInfos = visible
-			return nil
-		}}},
+		ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: toolsConfig},
+		Handlers:      handlers,
 	})
 	if err != nil {
 		return "", 0, usage.Usage{}, err
@@ -377,6 +396,9 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 	runner := adk.NewRunner(current.ctx, adk.RunnerConfig{Agent: agent, EnableStreaming: true})
 	iterator := runner.Run(current.ctx, []*schema.Message{schema.UserMessage(request.Task)})
 	var output string
+	// partial keeps the latest assistant text so a failed run can still report
+	// what the subagent produced before it stopped.
+	var partial string
 	var turns int
 	var total usage.Usage
 	var firstErr error
@@ -443,18 +465,24 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 			if len(message.ToolCalls) == 0 {
 				output = message.Content
 			}
+			if strings.TrimSpace(message.Content) != "" {
+				partial = message.Content
+			}
 		case schema.Tool:
 			emitToolResult(current, message)
 		}
 	}
 	if forcedErr != nil {
-		return "", turns, total, forcedErr
+		return partial, turns, total, forcedErr
 	}
 	if err := current.ctx.Err(); err != nil {
-		return "", turns, total, err
+		return partial, turns, total, err
+	}
+	if errors.Is(firstErr, adk.ErrExceedMaxIterations) {
+		return partial, turns, total, fmt.Errorf("%w (%d steps)", ErrIterationLimit, m.config.MaxIterations)
 	}
 	if firstErr != nil {
-		return "", turns, total, firstErr
+		return partial, turns, total, firstErr
 	}
 	return output, turns, total, nil
 }
@@ -487,6 +515,24 @@ func (m *Manager) modelFor(current *task, request Request) (model.BaseChatModel,
 		return m.config.NewModelForProfile(current.ctx, request.ModelProfileID)
 	}
 	return m.config.NewModel(current.ctx)
+}
+
+// toolFilterHandler hides tools outside the task's allowed set from the model.
+type toolFilterHandler struct {
+	*adk.BaseChatModelAgentMiddleware
+	allowed map[string]struct{}
+}
+
+func (h *toolFilterHandler) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, _ *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	visible := make([]*schema.ToolInfo, 0, len(h.allowed))
+	for _, info := range state.ToolInfos {
+		if _, ok := h.allowed[info.Name]; ok {
+			visible = append(visible, info)
+		}
+	}
+	next := *state
+	next.ToolInfos = visible
+	return ctx, &next, nil
 }
 
 func (t *task) emit(event Event) {

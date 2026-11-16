@@ -878,7 +878,7 @@ describe("AiSidebar conversation stream UX", () => {
     expect(textOf(view!)).toContain("本次回答已结束，无需再处理");
   });
 
-  it("settles a rejected confirmation from the server snapshot instead of hanging", async () => {
+  it("closes a confirmation already handled elsewhere with a calm notice instead of an error", async () => {
     await send("Run a command");
     emit({
       type: "confirmRequired",
@@ -894,9 +894,10 @@ describe("AiSidebar conversation stream UX", () => {
     mocks.hitlSnapshot.mockResolvedValueOnce(hitlSnapshotOf("running", [], { attempt: 2, seq: 2 }));
     clickButton(view!.container, "允许一次");
     await flushReplay();
-    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("确认已过期"));
+    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("已在其他地方处理"));
+    expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
     expect(textOf(view!)).not.toContain("需要你确认");
-    expect(textOf(view!)).toContain("执行命令 · 已在服务端结束");
+    expect(textOf(view!)).toContain("执行命令 · 已在其他地方处理");
     expect(view!.container.querySelector('button[title="发送 (Enter)"]')).toBeNull();
   });
 

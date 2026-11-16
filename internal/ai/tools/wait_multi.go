@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,8 +11,9 @@ import (
 )
 
 const (
-	maxWaitTabs  = 16
-	maxWaitLines = 100_000
+	maxWaitTabs          = 16
+	maxWaitLines         = 100_000
+	waitStateReadTimeout = 2 * time.Second
 )
 
 // waitTarget is the per-tab scan state of an anchored multi-tab wait_for
@@ -57,8 +59,11 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 	targets := make([]*waitTarget, 0, len(tabIDs))
 	seen := make(map[string]bool, len(tabIDs))
 	for _, requested := range tabIDs {
-		tabID, err := r.resolveReadableTab(waitContext, jobID, scope, requested)
+		tabID, err := r.waitResolveTab(waitContext, jobID, scope, requested)
 		if err != nil {
+			if waitContext.Err() == context.DeadlineExceeded {
+				return r.waitTabsResult(waitContext, targets, mode, false, true)
+			}
 			return Fail(err)
 		}
 		if seen[tabID] {
@@ -70,17 +75,25 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 	for _, target := range targets {
 		screen, err := r.waitSnapshot(waitContext, target.tabID, quietMS > 0)
 		if err != nil {
+			if waitContext.Err() == context.DeadlineExceeded {
+				return r.waitTabsResult(waitContext, targets, mode, false, true)
+			}
 			return Fail(err)
 		}
 		target.cols, target.rows, target.idleMS = screen.Cols, screen.Rows, screen.IdleMS
+		_, _, latest, err := r.waitOutputSince(waitContext, target.tabID, 0, 1)
+		if err != nil {
+			if waitContext.Err() == context.DeadlineExceeded {
+				return r.waitTabsResult(waitContext, targets, mode, false, true)
+			}
+			return Fail(err)
+		}
+		target.fromSeq = latest
 		if sinceSeq > 0 {
-			target.fromSeq = sinceSeq
-		} else {
-			_, _, latest, err := r.outputSince(waitContext, target.tabID, 0, 1)
-			if err != nil {
+			if err := anchorBeyondLatest(sinceSeq, latest); err != nil {
 				return Fail(err)
 			}
-			target.fromSeq = latest
+			target.fromSeq = sinceSeq
 		}
 		target.scanPos = target.fromSeq
 		target.latest = target.fromSeq
@@ -102,10 +115,12 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 				if screen, err := r.waitSnapshot(waitContext, target.tabID, true); err == nil {
 					target.idleMS = screen.IdleMS
 					target.idleErr = ""
-				} else {
+				} else if waitContext.Err() == nil {
 					// A failed quiet snapshot must never reuse stale idle to
 					// fake success: the tab goes unsatisfied with the failure
-					// recorded for the timeout output.
+					// recorded for the timeout output. A read cut off by the
+					// wait deadline keeps the last observed state for the
+					// timeout output instead.
 					target.idleMS = -1
 					target.idleErr = "安静快照失败: " + err.Error()
 				}
@@ -122,8 +137,26 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 		return satisfied
 	}
 	for {
-		satisfied := evaluate(true)
-		ready := (mode == "any" && satisfied > 0) || (mode == "all" && satisfied == len(targets))
+		// Past the deadline the reads are cut off, so the timeout output
+		// reports the last complete round instead of a partial one.
+		satisfied := 0
+		if waitContext.Err() == nil {
+			previous := make([]waitTarget, len(targets))
+			for i, target := range targets {
+				previous[i] = *target
+			}
+			satisfied = evaluate(true)
+			if waitContext.Err() != nil {
+				// The deadline cut this round short, so some tabs may carry a
+				// fresh verdict that was never verified as a group: roll back
+				// to the last complete round, including its recorded failures.
+				for i, target := range targets {
+					*target = previous[i]
+				}
+				satisfied = 0
+			}
+		}
+		ready := waitContext.Err() == nil && ((mode == "any" && satisfied > 0) || (mode == "all" && satisfied == len(targets)))
 		if ready {
 			if quietMS > 0 {
 				// The success return and its headline/metadata must come
@@ -181,7 +214,9 @@ func (r *Registry) quietGroupConsistent(waitContext context.Context, targets []*
 	}
 	var previous []TabQuietState
 	for attempt := 0; attempt < 3; attempt++ {
-		current, err := snapshotter.QuietGroupSnapshot(waitContext, tabIDs)
+		current, err := boundedCall(waitContext, func() ([]TabQuietState, error) {
+			return snapshotter.QuietGroupSnapshot(waitContext, tabIDs)
+		})
 		if err != nil {
 			markGroupQuietFailure(targets, "组快照读取失败: "+err.Error())
 			return nil, false, true
@@ -288,26 +323,26 @@ func applyGroupQuietStates(targets []*waitTarget, states []TabQuietState, quietM
 // after its anchor, counting newly rendered lines and matching the pattern
 // against the new output only.
 func (r *Registry) scanWaitTarget(waitContext context.Context, target *waitTarget, regex *regexp.Regexp, lines int) {
-	data, start, latest, err := r.outputSince(waitContext, target.tabID, target.scanPos, waitScanBytes)
+	data, start, latest, err := r.waitOutputSince(waitContext, target.tabID, target.scanPos, waitScanBytes)
 	if err != nil {
-		target.note = "输出读取失败: " + err.Error()
+		if waitContext.Err() == nil {
+			target.note = "输出读取失败: " + err.Error()
+		}
 		return
 	}
 	if start > target.scanPos && target.note == "" {
 		target.note = "部分输出已被淘汰"
 	}
-	window := make([]byte, 0, len(target.carry)+len(data))
-	window = append(window, target.carry...)
-	window = append(window, data...)
-	rendered := renderOutputDiff(window, target.cols, target.rows)
-	if lines > 0 {
-		carried := len(renderOutputDiff(target.carry, target.cols, target.rows))
-		if fresh := len(rendered) - carried; fresh > 0 {
-			target.newLines += fresh
+	// New lines are counted from the raw stream: each line feed completes one
+	// line, and a trailing partial line counts once its line feed arrives.
+	target.newLines += bytes.Count(data, []byte{'\n'})
+	if regex != nil && !target.patternMatched {
+		window := make([]byte, 0, len(target.carry)+len(data))
+		window = append(window, target.carry...)
+		window = append(window, data...)
+		if MatchWaitLines(regex, renderOutputDiff(window, target.cols, target.rows)) {
+			target.patternMatched = true
 		}
-	}
-	if regex != nil && regex.MatchString(strings.Join(rendered, "\n")) {
-		target.patternMatched = true
 	}
 	if lines > 0 && target.newLines >= lines {
 		target.linesMatched = true
@@ -316,20 +351,35 @@ func (r *Registry) scanWaitTarget(waitContext context.Context, target *waitTarge
 	// ends only when both hold.
 	target.matched = (regex == nil || target.patternMatched) && (lines <= 0 || target.linesMatched)
 	if len(data) > 0 {
-		keep := waitScanOverlap
-		if keep > len(window) {
-			keep = len(window)
-		}
-		target.carry = append(target.carry[:0], window[len(window)-keep:]...)
+		target.carry = appendScanOverlap(target.carry, data)
 		target.scanPos = start + uint64(len(data))
 		target.latest = latest
 	}
+}
+
+// appendScanOverlap keeps the last waitScanOverlap bytes of carry+data, so a
+// pattern spanning a scan window seam still matches on the next pass.
+func appendScanOverlap(carry, data []byte) []byte {
+	if len(data) >= waitScanOverlap {
+		return append(carry[:0], data[len(data)-waitScanOverlap:]...)
+	}
+	keep := waitScanOverlap - len(data)
+	if keep > len(carry) {
+		keep = len(carry)
+	}
+	merged := make([]byte, 0, keep+len(data))
+	merged = append(merged, carry[len(carry)-keep:]...)
+	return append(merged, data...)
 }
 
 // waitTabsResult renders the structured multi-tab outcome and its text
 // summary; per-tab anchors and line counts ride in the wait metadata. Only
 // fully-satisfied tabs (condition plus quiet) count as satisfied anywhere.
 func (r *Registry) waitTabsResult(ctx context.Context, targets []*waitTarget, mode string, satisfied, timedOut bool) Output {
+	// A timed-out wait arrives with its deadline already expired; the
+	// command state is read with a short fresh budget so running is real.
+	stateContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), waitStateReadTimeout)
+	defer cancel()
 	outcome := &WaitOutcome{Mode: mode, Satisfied: satisfied, TimedOut: timedOut, Tabs: make([]WaitTabOutcome, 0, len(targets))}
 	matchedIDs := make([]string, 0, len(targets))
 	var summary strings.Builder
@@ -351,7 +401,8 @@ func (r *Registry) waitTabsResult(ctx context.Context, targets []*waitTarget, mo
 			ToSeq:            target.latest,
 			Note:             note,
 		}
-		if state, err := r.commandState(ctx, target.tabID); err == nil {
+		tabID := target.tabID
+		if state, err := boundedCall(stateContext, func() (CommandState, error) { return r.commandState(stateContext, tabID) }); err == nil {
 			tab.Running = state.Running
 		}
 		outcome.Tabs = append(outcome.Tabs, tab)

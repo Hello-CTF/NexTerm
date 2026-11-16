@@ -1,13 +1,19 @@
 import { IconShield, IconClose, IconRefresh, IconList } from "../../../ui/icons";
 import { GrantPanel } from "../GrantPanel";
 import { useUi } from "../../../app/store";
-import { MODE_OPTIONS, PLAN_MODE_HINT } from "./aiSidebarShared";
+import { MODE_OPTIONS, PLAN_MODE_HINT, fullAccessConfirmText } from "./aiSidebarShared";
+import { ask } from "../../../ui/dialogs";
+import type { AiPermissionMode } from "../../../ipc/commands";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import type { AiChatCtx } from "./aiChatCtx";
 import { t } from "../../../i18n";
 
 export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
   const { permOpen, setPermOpen, permError, loadPermission, perm, permScope, permDeviceOverride, followGlobalMode, switchMode, planMode, setPlanMode, aiScopeAssetId, tasksOpen } = ctx;
+  const chooseMode = async (mode: AiPermissionMode) => {
+    if (mode === "full_access" && perm?.mode !== "full_access" && !(await ask(fullAccessConfirmText(Boolean(permScope)), { title: t("开启完全放行"), kind: "warning" }))) return;
+    switchMode(mode);
+  };
   return (
     <>
       {permOpen && (
@@ -54,7 +60,7 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
                     <span className="text-[10.5px] text-neutral-500">{t("跟随全局默认")}</span>
                   ))}
               </div>
-              <div className="mb-1 grid grid-cols-3 gap-1" role="radiogroup" aria-label={t("AI 权限模式")}>
+              <div className="mb-1 grid grid-cols-4 gap-1" role="radiogroup" aria-label={t("AI 权限模式")}>
                 {MODE_OPTIONS.map((m) => (
                   <button
                     key={m.value}
@@ -62,7 +68,7 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
                     aria-checked={perm.mode === m.value}
                     title={m.hint}
                     className={`nx-btn nx-btn-xs justify-center ${perm.mode === m.value ? "nx-btn-primary" : "nx-btn-outline"}`}
-                    onClick={() => switchMode(m.value)}
+                    onClick={() => void chooseMode(m.value)}
                   >
                     {m.label}
                   </button>
@@ -111,7 +117,7 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
                 </button>
               </div>
               <div className="mt-1.5 text-[10px] leading-relaxed text-neutral-500">
-                {t("高危和无法判断的操作始终询问，禁止的操作始终拒绝，任何模式和授权都不会跳过。")}
+                {t("禁止的操作始终拒绝，任何模式和授权都不会跳过。除「完全放行」外，高危和无法判断的操作不会自动执行；生产环境和跨主机操作在任何模式下都不会比「自动执行」更宽松，定时任务从不使用完全放行。")}
               </div>
             </>
           )}

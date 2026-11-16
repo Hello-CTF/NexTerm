@@ -14,7 +14,7 @@ func TestDeviceModeNeverRelaxesUnattended(t *testing.T) {
 	memory := NewMemory()
 	memory.Add(KindWriteFS)
 	ruling := Confirm(KindWriteFS, "write")
-	for _, device := range []Mode{Silent, ReadWrite} {
+	for _, device := range []Mode{FullAccess, Silent, ReadWrite} {
 		if err := manager.SetDeviceMode(context.Background(), "dev", device); err != nil {
 			t.Fatal(err)
 		}
@@ -25,6 +25,7 @@ func TestDeviceModeNeverRelaxesUnattended(t *testing.T) {
 		}{
 			"ctx":        {WithUnattended(context.Background()), Config{Mode: Unattended}},
 			"ctx-config": {WithUnattended(context.Background()), Config{Mode: ReadWrite}},
+			"ctx-full":   {WithUnattended(context.Background()), Config{Mode: FullAccess}},
 		}
 		for name, c := range cases {
 			got, err := manager.WithDeviceMode(c.ctx, c.config, "dev")
@@ -73,7 +74,7 @@ func TestDeviceModeOverridesGlobalUnattendedWithoutMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, device := range []Mode{Silent, ReadWrite} {
+	for _, device := range []Mode{FullAccess, Silent, ReadWrite} {
 		if err := manager.SetDeviceMode(context.Background(), "dev", device); err != nil {
 			t.Fatal(err)
 		}

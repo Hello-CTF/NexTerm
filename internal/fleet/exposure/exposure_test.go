@@ -2,6 +2,7 @@ package exposure
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
 )
 
 type fakeHost struct {
@@ -602,5 +604,50 @@ func TestLogoutStopsExposure(t *testing.T) {
 	case <-runner.stopped:
 	case <-time.After(5 * time.Second):
 		t.Fatal("agent still runs after the account logged out")
+	}
+}
+
+// The agent follows the link's current proxy and certificate settings: a change reconnects it under the same
+// enrollment, and the proxy is never saved with that enrollment.
+func TestConnectionChangeRestartsAgentWithLinkSettings(t *testing.T) {
+	host := newFakeHost()
+	proxy := netproxy.Manual{Type: netproxy.TypeHTTP, Host: "proxy.internal", Port: 3128, Username: "u", Password: "p"}
+	host.account.Proxy = proxy
+	runners := &runnerLog{}
+	controller := newTestController(t, host, runners)
+	enable(t, controller)
+	first := runners.last(t)
+	if want := []agent.BaseURLEntry{{URL: host.account.URL, Proxy: proxy}}; !equalBaseURLs(first.config.BaseURLs, want) {
+		t.Fatalf("agent base URLs = %+v, want the link proxy", first.config.BaseURLs)
+	}
+	saved := host.snapshot().enrollment
+	encoded, err := json.Marshal(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "proxy.internal") {
+		t.Fatalf("saved enrollment carries the proxy: %s", encoded)
+	}
+
+	if status := reconcileNow(t, controller); runners.count() != 1 || status.State == StateOff {
+		t.Fatalf("an unchanged link restarted the agent: %d runners, %+v", runners.count(), status)
+	}
+
+	host.set(func(h *fakeHost) { h.account.Proxy = netproxy.Manual{}; h.account.Insecure = true })
+	reconcileNow(t, controller)
+	select {
+	case <-first.stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the agent of the earlier proxy still runs")
+	}
+	second := runners.last(t)
+	if runners.count() != 2 || second.config.DeviceID != first.config.DeviceID {
+		t.Fatalf("runners = %d, device %q -> %q, want one restart under the same enrollment", runners.count(), first.config.DeviceID, second.config.DeviceID)
+	}
+	if want := []agent.BaseURLEntry{{URL: host.account.URL, Insecure: true}}; !equalBaseURLs(second.config.BaseURLs, want) {
+		t.Fatalf("restarted agent base URLs = %+v, want %+v", second.config.BaseURLs, want)
+	}
+	if snapshot := host.snapshot(); len(snapshot.enrolls) != 1 || !snapshot.enabled {
+		t.Fatalf("host = %+v, want exposure kept on without a new enrollment", snapshot)
 	}
 }

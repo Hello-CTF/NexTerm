@@ -120,6 +120,22 @@ func (r *Registry) SkillCatalog(ctx context.Context) ([]SkillSummary, error) {
 	return r.deps.Skills.SkillCatalog(ctx)
 }
 
+// Todos returns the job's current todo list as last written by todo_write.
+func (r *Registry) Todos(jobID string) []TodoItem {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	state := r.jobs[jobID]
+	r.mu.Unlock()
+	if state == nil {
+		return nil
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return append([]TodoItem(nil), state.todos...)
+}
+
 func (r *Registry) acquireOperationFlight(key string) (release func(), acquired bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -315,7 +331,7 @@ func (r *Registry) Execute(ctx context.Context, jobID string, scope Scope, call 
 			defer release()
 		}
 		executed := false
-		if call.Name == "terminal_create" && r.deps.DurableOutcomes != nil && callTargetsAsset(call) {
+		if r.durableCreatePath(call) {
 			// The durable, owner-scoped ledger adjudicates the operation
 			// before any side effect: a conflicted or unfinished family
 			// never reconnects blindly, a finished one replays only when
@@ -342,6 +358,9 @@ func (r *Registry) Execute(ctx context.Context, jobID string, scope Scope, call 
 		result = r.executeRecorded(ctx, jobID, scope, call, preparation)
 	} else {
 		result = r.execute(ctx, jobID, scope, call, preparation)
+		if result.OperationID != "" {
+			r.recordOperationOutcome(ctx, call, result.OperationID, &result)
+		}
 	}
 	if r.deps.Audit != nil {
 		entry := AuditEntry{SessionID: scope.SessionID, AssetID: scope.AssetID, Kind: "exec", ExitCode: result.ExitCode,
@@ -961,6 +980,61 @@ func (r *Registry) completeDurableCreate(ctx context.Context, family, attemptID 
 	}
 }
 
+// durableCreatePath reports whether the call's outcome is adjudicated and
+// recorded by the durable terminal_create path (adjudicateAndBeginDurableCreate),
+// which writes its own record.
+func (r *Registry) durableCreatePath(call Call) bool {
+	return call.Name == "terminal_create" && r.deps.DurableOutcomes != nil && callTargetsAsset(call)
+}
+
+// operationOutcomeErrorRunes bounds the error excerpt a durable record keeps.
+const operationOutcomeErrorRunes = 1000
+
+// recordOperationOutcome writes the durable record operation_result reads for
+// an operation outside the terminal_create durable path: the effect's state,
+// exit code and, on failure, a redacted excerpt of the error. Without it an
+// operation ID a tool returned would look up as missing, which a model may
+// take to mean the operation never ran. A write failure is noted on the
+// result instead of hidden.
+func (r *Registry) recordOperationOutcome(ctx context.Context, call Call, operation string, result *Output) {
+	if r.deps.DurableOutcomes == nil {
+		return
+	}
+	attempt := OutcomeAttempt{OperationID: operation + ":" + newOutcomeAttemptNonce(), Kind: call.Name, State: "succeeded"}
+	if !result.OK || result.ExitCode != 0 || result.ExitUnknown || result.ExecFailed {
+		attempt.State = "failed"
+	}
+	if !result.OK {
+		excerpt := []rune(RedactText(result.Text))
+		if len(excerpt) > operationOutcomeErrorRunes {
+			excerpt = append(excerpt[:operationOutcomeErrorRunes], '…')
+		}
+		attempt.Error = string(excerpt)
+	}
+	// The durable states are only succeeded and failed, so an effect that may still have happened is recorded as
+	// failed with outcome_unknown in its result.
+	encoded, err := json.Marshal(struct {
+		OK             bool `json:"ok"`
+		ExitCode       int  `json:"exit_code"`
+		ExitUnknown    bool `json:"exit_unknown,omitempty"`
+		OutcomeUnknown bool `json:"outcome_unknown,omitempty"`
+		Truncated      bool `json:"truncated,omitempty"`
+	}{result.OK, result.ExitCode, result.ExitUnknown, result.OutcomeUnknown, result.Truncated})
+	if err == nil {
+		attempt.Result = encoded
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), durableOutcomeWriteTimeout)
+	defer cancel()
+	if err := r.deps.DurableOutcomes.CompleteOutcome(writeCtx, operation, attempt); err != nil {
+		note := fmt.Sprintf("；执行结果记录写入失败，operation_result 将查不到该操作: %v", err)
+		result.Text += note
+		result.Notes += note
+		if result.ModelText != "" {
+			result.ModelText += fmt.Sprintf("; failed to record the outcome, operation_result will not find this operation: %v", err)
+		}
+	}
+}
+
 // newOutcomeAttemptNonce returns a per-attempt suffix for the durable
 // operation record: the nanosecond prefix keeps the attempt history in
 // attempt order under the store's newest-first prefix scan, and the random
@@ -1005,6 +1079,11 @@ func (r *Registry) executeRecorded(ctx context.Context, jobID string, scope Scop
 	// The deterministic operation ID of this call: replays and every
 	// effect-initiated outcome reference the same operation.
 	operation := operationID(jobID, call.ID, call.Name)
+	if ranEffect && !r.durableCreatePath(call) {
+		// Replays, conflicts and record failures return this operation ID, so
+		// the effect's own result is what operation_result answers with.
+		r.recordOperationOutcome(ctx, call, operation, &branch)
+	}
 	switch {
 	case err == nil && !ranEffect:
 		output := replayOutput(record)
@@ -1134,7 +1213,7 @@ func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, c
 	case "operation_result":
 		return r.operationResult(ctx, scope, call.Args)
 	case "wait_for":
-		return r.waitFor(ctx, jobID, scope, call.Args, 120)
+		return r.waitFor(ctx, jobID, scope, call.Args, int(waitForMaxTimeout/time.Second))
 	case "shell_history":
 		return r.shellHistory(ctx, scope, call.Args)
 	case "docker_ps":

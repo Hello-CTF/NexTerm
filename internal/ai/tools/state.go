@@ -75,6 +75,13 @@ func (s *jobState) rememberRead(key string, version fileVersion) {
 	s.mu.Unlock()
 }
 
+// forgetRead drops the recorded version, so the next write of key needs a fresh read_file.
+func (s *jobState) forgetRead(key string) {
+	s.mu.Lock()
+	delete(s.reads, key)
+	s.mu.Unlock()
+}
+
 func (s *jobState) putPreparation(id string, change *preparedChange) {
 	s.mu.Lock()
 	s.preparations[id] = change

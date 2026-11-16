@@ -5,7 +5,7 @@
 
 import { call } from "./commands";
 import type { RemoteHostShareIdentity, RemoteMetricsRequest } from "./generated/types";
-import type { AccountLink } from "./types";
+import type { AccountLink, AccountLinkPatch } from "./types";
 import type { FleetBaseURLEntry, FleetDeviceList, FleetEnrollCode, FleetMetricsResponse } from "./fleetApi";
 import type { HostShareView } from "./sharingApi";
 import type { AccountDevice, AccountUser } from "./authApi";
@@ -23,7 +23,7 @@ export interface RemoteLinkResult extends AccountLink {
 // remoteLinkApi is the entry to the account link login flow: linkSet saves and probes the login,
 // mfa / resetPassword complete two-factor verification and forced password change onboarding (cookie+CSRF held in memory once the session is established).
 export const remoteLinkApi = {
-  linkSet: (patch: { url?: string; username?: string; password?: string; insecure?: boolean }) =>
+  linkSet: (patch: AccountLinkPatch) =>
     call("sync_link_set", {
       args: patch as unknown as import("./generated/types").LinkPatch,
     }) as Promise<RemoteLinkResult>,

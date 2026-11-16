@@ -59,6 +59,15 @@ describe("replayableRuns", () => {
     expect(replayableRuns(runs).map((run) => run.id)).toEqual(["a", "b", "d"]);
   });
 
+  it("orders runs created at the same time by id", () => {
+    const runs = [
+      runOf({ id: "y", status: "failed", createdAt: 1000 }),
+      runOf({ id: "x", status: "failed", createdAt: 1000 }),
+    ];
+    expect(replayableRuns(runs).map((run) => run.id)).toEqual(["x", "y"]);
+    expect(replayableRuns([...runs].reverse()).map((run) => run.id)).toEqual(["x", "y"]);
+  });
+
   it("does not mutate the input", () => {
     const runs = [runOf({ id: "b", status: "interrupted", createdAt: 2000 }), runOf({ id: "a", status: "interrupted", createdAt: 1000 })];
     replayableRuns(runs);

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -49,11 +48,11 @@ func NewEndpointClient(entry BaseURLEntry) (*EndpointClient, error) {
 		return nil, err
 	}
 	base := strings.TrimRight(entry.URL, "/")
-	transport := &http.Transport{
-		Proxy:             http.ProxyFromEnvironment,
-		ForceAttemptHTTP2: true,
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: entry.Insecure},
+	transport, err := DialPolicy{Insecure: entry.Insecure, Proxy: entry.Proxy}.transport()
+	if err != nil {
+		return nil, err
 	}
+	transport.ForceAttemptHTTP2 = true
 	return &EndpointClient{
 		entry: entry,
 		base:  base,
@@ -72,6 +71,11 @@ func (c *EndpointClient) BaseURL() string {
 
 func (c *EndpointClient) Insecure() bool {
 	return c.entry.Insecure
+}
+
+// DialPolicy is the TLS and proxy policy for websocket dials to this endpoint.
+func (c *EndpointClient) DialPolicy() DialPolicy {
+	return DialPolicy{Insecure: c.entry.Insecure, Proxy: c.entry.Proxy}
 }
 
 func (c *EndpointClient) WSURL() string {

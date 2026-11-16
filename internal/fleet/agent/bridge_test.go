@@ -219,7 +219,7 @@ func (h *bridgeHarness) openPipeTracked() (*wsStream, chan struct{}, *subprocess
 	h.t.Helper()
 	hello := testHello()
 	hello.BridgeID = fmt.Sprintf("test-bridge-%d", h.counter.Add(1))
-	agentConn, err := DialBridge(h.ctx, wsURL(h.server.server.URL), hello, false)
+	agentConn, err := DialBridge(h.ctx, wsURL(h.server.server.URL), hello, DialPolicy{})
 	if err != nil {
 		h.t.Fatal(err)
 	}

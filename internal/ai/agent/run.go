@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Hello-CTF/NexTerm/internal/ai/compact"
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
 	"github.com/Hello-CTF/NexTerm/internal/ai/memory"
 	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
@@ -30,6 +31,7 @@ type einoRuntime struct {
 	runner        *adk.Runner
 	input         []*schema.Message
 	contextWindow uint64
+	maxTurns      int
 	mu            sync.Mutex
 	turns         int
 	total         usage.Usage
@@ -133,12 +135,13 @@ func (r *Runner) consumeResumed(current *job, iterator *adk.AsyncIterator[*adk.A
 			return
 		}
 		if runErr == nil {
-			if err := r.persistAssistant(current.ctx, current.args.ConversationID, answer, total); err != nil {
+			if err := r.persistFinalAnswer(current, answer, total); err != nil {
 				runErr = err
 			}
 		}
 		r.complete(current, answer, turns, total, runErr)
 	}()
+	r.emitQueuedResolved(current)
 	answer, turns, total, runErr = r.consume(current, iterator)
 }
 
@@ -176,6 +179,9 @@ func (r *Runner) watchHITL(current *job) {
 		snapshot, err := r.hitl.Snapshot(current.id)
 		if err != nil || snapshot.Terminal == nil {
 			return
+		}
+		if snapshot.Terminal.Reason == hitl.TerminalExpired {
+			r.emitExpiredInteractions(current)
 		}
 		r.complete(current, "", 0, usage.Usage{}, hitlTerminalError(snapshot.Terminal))
 	case <-current.ctx.Done():
@@ -216,7 +222,7 @@ func (r *Runner) run(current *job) (string, int, usage.Usage, error) {
 	iterator := runtime.runner.Run(current.ctx, runtime.input, cancelOption, adk.WithCheckPointID(current.id))
 	answer, turns, total, err := r.consume(current, iterator)
 	if err == nil {
-		if err := r.persistAssistant(current.ctx, current.args.ConversationID, answer, total); err != nil {
+		if err := r.persistFinalAnswer(current, answer, total); err != nil {
 			return "", turns, total, err
 		}
 	}
@@ -224,9 +230,20 @@ func (r *Runner) run(current *job) (string, int, usage.Usage, error) {
 }
 
 func (r *Runner) initializeEino(current *job) error {
-	rows, err := r.store.MsgList(current.ctx, current.args.ConversationID)
-	if err != nil {
-		return err
+	return r.setupEino(current, true)
+}
+
+// setupEino builds the run's agent. assembleInput loads and compacts the
+// history and adds context, roster, skills and memory for a new run; a
+// restored run resumes from its checkpoint and needs none of that.
+func (r *Runner) setupEino(current *job, assembleInput bool) error {
+	var rows []store.MessageRow
+	if assembleInput {
+		var err error
+		rows, err = r.store.MsgList(current.ctx, current.args.ConversationID)
+		if err != nil {
+			return err
+		}
 	}
 	if r.config.Model == nil || r.config.Tools == nil {
 		return errors.New("Eino ChatModel 或工具注册表未配置")
@@ -247,60 +264,36 @@ func (r *Runner) initializeEino(current *job) error {
 		return err
 	}
 	if contextWindow == 0 {
-		contextWindow = 262144
+		contextWindow = defaultContextWindow
 	}
-	runtime := &einoRuntime{contextWindow: contextWindow}
+	runtime := &einoRuntime{contextWindow: contextWindow, maxTurns: r.maxTurns(current.ctx)}
 	current.eino = runtime
 	compaction := newCompactionHandler(chatModel, contextWindow, func() {
 		current.queueEmits(statusEvent("compacting", runtime.currentTurn()))
 	}, func(message *schema.Message, latency time.Duration) error {
 		return r.emitUsageChannel(current, message, latency, "summary")
 	})
-	messages := historyMessages(rows, current.id)
-	messages, err = compaction.compactHistory(current.ctx, messages)
-	if err != nil {
-		return err
+	compaction.todos = func() []tools.TodoItem { return r.config.Tools.Todos(current.id) }
+	compaction.onSummaryFailed = func(err error) {
+		slog.Warn("AI 历史摘要失败，本轮改为裁剪早期内容", "job", current.id, "error", err)
+		detail := summaryFailedNotice
+		event := statusEvent("compacting", runtime.currentTurn())
+		event.Detail = &detail
+		current.queueEmits(event)
 	}
-	if r.config.Context != nil {
-		bundle := r.config.Context.Build(current.ctx, current.args.Scope, current.args.Selection)
-		if bundle.Volatile != "" {
-			messages = append(messages, schema.UserMessage("[Environment Context]\n"+bundle.Volatile))
+	var messages []*schema.Message
+	if assembleInput {
+		compaction.onSummary = func(summary string, replaced int) {
+			r.persistAutoSummary(current, summary, replaced)
 		}
-		if len(current.args.Refs) > 0 {
-			rendered := r.config.Context.RenderRefs(current.ctx, refSpecs(current.args.Refs), r.refFileReader())
-			if rendered != "" {
-				messages = append(messages, schema.UserMessage("[Referenced Content]\n"+rendered))
-			}
-		}
-	}
-	if prompt := r.grantReferencedTabs(current); prompt != "" {
-		messages = append(messages, schema.UserMessage(prompt))
-	}
-	if r.config.Roster != nil {
-		injection, err := r.config.Roster.InjectContext(current.ctx, current.args.ConversationID)
+		messages, err = r.assembleInput(current, rows, compaction)
 		if err != nil {
 			return err
 		}
-		if len(injection.Entries) > 0 {
-			messages = append(messages, schema.UserMessage(injection.Prompt))
-		}
-	}
-	if catalog, err := r.config.Tools.SkillCatalog(current.ctx); err != nil {
-		return err
-	} else if len(catalog) > 0 {
-		messages = append(messages, schema.UserMessage(skillCatalogPrompt(catalog)))
-	}
-	messages = append(messages, userMessage(current.args))
-	if r.config.Memory != nil {
-		scope, err := r.memoryScope(current.ctx)
-		if err != nil {
-			return err
-		}
-		injection, err := r.config.Memory.Inject(current.ctx, scope, messages, memory.Selection{}, memory.Budget{})
-		if err != nil {
-			return err
-		}
-		messages = injection.Messages
+	} else {
+		// Re-grant the conversation's referenced terminals to this job; the
+		// prompt is already in the checkpoint.
+		r.grantReferencedTabs(current)
 	}
 	subagents := r.config.Subagents
 	if subagents != nil {
@@ -344,27 +337,127 @@ func (r *Runner) initializeEino(current *job) error {
 	if current.args.PlanMode {
 		returnDirectly["exit_plan_mode"] = true
 	}
+	toolNames, err := tools.ToolNames(current.ctx, einoTools)
+	if err != nil {
+		return err
+	}
+	toolSafety, unknownTool := tools.NewToolSafety(toolNames)
 	chatAgent, err := adk.NewChatModelAgent(current.ctx, &adk.ChatModelAgentConfig{
-		Name: "nexterm-ai", Description: "NexTerm ops assistant", Instruction: instruction, Model: chatModel, MaxIterations: r.config.MaxTurns,
-		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true}, ReturnDirectly: returnDirectly},
-		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(_ context.Context, state *adk.ChatModelAgentState) error {
-
-			var pending []Event
-			for _, steered := range current.steer.Drain() {
-				state.Messages = append(state.Messages, steered)
-				pending = append(pending, Event{Type: "steered", Text: steered.Content})
-			}
-			pending = append(pending, statusEvent("thinking", runtime.currentTurn()))
-			current.queueTurnEmits(pending...)
-			return nil
-		}}},
-		Handlers: []adk.ChatModelAgentMiddleware{compaction},
+		Name: "nexterm-ai", Description: "NexTerm ops assistant", Instruction: instruction, Model: chatModel, MaxIterations: runtime.maxTurns,
+		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true, UnknownToolsHandler: unknownTool}, ReturnDirectly: returnDirectly},
+		// The steer handler runs first so compaction sees delivered steers; the
+		// safety layer stays last so it wraps tool calls innermost and never
+		// swallows an interrupt raised by an outer layer.
+		Handlers: []adk.ChatModelAgentMiddleware{&steerHandler{BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{}, runner: r, current: current, runtime: runtime}, compaction, toolSafety},
 	})
 	if err != nil {
 		return err
 	}
 	runtime.runner = adk.NewRunner(current.ctx, adk.RunnerConfig{Agent: chatAgent, EnableStreaming: true, CheckPointStore: r.checkpoints})
 	return nil
+}
+
+// summaryFailedNotice is shown in the run status when the history summary
+// failed and the run continues with trimmed history.
+const summaryFailedNotice = "历史摘要失败，本轮改为裁剪早期内容后继续"
+
+// assembleInput builds a new run's model input from the conversation history
+// and the run's context.
+func (r *Runner) assembleInput(current *job, rows []store.MessageRow, compaction *compactionHandler) ([]*schema.Message, error) {
+	messages := historyMessages(rows, current.id)
+	messages, err := compaction.compactHistory(current.ctx, messages)
+	if err != nil {
+		return nil, err
+	}
+	if r.config.Context != nil {
+		bundle := r.config.Context.Build(current.ctx, current.args.Scope, current.args.Selection)
+		if bundle.Volatile != "" {
+			messages = append(messages, schema.UserMessage("[Environment Context]\n"+bundle.Volatile))
+		}
+		if len(current.args.Refs) > 0 {
+			rendered := r.config.Context.RenderRefs(current.ctx, refSpecs(current.args.Refs), r.refFileReader())
+			if rendered != "" {
+				messages = append(messages, schema.UserMessage("[Referenced Content]\n"+rendered))
+			}
+		}
+	}
+	if prompt := r.grantReferencedTabs(current); prompt != "" {
+		messages = append(messages, schema.UserMessage(prompt))
+	}
+	if r.config.Roster != nil {
+		injection, err := r.config.Roster.InjectContext(current.ctx, current.args.ConversationID)
+		if err != nil {
+			return nil, err
+		}
+		if len(injection.Entries) > 0 {
+			messages = append(messages, schema.UserMessage(injection.Prompt))
+		}
+	}
+	if catalog, err := r.config.Tools.SkillCatalog(current.ctx); err != nil {
+		return nil, err
+	} else if len(catalog) > 0 {
+		messages = append(messages, schema.UserMessage(skillCatalogPrompt(catalog)))
+	}
+	messages = append(messages, userMessage(current.args))
+	if r.config.Memory != nil {
+		scope, err := r.memoryScope(current.ctx)
+		if err != nil {
+			return nil, err
+		}
+		injection, err := r.config.Memory.Inject(current.ctx, scope, messages, memory.Selection{Query: current.args.Message}, memory.Budget{})
+		if err != nil {
+			return nil, err
+		}
+		messages = injection.Messages
+	}
+	return messages, nil
+}
+
+// steerHandler delivers queued steers and reports the thinking status before
+// each model call.
+type steerHandler struct {
+	*adk.BaseChatModelAgentMiddleware
+	runner  *Runner
+	current *job
+	runtime *einoRuntime
+}
+
+func (h *steerHandler) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, _ *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
+	next := *state
+	pending, err := h.runner.deliverSteers(h.current, &next)
+	if err != nil {
+		return ctx, nil, err
+	}
+	pending = append(pending, statusEvent("thinking", h.runtime.currentTurn()))
+	h.current.queueTurnEmits(pending...)
+	return ctx, &next, nil
+}
+
+// deliverSteers hands queued user instructions to the model and saves each
+// one at that point, so the conversation keeps exactly what the model saw.
+func (r *Runner) deliverSteers(current *job, state *adk.ChatModelAgentState) ([]Event, error) {
+	var pending []Event
+	drained := current.steer.Drain()
+	for index, steered := range drained {
+		row := map[string]any{"role": "user", "content": steered.Content, "steered": true, "jobId": current.id}
+		if err := r.store.MsgInsert(current.ctx, current.args.ConversationID, "user", row, nil, nil); err != nil {
+			r.reportDroppedSteers(current, drained[index:])
+			return nil, fmt.Errorf("保存补充指令失败: %w", err)
+		}
+		state.Messages = append(state.Messages, steered)
+		pending = append(pending, Event{Type: "steered", Text: steered.Content})
+	}
+	return pending, nil
+}
+
+// persistAutoSummary saves a summary made when a run started, placed before
+// the run's rows so it replaces exactly the history it summarized and never
+// splits the run's tool calls from their results.
+func (r *Runner) persistAutoSummary(current *job, summary string, replaced int) {
+	row := map[string]any{"type": historyTypeSummary, "summary": summary, "messages": replaced, "auto": true, "beforeJobId": current.id}
+	if err := r.store.MsgInsert(current.ctx, current.args.ConversationID, historyTypeSummary, row, nil, nil); err != nil {
+		slog.Warn("AI 自动历史摘要保存失败", "job", current.id, "error", err)
+	}
 }
 
 func (r *Runner) modelFor(current *job) (model.BaseChatModel, uint64, error) {
@@ -447,7 +540,7 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 		}
 		if event.Err != nil {
 			if errors.Is(event.Err, adk.ErrExceedMaxIterations) {
-				return runtime.failure(&maxIterationsError{limit: r.config.MaxTurns})
+				return runtime.failure(&maxIterationsError{limit: runtime.maxTurns})
 			}
 			return runtime.failure(event.Err)
 		}
@@ -465,6 +558,7 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 		if variant.Role == schema.Assistant {
 			started = time.Now()
 			current.assistantTurn++
+			current.resetStreamed()
 			if err := r.flushPendingEvents(current, current.assistantTurn, false); err != nil {
 				return runtime.failure(err)
 			}
@@ -503,7 +597,7 @@ func (r *Runner) consume(current *job, iterator *adk.AsyncIterator[*adk.AgentEve
 				return runtime.failure(err)
 			}
 			if len(message.ToolCalls) > 0 {
-				if err := r.persistToolCallRows(current.ctx, current.args.ConversationID, current.id, message.ToolCalls); err != nil {
+				if err := r.persistToolCallRows(current.ctx, current, message.Content, message.ReasoningContent, message.ToolCalls); err != nil {
 					if ctxErr := current.ctx.Err(); ctxErr != nil {
 						return runtime.failure(ctxErr)
 					}
@@ -579,11 +673,13 @@ func emitAssistantText(current *job, message *schema.Message) error {
 		if err := current.emit(current.ctx, Event{Type: "reasoning", Text: message.ReasoningContent}); err != nil {
 			return err
 		}
+		current.recordStreamedReasoning(message.ReasoningContent)
 	}
 	if message.Content != "" {
 		if err := current.emit(current.ctx, Event{Type: "delta", Text: message.Content}); err != nil {
 			return err
 		}
+		current.recordStreamed(message.Content)
 	}
 	return nil
 }
@@ -780,6 +876,7 @@ func (r *Runner) handleInterrupt(current *job, contexts []*adk.InterruptCtx) err
 			return err
 		}
 		r.updateRunStatus(current, store.RunStatusInterrupted)
+		current.addPendingCall(interaction.CallID)
 		args := hitl.WithNonce(json.RawMessage(interaction.Args), request.Nonce)
 		switch kind {
 		case hitl.KindConfirm:
@@ -822,10 +919,49 @@ func interactionValue(value any) (tools.Interaction, bool) {
 	return tools.Interaction{}, false
 }
 
-func (r *Runner) persistAssistant(ctx context.Context, conversationID, answer string, total usage.Usage) error {
+// persistFinalAnswer saves a finished run's answer; the streamed text it
+// covers is then saved and must not come back as a partial answer.
+func (r *Runner) persistFinalAnswer(current *job, answer string, total usage.Usage) error {
+	// The final turn's reasoning is replayed with the answer; providers such
+	// as DeepSeek need it back on prior assistant messages.
+	_, reasoning := current.takeStreamedWithReasoning()
+	if err := r.persistAssistant(current.ctx, current.args.ConversationID, current.id, answer, reasoning, total); err != nil {
+		return err
+	}
+	return nil
+}
+
+// persistPartialAnswer saves the assistant text a run streamed in its last
+// model turn before it ended without a final answer, so a reopened
+// conversation and the next run keep what the user already saw. It uses the
+// finish context of the run status, which outlives cancellation and shutdown.
+func (r *Runner) persistPartialAnswer(current *job) {
+	text, reasoning := current.takeStreamedWithReasoning()
+	if strings.TrimSpace(text) == "" || r.store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(current.ctx), 5*time.Second)
+	defer cancel()
+	row := map[string]any{"role": "assistant", "content": text, "jobId": current.id, "partial": true}
+	if reasoning != "" {
+		row["reasoning"] = reasoning
+	}
+	if err := r.store.MsgInsert(ctx, current.args.ConversationID, "assistant", row, nil, nil); err != nil {
+		slog.Warn("AI 部分回答保存失败", "job", current.id, "error", err)
+	}
+}
+
+func (r *Runner) persistAssistant(ctx context.Context, conversationID, jobID, answer, reasoning string, total usage.Usage) error {
 	tokensIn := clampTokensInt64(total.PromptTokens)
 	tokensOut := clampTokensInt64(total.CompletionTokens)
-	return r.store.MsgInsert(ctx, conversationID, "assistant", map[string]any{"role": "assistant", "content": answer}, &tokensIn, &tokensOut)
+	row := map[string]any{"role": "assistant", "content": answer}
+	if jobID != "" {
+		row["jobId"] = jobID
+	}
+	if reasoning != "" {
+		row["reasoning"] = reasoning
+	}
+	return r.store.MsgInsert(ctx, conversationID, "assistant", row, &tokensIn, &tokensOut)
 }
 
 func clampTokensInt64(value uint64) int64 {
@@ -833,79 +969,11 @@ func clampTokensInt64(value uint64) int64 {
 }
 
 func fitMessageBudget(messages []*schema.Message, window uint64) ([]*schema.Message, bool, error) {
-	if window == 0 {
-		return messages, false, nil
-	}
-	messages = append([]*schema.Message(nil), messages...)
-	limit := int(window * 3)
-	compacted := false
-	for estimatedMessages(messages) > limit {
-		changed := false
-		kept := 0
-		for i := len(messages) - 1; i >= 0; i-- {
-			if messages[i].Role != schema.Tool {
-				continue
-			}
-			kept++
-			if kept > 4 && messages[i].Content != "[Earlier tool output omitted]" {
-				messages[i].Content = "[Earlier tool output omitted]"
-				compacted = true
-				changed = true
-				break
-			}
-		}
-		if !changed {
-			break
-		}
-	}
-	for estimatedMessages(messages) > limit && len(messages) > 2 {
-		var dropped bool
-		messages, dropped = dropOldestMessageUnit(messages)
-		if !dropped {
-			break
-		}
-		compacted = true
-	}
-	if estimatedMessages(messages) > limit {
-		return nil, compacted, fmt.Errorf("当前输入与系统上下文超过模型上下文上限（%d > %d 字节），请缩短输入或增大 contextWindow", estimatedMessages(messages), limit)
-	}
-	return messages, compacted, nil
+	return compact.FitMessageBudget(messages, window)
 }
 
 func dropOldestMessageUnit(messages []*schema.Message) ([]*schema.Message, bool) {
-	start := 0
-	for start < len(messages) && messages[start].Role == schema.System {
-		start++
-	}
-	latestUser := -1
-	for index := len(messages) - 1; index >= start; index-- {
-		if messages[index].Role == schema.User {
-			latestUser = index
-			break
-		}
-	}
-	for index := start; index < len(messages); index++ {
-		if messages[index].Role == schema.User && index == latestUser {
-			continue
-		}
-		if messages[index].Role == schema.Assistant && len(messages[index].ToolCalls) > 0 {
-			end := index + 1
-			for end < len(messages) && messages[end].Role == schema.Tool {
-				end++
-			}
-			return append(messages[:index], messages[end:]...), true
-		}
-		if messages[index].Role == schema.Tool && index > start && messages[index-1].Role == schema.Assistant && len(messages[index-1].ToolCalls) > 0 {
-			start := index - 1
-			end := index + 1
-			for end < len(messages) && messages[end].Role == schema.Tool {
-				end++
-			}
-			return append(messages[:start], messages[end:]...), true
-		}
-		return append(messages[:index], messages[index+1:]...), true
-	}
-	return messages, false
+	return compact.DropOldestMessageUnit(messages)
 }
 
 func toolMessagesPaired(messages []*schema.Message) bool {
@@ -917,20 +985,7 @@ func toolMessagesPaired(messages []*schema.Message) bool {
 	return true
 }
 
-func estimatedMessages(messages []*schema.Message) int {
-	total := 0
-	for _, message := range messages {
-		total += len(message.Content) + len(message.ReasoningContent)
-		for _, call := range message.ToolCalls {
-			total += len(call.Function.Arguments)
-		}
-		if len(message.UserInputMultiContent) != 0 {
-			encoded, _ := json.Marshal(message.UserInputMultiContent)
-			total += len(encoded)
-		}
-	}
-	return total
-}
+func estimatedMessages(messages []*schema.Message) int { return compact.EstimatedMessages(messages) }
 
 func summarize(text string) string {
 	if len(text) <= 400 {

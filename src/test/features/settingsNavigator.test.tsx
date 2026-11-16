@@ -208,7 +208,7 @@ describe("Settings section navigation", () => {
     expect(groupShown("ai")).toBe(true);
     click(tocToggle());
     await flush();
-    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["外观", "终端", "通知", "快捷键与快捷命令", "AI", "模型", "AI 信息脱敏", "AI 拦截规则", "技能", "记忆", "安全", "账号与数据", "关于"]);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["外观", "终端", "通知", "快捷键与快捷命令", "AI", "模型", "AI 信息脱敏", "AI 拦截规则", "AI 运行", "技能", "记忆", "安全", "账号与数据", "关于"]);
   });
 
   it("persists TOC expansion state to local storage", async () => {
@@ -254,7 +254,7 @@ describe("AI interception rule copy", () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const text = document.getElementById("settings-ai-rules")?.textContent ?? "";
-    expect(text).toContain("读写和自动执行模式要求确认");
+    expect(text).toContain("读写、自动执行和完全放行模式要求确认");
     expect(text).toContain("只读和无人值守模式直接拒绝");
     expect(text).toContain("不可逆操作（格式化磁盘、清空系统目录、删除数据库）将被直接拒绝");
     expect(text).not.toContain("规则命中 → 读写/完全静默先确认");

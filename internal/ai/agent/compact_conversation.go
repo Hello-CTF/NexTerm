@@ -7,16 +7,18 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-// historyTypeSummary rows hold a summary written by /compact. History is read
-// from the latest summary on, so earlier messages no longer reach the model.
+// historyTypeSummary rows hold a summary written by /compact or by an
+// automatic summary at run start. History is read from the latest summary on,
+// so earlier messages no longer reach the model.
 const historyTypeSummary = "summary"
 
 var (
-	ErrConversationBusy      = ipc.NewError(ipc.CodeForbidden, "该对话仍有任务在运行或等待确认，请在任务结束后再压缩")
 	ErrNothingToCompact      = ipc.NewError(ipc.CodeBadParam, "对话内容过少，无需压缩")
 	errCompactNoConversation = ipc.NewError(ipc.CodeBadParam, "请先开始对话，再进行压缩")
+	ErrCompactHistoryChanged = ipc.NewError(CodeConversationBusy, "压缩期间对话有了新消息，摘要未保存，请重试")
 )
 
 type CompactResult struct {
@@ -26,7 +28,9 @@ type CompactResult struct {
 
 // CompactConversation folds the conversation's history into one persisted
 // summary using the active model, so later runs start from the summary
-// instead of the full history.
+// instead of the full history. The conversation stays unlocked while the
+// model summarizes; the summary is saved only when no run started and no
+// message arrived meanwhile.
 func (r *Runner) CompactConversation(ctx context.Context, conversationID string) (CompactResult, error) {
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
@@ -37,12 +41,7 @@ func (r *Runner) CompactConversation(ctx context.Context, conversationID string)
 		return CompactResult{}, err
 	}
 	executionCtx := privacy.WithConversation(conversationExecutionContext(ctx, row.OwnerID), conversationID)
-	unlock := r.lockConversation(conversationID)
-	defer unlock()
-	if r.conversationHasJob(conversationID) {
-		return CompactResult{}, ErrConversationBusy
-	}
-	rows, err := r.store.MsgList(executionCtx, conversationID)
+	rows, err := r.compactSnapshot(executionCtx, conversationID)
 	if err != nil {
 		return CompactResult{}, err
 	}
@@ -58,7 +57,7 @@ func (r *Runner) CompactConversation(ctx context.Context, conversationID string)
 		return CompactResult{}, err
 	}
 	if window == 0 {
-		window = 262144
+		window = defaultContextWindow
 	}
 	handler := newCompactionHandler(chatModel, window, nil)
 	summaryCtx, cancel := context.WithTimeout(executionCtx, handler.summaryCallTimeout())
@@ -67,6 +66,15 @@ func (r *Runner) CompactConversation(ctx context.Context, conversationID string)
 	if err != nil {
 		return CompactResult{}, err
 	}
+	unlock := r.lockConversation(conversationID)
+	defer unlock()
+	current, err := r.compactCheck(executionCtx, conversationID)
+	if err != nil {
+		return CompactResult{}, err
+	}
+	if !sameHistoryHead(rows, current) {
+		return CompactResult{}, ErrCompactHistoryChanged
+	}
 	summaryRow := map[string]any{"type": historyTypeSummary, "summary": summary, "messages": len(history)}
 	if err := r.store.MsgInsert(executionCtx, conversationID, historyTypeSummary, summaryRow, nil, nil); err != nil {
 		return CompactResult{}, err
@@ -74,15 +82,28 @@ func (r *Runner) CompactConversation(ctx context.Context, conversationID string)
 	return CompactResult{Messages: len(history)}, nil
 }
 
-// conversationHasJob reports a run of the conversation that is running or
-// parked on a confirmation.
-func (r *Runner) conversationHasJob(conversationID string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, current := range r.jobs {
-		if current.args.ConversationID == conversationID {
-			return true
-		}
+func (r *Runner) compactSnapshot(ctx context.Context, conversationID string) ([]store.MessageRow, error) {
+	unlock := r.lockConversation(conversationID)
+	defer unlock()
+	return r.compactCheck(ctx, conversationID)
+}
+
+// compactCheck refuses while the conversation has an active run and returns
+// its rows. Callers hold the conversation lock.
+func (r *Runner) compactCheck(ctx context.Context, conversationID string) ([]store.MessageRow, error) {
+	busy, err := r.conversationBusy(ctx, conversationID)
+	if err != nil {
+		return nil, err
 	}
-	return false
+	if busy {
+		return nil, ErrConversationBusy
+	}
+	return r.store.MsgList(ctx, conversationID)
+}
+
+func sameHistoryHead(before, after []store.MessageRow) bool {
+	if len(before) != len(after) {
+		return false
+	}
+	return len(before) == 0 || before[len(before)-1].ID == after[len(after)-1].ID
 }

@@ -39,6 +39,23 @@ describe("structured history mapping", () => {
     expect(items[1]).toMatchObject({ text: "已重启 nginx，下一步看日志", messages: 6 });
   });
 
+  it("shows an automatic summary before the message of the run it was made for", () => {
+    const items = historyToItems(state, [
+      msg("user", { role: "user", content: "旧问题", jobId: "job-1" }),
+      msg("assistant", { role: "assistant", content: "旧回答", jobId: "job-1" }),
+      msg("user", { role: "user", content: "新问题", jobId: "job-2" }),
+      msg("summary", { type: "summary", summary: "此前排查了 nginx", messages: 2, auto: true, beforeJobId: "job-2" }),
+      msg("assistant", { role: "assistant", content: "新回答", jobId: "job-2" }),
+    ]);
+    expect(items.map((i) => (i.role === "compact" ? "compact" : `${i.role}:${"text" in i ? i.text : ""}`))).toEqual([
+      "user:旧问题",
+      "assistant:旧回答",
+      "compact",
+      "user:新问题",
+      "assistant:新回答",
+    ]);
+  });
+
   it("folds tool call/result rows into a single tool item", () => {
     const items = historyToItems(state, [
       msg("user", { role: "user", content: "Inspect logs" }),

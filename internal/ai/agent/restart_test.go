@@ -297,6 +297,10 @@ func TestRestartExpiresPendingHITL(t *testing.T) {
 	if !strings.Contains(last.PayloadJSON, "过期") {
 		t.Fatalf("terminal journal event = %+v", last)
 	}
+	resolved := events[len(events)-2]
+	if resolved.Type != "interactionResolved" || !strings.Contains(resolved.PayloadJSON, `"decision":"expired"`) || !strings.Contains(resolved.PayloadJSON, confirmation.ID) {
+		t.Fatalf("expiry before recovery must settle the card in the journal: %+v", events)
+	}
 }
 
 func TestRestartCancelsRestoredRun(t *testing.T) {

@@ -40,6 +40,10 @@ type FS struct {
 	chown                    func(*sftp.Client, string, int, int) error
 	stageWrittenHook         func(temporary string)
 	replacePreCommitHook     func()
+	// abandoned counts, per resolved path, the writes boundWrite stopped waiting for that have not returned yet.
+	abandonedMu    sync.Mutex
+	abandoned      map[string]int
+	abandonedTotal int
 }
 
 // ClientOptions returns the SFTP client options NexTerm uses everywhere. Concurrent
@@ -119,7 +123,8 @@ func (f *FS) List(ctx context.Context, remotePath string) ([]base.FileEntry, err
 // resolveSymlinks fills SymlinkTarget and TargetKind for symlink entries. The
 // SFTP client multiplexes requests, so overlapping the ReadLink and Stat calls
 // turns 2N round trips into roughly 2N/listLinkConcurrency. Failed lookups leave
-// the fields empty, which marks a broken link.
+// the fields empty, which marks a broken link. A lookup that is still pending
+// when ctx ends is abandoned, so a link into a hung mount cannot hold List.
 func (f *FS) resolveSymlinks(ctx context.Context, entries []base.FileEntry) {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, listLinkConcurrency/2)
@@ -137,15 +142,18 @@ func (f *FS) resolveSymlinks(ctx context.Context, entries []base.FileEntry) {
 		go func(entry *base.FileEntry) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// The abandoned requests may outlive List, whose sort moves entries, so they
+			// capture the path by value.
+			linkPath := entry.Path
 			stat := make(chan base.FileKind, 1)
 			go func() {
 				var kind base.FileKind
-				if info, err := f.client.Stat(entry.Path); err == nil {
+				if info, err := await(ctx, func() (os.FileInfo, error) { return f.client.Stat(linkPath) }, nil); err == nil {
 					kind = base.TargetKindOf(info.Mode())
 				}
 				stat <- kind
 			}()
-			if target, err := f.client.ReadLink(entry.Path); err == nil {
+			if target, err := await(ctx, func() (string, error) { return f.client.ReadLink(linkPath) }, nil); err == nil {
 				entry.SymlinkTarget = target
 			}
 			entry.TargetKind = <-stat
@@ -162,11 +170,16 @@ func (f *FS) ReadFile(ctx context.Context, remotePath string, maxBytes int64) ([
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
 	if reader.Size() > maxBytes {
+		reader.Close()
 		return nil, fmt.Errorf("remote file exceeds read limit (%d > %d bytes)", reader.Size(), maxBytes)
 	}
-	data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	// A read request into a hung mount is never answered and closing the handle does not unblock it, so the read is
+	// awaited and an abandoned read closes its own handle once it returns.
+	data, err := await(ctx, func() ([]byte, error) {
+		defer reader.Close()
+		return io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("SFTP read %s: %w", remotePath, err)
 	}
@@ -176,24 +189,31 @@ func (f *FS) ReadFile(ctx context.Context, remotePath string, maxBytes int64) ([
 	return data, nil
 }
 
+// WriteFile replaces remotePath with data and stops waiting when ctx ends (see boundWrite): before its first mutating
+// request it returns ctx's error with nothing changed, afterwards a *base.WriteOutcomeUnknownError.
 func (f *FS) WriteFile(ctx context.Context, remotePath string, data []byte, backup bool) error {
 	remotePath, err := f.real(ctx, remotePath)
 	if err != nil {
 		return err
 	}
-	if backup {
-		info, err := f.client.Stat(remotePath)
-		switch {
-		case err == nil:
-			if err := f.backup(ctx, remotePath, info.Mode()); err != nil {
-				return err
+	return f.boundWrite(ctx, remotePath, func(begin func() error) error {
+		if backup {
+			info, err := f.stat(ctx, remotePath)
+			switch {
+			case err == nil:
+				if err := begin(); err != nil {
+					return err
+				}
+				if err := f.backup(ctx, remotePath, info.Mode()); err != nil {
+					return err
+				}
+			case errors.Is(err, fs.ErrNotExist):
+			default:
+				return fmt.Errorf("SFTP stat before backup: %w", err)
 			}
-		case errors.Is(err, fs.ErrNotExist):
-		default:
-			return fmt.Errorf("SFTP stat before backup: %w", err)
 		}
-	}
-	return f.replaceFile(ctx, remotePath, data)
+		return f.replaceFile(ctx, remotePath, data, begin)
+	})
 }
 
 func (f *FS) Mkdir(ctx context.Context, remotePath string) error {
@@ -436,7 +456,7 @@ func (f *FS) Size(ctx context.Context, remotePath string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	info, err := f.client.Stat(remotePath)
+	info, err := f.stat(ctx, remotePath)
 	if err != nil {
 		return 0, fmt.Errorf("SFTP stat %s: %w", remotePath, err)
 	}
@@ -449,7 +469,7 @@ func (f *FS) ModTime(ctx context.Context, remotePath string) (time.Time, error) 
 	if err != nil {
 		return time.Time{}, err
 	}
-	info, err := f.client.Lstat(remotePath)
+	info, err := await(ctx, func() (os.FileInfo, error) { return f.client.Lstat(remotePath) }, nil)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("SFTP lstat %s: %w", remotePath, err)
 	}
@@ -461,7 +481,7 @@ func (f *FS) FileMode(ctx context.Context, remotePath string) (fs.FileMode, erro
 	if err != nil {
 		return 0, err
 	}
-	info, err := f.client.Stat(remotePath)
+	info, err := f.stat(ctx, remotePath)
 	if err != nil {
 		return 0, fmt.Errorf("SFTP stat %s: %w", remotePath, err)
 	}
@@ -473,13 +493,13 @@ func (f *FS) OpenRead(ctx context.Context, remotePath string) (base.RemoteReader
 	if err != nil {
 		return nil, err
 	}
-	file, err := f.client.Open(remotePath)
+	file, err := await(ctx, func() (*sftp.File, error) { return f.client.Open(remotePath) }, func(late *sftp.File) { late.Close() })
 	if err != nil {
 		return nil, fmt.Errorf("SFTP open %s: %w", remotePath, err)
 	}
-	info, err := file.Stat()
+	info, err := await(ctx, file.Stat, nil)
 	if err != nil {
-		file.Close()
+		go file.Close()
 		return nil, fmt.Errorf("SFTP stat open file %s: %w", remotePath, err)
 	}
 	reader := &remoteReader{ctx: ctx, file: file, size: info.Size()}
@@ -492,7 +512,7 @@ func (f *FS) OpenWrite(ctx context.Context, remotePath string, append bool) (bas
 	if err != nil {
 		return nil, err
 	}
-	_, statErr := f.client.Stat(remotePath)
+	_, statErr := f.stat(ctx, remotePath)
 	newFile := errors.Is(statErr, fs.ErrNotExist)
 	if statErr != nil && !newFile {
 		return nil, fmt.Errorf("SFTP stat before write %s: %w", remotePath, statErr)
@@ -597,7 +617,7 @@ func (f *FS) real(ctx context.Context, remotePath string) (string, error) {
 	if remotePath != "~" && !strings.HasPrefix(remotePath, "~/") {
 		return remotePath, nil
 	}
-	home, err := f.client.RealPath(".")
+	home, err := await(ctx, func() (string, error) { return f.client.RealPath(".") }, nil)
 	if err != nil {
 		return "", fmt.Errorf("resolve SFTP home directory: %w", err)
 	}
@@ -605,6 +625,11 @@ func (f *FS) real(ctx context.Context, remotePath string) (string, error) {
 		return home, nil
 	}
 	return strings.TrimSuffix(home, "/") + "/" + strings.TrimPrefix(remotePath, "~/"), nil
+}
+
+// stat is a Stat that stops waiting when ctx ends (see await).
+func (f *FS) stat(ctx context.Context, remotePath string) (os.FileInfo, error) {
+	return await(ctx, func() (os.FileInfo, error) { return f.client.Stat(remotePath) }, nil)
 }
 
 func (f *FS) realPair(ctx context.Context, from, to string) (string, string, error) {

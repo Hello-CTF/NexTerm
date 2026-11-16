@@ -1,20 +1,44 @@
 package agent
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
 )
 
 type BaseURLEntry struct {
 	URL      string `json:"url"`
 	Insecure bool   `json:"insecure,omitempty"`
+	// Proxy is a manual proxy the embedding app supplies for each run; it is never written to a config file.
+	Proxy netproxy.Manual `json:"-"`
+}
+
+// DialPolicy is the TLS and proxy policy of an endpoint, applied to its websocket dials.
+type DialPolicy struct {
+	Insecure bool
+	Proxy    netproxy.Manual
+}
+
+// transport builds an HTTP transport for the policy: the proxy environment by default, or the manual proxy.
+func (p DialPolicy) transport() (*http.Transport, error) {
+	transport := &http.Transport{Proxy: http.ProxyFromEnvironment}
+	if p.Insecure {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	if err := p.Proxy.Apply(transport, nil); err != nil {
+		return nil, err
+	}
+	return transport, nil
 }
 
 type Config struct {

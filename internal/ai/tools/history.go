@@ -23,7 +23,7 @@ const (
 const shellHistoryKind = "shell_history"
 
 type ShellHistoryArgs struct {
-	Limit int `json:"limit,omitempty"`
+	Limit int `json:"limit,omitempty" jsonschema_description:"Number of newest entries to return (1-500; default 50)"`
 }
 
 var (
@@ -88,7 +88,7 @@ func (r *Registry) shellHistory(ctx context.Context, scope Scope, raw []byte) Ou
 	if text == "" {
 		text = "（历史为空）"
 	}
-	text, truncated := capText(text)
+	text, _, truncated := capHeadTail(text)
 	prefix := fmt.Sprintf("[本机 %s shell 历史，最新 %d 条]\n", shell, len(entries))
 	return Output{OK: true, Text: prefix + text, Truncated: truncated}
 }

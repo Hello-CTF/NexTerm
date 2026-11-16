@@ -15,6 +15,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
 	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
 	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
@@ -72,7 +73,7 @@ func NewRunner(config Config) *Runner {
 		config.NewID = ids.New
 	}
 	if config.MaxTurns <= 0 {
-		config.MaxTurns = 24
+		config.MaxTurns = DefaultMaxTurns
 	}
 	if config.MaxImages <= 0 {
 		config.MaxImages = 8
@@ -248,6 +249,19 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 
 	unlock := r.lockConversation(conversationID)
 	defer unlock()
+	if persisted {
+		busy, busyErr := r.conversationBusy(executionCtx, conversationID)
+		if busyErr == nil && busy {
+			busyErr = ErrConversationRunBusy
+		}
+		if busyErr != nil {
+			r.releaseJobID(jobID)
+			cancel()
+			forceCancel()
+			_ = stream.Close()
+			return StartResponse{}, busyErr
+		}
+	}
 	if err := r.store.MsgInsert(executionCtx, conversationID, "user", map[string]any{"role": "user", "content": args.Message, "imageCount": len(args.Images), "jobId": jobID}, nil, nil); err != nil {
 		r.releaseJobID(jobID)
 		cancel()
@@ -264,8 +278,9 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 			return StartResponse{}, err
 		}
 	}
-	stream = r.wrapStream(stream, jobID)
-	current := &job{id: jobID, ownerID: ownerID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, memory: r.conversationMemory(ownerID, conversationID, args.Scope), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true, cancelSync: newCancelSync(), doneCh: make(chan struct{})}
+	downstream := newSwitchableStream(stream)
+	stream = r.wrapStream(downstream, jobID)
+	current := &job{id: jobID, ownerID: ownerID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, downstream: downstream, memory: r.conversationMemory(ownerID, conversationID, args.Scope), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true, cancelSync: newCancelSync(), doneCh: make(chan struct{})}
 	current.capture = r.newJobCapture(jobID, conversationID)
 	r.mu.Lock()
 	if r.closed || r.jobs[jobID] != nil {
@@ -414,12 +429,14 @@ func (r *Runner) SteerContext(ctx context.Context, jobID, message string) error 
 	if current.ctx.Err() != nil {
 		return ErrJobNotFound
 	}
+	// The row is saved when the model receives the instruction (see
+	// deliverSteers), so an instruction reported as dropped never reaches
+	// later runs or the reloaded conversation.
 	if err := current.steer.Push(schema.UserMessage(message)); err != nil {
+		if errors.Is(err, steer.ErrQueueClosed) {
+			return ErrJobNotFound
+		}
 		return fmt.Errorf("%w: %w", ErrSteerQueueFull, err)
-	}
-
-	if err := r.store.MsgInsert(current.ctx, current.args.ConversationID, "user", map[string]any{"role": "user", "content": message, "steered": true, "jobId": current.id}, nil, nil); err != nil {
-		return err
 	}
 	return nil
 }
@@ -460,12 +477,14 @@ func (r *Runner) ConfirmStreamContext(ctx context.Context, confirmation Confirma
 	if err := r.authorizeJob(ctx, confirmation.JobID, current); err != nil {
 		return err
 	}
+	restoredNow := false
 	if current == nil {
 		restored, err := r.restoreJob(ctx, confirmation.JobID, factory)
 		if err != nil {
 			return restoreJobError(err)
 		}
 		current = restored
+		restoredNow = true
 	}
 	if current.ctx.Err() != nil {
 		return ErrJobNotFound
@@ -473,6 +492,9 @@ func (r *Runner) ConfirmStreamContext(ctx context.Context, confirmation Confirma
 	request, err := r.pendingInterrupt(current.id, confirmation.CallID, confirmation.Nonce, hitl.KindConfirm)
 	if err != nil {
 		return err
+	}
+	if !restoredNow {
+		r.switchJobStream(ctx, current, factory)
 	}
 	answer := hitl.Answer{
 		ID:               r.config.NewID(),
@@ -486,7 +508,7 @@ func (r *Runner) ConfirmStreamContext(ctx context.Context, confirmation Confirma
 		Decision:         hitl.Decision(confirmation.Decision),
 		EnvironmentNames: confirmation.EnvironmentNames,
 	}
-	return r.resumeWithAnswer(current, answer)
+	return r.resumeWithAnswer(current, answer, confirmation.Decision)
 }
 
 func (r *Runner) Answer(answer Answer) error {
@@ -505,12 +527,14 @@ func (r *Runner) AnswerStreamContext(ctx context.Context, answer Answer, factory
 	if err := r.authorizeJob(ctx, answer.JobID, current); err != nil {
 		return err
 	}
+	restoredNow := false
 	if current == nil {
 		restored, err := r.restoreJob(ctx, answer.JobID, factory)
 		if err != nil {
 			return restoreJobError(err)
 		}
 		current = restored
+		restoredNow = true
 	}
 	if current.ctx.Err() != nil {
 		return ErrJobNotFound
@@ -518,6 +542,9 @@ func (r *Runner) AnswerStreamContext(ctx context.Context, answer Answer, factory
 	request, err := r.pendingInterrupt(current.id, answer.CallID, answer.Nonce, hitl.KindQuestion)
 	if err != nil {
 		return err
+	}
+	if !restoredNow {
+		r.switchJobStream(ctx, current, factory)
 	}
 	hitlAnswer := hitl.Answer{
 		ID:           r.config.NewID(),
@@ -530,7 +557,7 @@ func (r *Runner) AnswerStreamContext(ctx context.Context, answer Answer, factory
 		Parameters:   request.Parameters,
 		Text:         answer.Text,
 	}
-	return r.resumeWithAnswer(current, hitlAnswer)
+	return r.resumeWithAnswer(current, hitlAnswer, interactionAnswered)
 }
 
 func (r *Runner) authorizeJob(ctx context.Context, jobID string, current *job) error {
@@ -586,7 +613,24 @@ func (r *Runner) pendingInterrupt(jobID, callID, nonce string, kind hitl.Kind) (
 	return hitl.Interrupt{}, fmt.Errorf("%w: 没有待处理的确认请求匹配该调用", ErrConfirmationStale)
 }
 
-func (r *Runner) resumeWithAnswer(current *job, answer hitl.Answer) error {
+// switchJobStream moves a live job's delivery to the channel of the client
+// that answers, so a panel reopened after the run started receives the
+// resumed events. Events already sent stay in the journal for catch-up.
+func (r *Runner) switchJobStream(ctx context.Context, current *job, factory StreamFactory) {
+	if factory == nil || current.downstream == nil {
+		return
+	}
+	opened, err := factory(ctx, "", current.id)
+	if err != nil {
+		slog.Warn("AI 事件流切换失败，继续使用原事件流", "job", current.id, "error", err)
+		return
+	}
+	if opened != nil {
+		current.downstream.Switch(opened)
+	}
+}
+
+func (r *Runner) resumeWithAnswer(current *job, answer hitl.Answer, decision string) error {
 	current.pendingMu.Lock()
 	if current.ctx.Err() != nil || current.eino == nil || current.eino.runner == nil {
 		current.pendingMu.Unlock()
@@ -598,6 +642,9 @@ func (r *Runner) resumeWithAnswer(current *job, answer hitl.Answer) error {
 		current.pendingMu.Unlock()
 		return mapResumeError(err)
 	}
+	// The resumed consumer emits the resolution before the tool's own events;
+	// emitting here could block the answering request behind a slow stream.
+	current.queueResolved(answer.CallID, decision)
 	r.updateRunStatus(current, store.RunStatusRunning)
 	if current.running {
 		current.resumeIterator = iterator
@@ -660,18 +707,34 @@ func (r *Runner) authorizeHITLRead(ctx context.Context, jobID string) error {
 
 func (r *Runner) complete(current *job, answer string, turns int, total usage.Usage, terminalErr error) {
 	current.completeOnce.Do(func() {
+		r.emitQueuedResolved(current)
 		r.reportSteerLeftover(current)
 		if closeErr := r.closeSubagents(current); closeErr != nil {
 			terminalErr = errors.Join(terminalErr, closeErr)
 		}
 		current.cancelSync.waitRecorded()
+		shutdown := terminalErr != nil && current.shutdown.Load()
+		if shutdown {
+			terminalErr = errRunShutdown
+		}
 		terminal, _ := r.hitl.FinishError(current.id, terminalErr)
-		if terminal.Reason == hitl.TerminalCanceled && !isCancellation(terminalErr) {
+		if !shutdown && terminal.Reason == hitl.TerminalCanceled && !isCancellation(terminalErr) {
 			terminalErr = errors.Join(context.Canceled, terminalErr)
+		}
+		if terminalErr != nil && !isCancellation(terminalErr) {
+			status, _ := provider.ErrorDetail(terminalErr)
+			slog.Warn("ai run failed", "job", current.id, "class", string(provider.ClassifyError(terminalErr)),
+				"status", status, "error", tools.RedactText(terminalErr.Error()))
+		}
+		if terminalErr != nil {
+			// Saved before the status and terminal event, so the row is in
+			// place when a client sees the run end and reloads.
+			r.persistPartialAnswer(current)
 		}
 		var statusErr error
 		if err := current.finish(answer, turns, total, terminalErr, func() {
 			statusErr = r.finishRun(current, answer, turns, total, terminalErr, terminal)
+			current.settled.Store(true)
 		}); err != nil {
 			slog.Warn("AI 终止事件处理失败", "job", current.id, "error", err)
 		}
@@ -722,7 +785,10 @@ func (r *Runner) finishRun(current *job, answer string, turns int, total usage.U
 	}
 	status := store.RunStatusCompleted
 	message := ""
-	if terminalErr != nil {
+	if errors.Is(terminalErr, errRunShutdown) {
+		status = store.RunStatusInterrupted
+		message = terminalErr.Error()
+	} else if terminalErr != nil {
 		message = terminalErr.Error()
 		switch terminal.Reason {
 		case hitl.TerminalCanceled:
@@ -743,10 +809,34 @@ func (r *Runner) finishRun(current *job, answer string, turns int, total usage.U
 			}
 		}
 	}
-	err := r.runs.RunFinishUsage(ctx, current.id, status, answer, message, turns,
-		usage.SaturatingInt64(total.PromptTokens), usage.SaturatingInt64(total.CompletionTokens),
-		usage.SaturatingInt64(total.CacheCreationTokens), usage.SaturatingInt64(uint64(max(total.LatencyMS, 0))))
+	// The finish only applies to an unfinished row, so a retry after a
+	// transient write failure cannot overwrite a later state.
+	var err error
+	for attempt := 0; attempt < len(runFinishRetryDelays)+1; attempt++ {
+		if attempt > 0 {
+			timer := time.NewTimer(runFinishRetryDelays[attempt-1])
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return errors.Join(err, ctx.Err())
+			}
+		}
+		err = r.runs.RunFinishUsage(ctx, current.id, status, answer, message, turns,
+			usage.SaturatingInt64(total.PromptTokens), usage.SaturatingInt64(total.CompletionTokens),
+			usage.SaturatingInt64(total.CacheCreationTokens), usage.SaturatingInt64(uint64(max(total.LatencyMS, 0))))
+		if err == nil || isNotFound(err) {
+			return err
+		}
+	}
 	return err
+}
+
+var runFinishRetryDelays = []time.Duration{100 * time.Millisecond, 400 * time.Millisecond, time.Second}
+
+func isNotFound(err error) bool {
+	var appErr *ipc.Error
+	return errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound
 }
 
 func (r *Runner) updateRunStatus(current *job, status string) {
@@ -766,7 +856,12 @@ func (r *Runner) wrapStream(stream Stream, jobID string) Stream {
 }
 
 func (r *Runner) reportSteerLeftover(current *job) {
-	leftover := current.steer.Drain()
+	r.reportDroppedSteers(current, current.steer.Close())
+}
+
+// reportDroppedSteers tells the client which instructions never reached the
+// model; they were never saved, so later runs do not see them either.
+func (r *Runner) reportDroppedSteers(current *job, leftover []*schema.Message) {
 	if len(leftover) == 0 {
 		return
 	}
@@ -794,12 +889,14 @@ func (r *Runner) cleanup(current *job) {
 	if deleter, ok := r.checkpoints.(adk.CheckPointDeleter); ok {
 		_ = deleter.Delete(context.Background(), current.id)
 	}
-	current.markDone()
+	// Unregister before signalling done, so a Wait that returns never sees the
+	// job still registered; a later Wait falls back to the finished run row.
 	r.mu.Lock()
 	if r.jobs[current.id] == current {
 		delete(r.jobs, current.id)
 	}
 	r.mu.Unlock()
+	current.markDone()
 	r.wg.Done()
 }
 
@@ -835,6 +932,7 @@ func (r *Runner) CloseContext(ctx context.Context) error {
 			r.parkForShutdown(current)
 			continue
 		}
+		current.shutdown.Store(true)
 		current.cancelSync.markStarted()
 		if current.forceCancel != nil {
 			current.forceCancel()

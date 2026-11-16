@@ -7,6 +7,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
+	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -24,6 +25,7 @@ var (
 	ErrTooManyActive          = errors.New("too many active subagent tasks")
 	ErrManagerClosed          = errors.New("subagent manager is closed")
 	ErrInteractionUnsupported = errors.New("subagent tasks cannot request user interaction")
+	ErrIterationLimit         = errors.New("subagent reached its step limit")
 )
 
 type ModelFactory func(context.Context) (model.BaseChatModel, error)
@@ -66,24 +68,33 @@ type TerminalRef struct {
 	Title     string `json:"title,omitempty"`
 }
 
+// ToolSafetyFactory builds the tool-error handler and unknown-tool handler for
+// one subagent run.
+type ToolSafetyFactory func(allowed []string) (adk.ChatModelAgentMiddleware, func(ctx context.Context, name, input string) (string, error))
+
 type Observer func(Event)
 
 type ObserverFactory func(context.Context) Observer
 
 type Config struct {
-	NewModel                ModelFactory
-	NewModelForProfile      ProfileModelFactory
-	NewTools                ToolFactory
+	NewModel           ModelFactory
+	NewModelForProfile ProfileModelFactory
+	NewTools           ToolFactory
+	// ToolSafety optionally supplies the handler that turns tool errors into
+	// failed results and the unknown-tool handler, given the allowed tool names.
+	ToolSafety              ToolSafetyFactory
 	OnFinish                func(context.Context, Request, Result) error
 	ResolveDefaultProfileID func() string
 	Instruction             string
 	MaxIterations           int
-	MaxRunTime              time.Duration
-	MaxTasks                int
-	MaxConcurrent           int
-	MaxOutputBytes          int
-	MaxHistoryMessages      int
-	MaxHistoryBytes         int
+	// ContextWindow bounds the model input in tokens; zero uses the shared default.
+	ContextWindow      uint64
+	MaxRunTime         time.Duration
+	MaxTasks           int
+	MaxConcurrent      int
+	MaxOutputBytes     int
+	MaxHistoryMessages int
+	MaxHistoryBytes    int
 }
 
 type Scope struct {

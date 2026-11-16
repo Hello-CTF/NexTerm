@@ -268,7 +268,7 @@ func TestShellHistoryRemoteSessionSuggestsExecWithoutConfirmation(t *testing.T) 
 	writeHistoryFile(t, home, ".bash_history", desktopHistory+"\n")
 	registry := NewRegistry(Dependencies{LocalHistory: true, Terminal: &fakeTerminal{assetKind: "ssh"}})
 	scope := Scope{SessionID: "s", TabID: "tab"}
-	for _, mode := range []guard.Mode{guard.ReadWrite, guard.Silent} {
+	for _, mode := range []guard.Mode{guard.ReadWrite, guard.Silent, guard.FullAccess} {
 		execution := &Execution{
 			Registry:   registry,
 			Scope:      scope,

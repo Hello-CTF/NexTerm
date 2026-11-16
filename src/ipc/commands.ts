@@ -1527,7 +1527,7 @@ export interface ProviderConfig {
   stream: boolean;
 }
 
-export type AiPermissionMode = "read_only" | "read_write" | "silent";
+export type AiPermissionMode = "read_only" | "read_write" | "silent" | "full_access";
 
 export interface AiPermissionConfig {
   mode: AiPermissionMode;
@@ -1844,7 +1844,7 @@ export const syncApi = {
     }) as Promise<import("./types").SyncBundleWriteResult>,
 
   linkGet: () => call("sync_link_get") as Promise<import("./types").AccountLink>,
-  linkSet: (patch: { url?: string; username?: string; password?: string; insecure?: boolean }) =>
+  linkSet: (patch: import("./types").AccountLinkPatch) =>
     call("sync_link_set", {
       args: patch as unknown as import("./generated/types").LinkPatch,
     }) as Promise<import("./types").AccountLink>,

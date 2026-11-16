@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
+	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -39,9 +41,28 @@ type historyRow struct {
 	Before    string          `json:"before"`
 	After     string          `json:"after"`
 	Plan      string          `json:"plan"`
+	// Reasoning is the model reasoning of an assistant turn. Providers such as
+	// DeepSeek reject tool-call history that omits it.
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
-func (r *Runner) persistToolCallRows(ctx context.Context, conversationID, jobID string, calls []schema.ToolCall) error {
+// persistToolCallRows saves one assistant turn's tool calls. Text the model
+// wrote alongside the calls is saved first as an interim assistant row, and
+// rebuildHistory joins it with the calls into one assistant message.
+func (r *Runner) persistToolCallRows(ctx context.Context, current *job, text, reasoning string, calls []schema.ToolCall) error {
+	conversationID, jobID := current.args.ConversationID, current.id
+	if text != "" {
+		interim := map[string]any{"role": "assistant", "content": text, "jobId": jobID, "interim": true}
+		if reasoning != "" {
+			interim["reasoning"] = reasoning
+			reasoning = ""
+		}
+		if err := r.store.MsgInsert(ctx, conversationID, "assistant", interim, nil, nil); err != nil {
+			return err
+		}
+	}
+	// The turn's text is saved, so it is no longer a partial answer.
+	current.resetStreamed()
 	for _, call := range calls {
 		row := map[string]any{
 			"type":  historyTypeToolCall,
@@ -49,6 +70,10 @@ func (r *Runner) persistToolCallRows(ctx context.Context, conversationID, jobID 
 			"id":    call.ID,
 			"name":  call.Function.Name,
 			"args":  rawObject(json.RawMessage(call.Function.Arguments)),
+		}
+		if reasoning != "" {
+			row["reasoning"] = reasoning
+			reasoning = ""
 		}
 		if err := r.store.MsgInsert(ctx, conversationID, historyTypeToolCall, row, nil, nil); err != nil {
 			return err
@@ -112,17 +137,71 @@ func historyMessages(rows []store.MessageRow, jobID string) []*schema.Message {
 	return repaired
 }
 
+// parsedHistoryRow is one stored row decoded for history rebuilding.
+type parsedHistoryRow struct {
+	historyRow
+	Interim     bool   `json:"interim"`
+	Partial     bool   `json:"partial"`
+	BeforeJobID string `json:"beforeJobId"`
+}
+
+// partialAnswerNote follows a partial answer in the model input so the model
+// knows the user saw an answer that was cut off; the stored text stays as
+// streamed.
+const partialAnswerNote = "\n\n[answer interrupted]"
+
+// orderHistoryRows keeps each run's rows together, in the order the runs
+// started. Two runs that wrote into one conversation at the same time
+// interleaved their rows; regrouping them pairs every tool call with its own
+// result. A final answer saved without a run ID stays with the run whose row
+// came before it, and an automatic summary goes in front of the run it was
+// made for, replacing exactly the history before that run.
+func orderHistoryRows(rows []store.MessageRow) []parsedHistoryRow {
+	type block struct{ rows []parsedHistoryRow }
+	var blocks []*block
+	byJob := map[string]*block{}
+	var last *block
+	for _, row := range rows {
+		var persisted parsedHistoryRow
+		if json.Unmarshal([]byte(row.ContentJSON), &persisted) != nil {
+			continue
+		}
+		switch {
+		case persisted.JobID != "":
+			current := byJob[persisted.JobID]
+			if current == nil {
+				current = &block{}
+				blocks = append(blocks, current)
+				byJob[persisted.JobID] = current
+			}
+			current.rows = append(current.rows, persisted)
+			last = current
+		case persisted.Type == historyTypeSummary && persisted.BeforeJobID != "" && byJob[persisted.BeforeJobID] != nil:
+			target := byJob[persisted.BeforeJobID]
+			index := slices.Index(blocks, target)
+			blocks = slices.Insert(blocks, index, &block{rows: []parsedHistoryRow{persisted}})
+		case persisted.Type == "" && persisted.Role == "assistant" && last != nil:
+			last.rows = append(last.rows, persisted)
+		default:
+			current := &block{rows: []parsedHistoryRow{persisted}}
+			blocks = append(blocks, current)
+			last = current
+		}
+	}
+	ordered := make([]parsedHistoryRow, 0, len(rows))
+	for _, current := range blocks {
+		ordered = append(ordered, current.rows...)
+	}
+	return ordered
+}
+
 func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 	messages := make([]*schema.Message, 0, len(rows))
 	carrying := false
 	groupCalls := map[string]struct{}{}
 	groupAnswered := map[string]struct{}{}
 	groupToolEnd := -1
-	for _, row := range rows {
-		var persisted historyRow
-		if json.Unmarshal([]byte(row.ContentJSON), &persisted) != nil {
-			continue
-		}
+	for _, persisted := range orderHistoryRows(rows) {
 		if persisted.JobID != "" && persisted.JobID == jobID {
 			continue
 		}
@@ -139,6 +218,7 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 				continue
 			}
 			messages = append(messages, schema.AssistantMessage("", []schema.ToolCall{call}))
+			messages[len(messages)-1].ReasoningContent = persisted.Reasoning
 			carrying = true
 			groupCalls = map[string]struct{}{persisted.ID: {}}
 			groupAnswered = map[string]struct{}{}
@@ -168,7 +248,7 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 		case historyTypeFileChange, historyTypePlanSubmitted:
 			continue
 		case historyTypeSummary:
-			// A /compact summary replaces everything before it.
+			// A summary replaces everything before it.
 			if persisted.Summary == "" {
 				continue
 			}
@@ -185,7 +265,23 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 			case "user":
 				messages = append(messages, schema.UserMessage(persisted.Content))
 			case "assistant":
-				messages = append(messages, schema.AssistantMessage(persisted.Content, nil))
+				content := persisted.Content
+				if persisted.Partial {
+					if strings.TrimSpace(content) == "" {
+						continue
+					}
+					content += partialAnswerNote
+				}
+				messages = append(messages, schema.AssistantMessage(content, nil))
+				messages[len(messages)-1].ReasoningContent = persisted.Reasoning
+				if persisted.Interim {
+					// The turn's tool calls follow and join this message.
+					carrying = true
+					groupCalls = map[string]struct{}{}
+					groupAnswered = map[string]struct{}{}
+					groupToolEnd = len(messages) - 1
+					continue
+				}
 			default:
 				continue
 			}
@@ -193,6 +289,15 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 		}
 	}
 	return messages
+}
+
+func interruptedToolResult(callID string) *schema.Message {
+	envelope, _ := json.Marshal(tools.Output{
+		OK:        false,
+		Text:      "工具调用未完成：本轮在返回结果前已中断，操作可能已执行，也可能未执行",
+		ModelText: "Tool call did not complete: the run was interrupted before a result came back. The action may or may not have taken effect; check the current state before relying on it.",
+	})
+	return schema.ToolMessage(string(envelope), callID)
 }
 
 func repairHistory(messages []*schema.Message) ([]*schema.Message, int, int) {
@@ -231,21 +336,17 @@ func repairHistory(messages []*schema.Message) ([]*schema.Message, int, int) {
 			}
 			answered[candidate.ToolCallID] = candidate
 		}
-		remaining := make([]schema.ToolCall, 0, len(answered))
-		for _, call := range message.ToolCalls {
-			if _, ok := answered[call.ID]; ok {
-				remaining = append(remaining, call)
-			}
-		}
-		unansweredCalls += len(message.ToolCalls) - len(remaining)
-		if len(remaining) != len(message.ToolCalls) {
-			cloned := *message
-			cloned.ToolCalls = remaining
-			message = &cloned
-		}
+		// A call left without a result (the run was canceled or failed mid-tool) is answered with an
+		// interrupted result. Dropping it instead would leave an assistant message with neither content nor
+		// tool calls, which providers reject, and would hide that the action may already have taken effect.
 		repaired = append(repaired, message)
-		for _, call := range remaining {
-			repaired = append(repaired, answered[call.ID])
+		for _, call := range message.ToolCalls {
+			if result, ok := answered[call.ID]; ok {
+				repaired = append(repaired, result)
+				continue
+			}
+			unansweredCalls++
+			repaired = append(repaired, interruptedToolResult(call.ID))
 		}
 		index = end
 	}

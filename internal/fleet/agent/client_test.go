@@ -175,7 +175,7 @@ func TestEndpointTLSPolicy(t *testing.T) {
 	if err := strict.Health(ctx); err == nil {
 		t.Fatal("default TLS policy must reject the self-signed test certificate")
 	}
-	if _, err := DialChannel(ctx, strict.WSURL(), testHello(), false, time.Hour, 5*time.Second); err == nil {
+	if _, err := DialChannel(ctx, strict.WSURL(), testHello(), DialPolicy{}, time.Hour, 5*time.Second); err == nil {
 		t.Fatal("default TLS policy must reject the WSS control channel")
 	}
 
@@ -186,12 +186,12 @@ func TestEndpointTLSPolicy(t *testing.T) {
 	if err := insecure.Health(ctx); err != nil {
 		t.Fatalf("explicit insecure must accept the test certificate: %v", err)
 	}
-	channel, err := DialChannel(ctx, insecure.WSURL(), testHello(), true, time.Hour, 5*time.Second)
+	channel, err := DialChannel(ctx, insecure.WSURL(), testHello(), DialPolicy{Insecure: true}, time.Hour, 5*time.Second)
 	if err != nil {
 		t.Fatalf("explicit insecure must accept the WSS control channel: %v", err)
 	}
 	_ = channel.Close()
-	conn, err := DialBridge(ctx, insecure.WSURL(), testHello(), true)
+	conn, err := DialBridge(ctx, insecure.WSURL(), testHello(), DialPolicy{Insecure: true})
 	if err != nil {
 		t.Fatalf("explicit insecure must accept the WSS bridge: %v", err)
 	}

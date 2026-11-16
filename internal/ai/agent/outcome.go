@@ -16,10 +16,12 @@ const RunStatusSuperseded = "superseded"
 
 const editResendJobWait = 5 * time.Second
 
+// maxIterationsError ends a run at the user's step limit. It is a pause, not a
+// failure: the history so far is kept and the user can continue the conversation.
 type maxIterationsError struct{ limit int }
 
 func (e *maxIterationsError) Error() string {
-	return fmt.Sprintf("AI 任务达到最大迭代次数（%d），已终止", e.limit)
+	return fmt.Sprintf("已达到单轮最大步数（%d），本轮已暂停", e.limit)
 }
 
 type messageTruncateStore interface {
@@ -105,6 +107,13 @@ func (r *Runner) editAffectedRuns(ctx context.Context, conversationID string, ro
 	}
 	affected := make([]store.RunRow, 0, len(runs))
 	for _, run := range runs {
+		// An unfinished run, such as one restored after a restart and still
+		// waiting for confirmation, is replaced as well: a new message cannot
+		// start while it stays open.
+		if run.FinishedAt == nil && (run.Status == store.RunStatusRunning || run.Status == store.RunStatusInterrupted) {
+			affected = append(affected, run)
+			continue
+		}
 		if index, ok := anchor[run.ID]; ok {
 			if index >= targetIndex {
 				affected = append(affected, run)

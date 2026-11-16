@@ -198,7 +198,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     const next = on ? [...new Set([...current, kind])] : current.filter((k) => k !== kind);
     if (on) {
       const confirmed = await ask(
-        tr("确定要让 AI 在「{name}」上{value}时不再询问吗？\n\n只读模式、定时任务和生产环境中不生效；高危和无法判断的操作仍会询问，禁止的操作始终拒绝。授权保存在{storeName}，可随时关闭。", { name: target.name, value: KIND_LABEL[kind], storeName }),
+        tr("确定要让 AI 在「{name}」上{value}时不再询问吗？\n\n只读模式、定时任务和生产环境中不生效；授权不覆盖高危和无法判断的操作，禁止的操作始终拒绝。授权保存在{storeName}，可随时关闭。", { name: target.name, value: KIND_LABEL[kind], storeName }),
         { title: tr("开启免确认授权"), kind: "warning" },
       );
       if (!confirmed) return;
@@ -231,7 +231,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     const option = RULE_EXPIRY_OPTIONS.find((o) => o.value === expiry) ?? RULE_EXPIRY_OPTIONS[0];
     const scope = needsPath ? `${RULE_ACTION_LABEL[action]} ${pattern}` : RULE_ACTION_LABEL[action];
     const confirmed = await ask(
-      tr("确定要为「{name}」添加授权规则吗？\n\n范围：{scope}\n有效期：{label}\n\n匹配的普通操作不再询问；只读模式和生产环境中不生效，高危和无法判断的操作仍会询问。{value}", { name: target.name, scope, label: option.label, value: unattended ? tr("\n\n定时任务运行时也会自动放行匹配的操作。") : "" }),
+      tr("确定要为「{name}」添加授权规则吗？\n\n范围：{scope}\n有效期：{label}\n\n匹配的普通操作不再询问；只读模式和生产环境中不生效，规则不覆盖高危和无法判断的操作。{value}", { name: target.name, scope, label: option.label, value: unattended ? tr("\n\n定时任务运行时也会自动放行匹配的操作。") : "" }),
       { title: tr("添加授权规则"), kind: "warning" },
     );
     if (!confirmed) return false;

@@ -13,6 +13,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"log/slog"
 	"math/rand/v2"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -128,6 +129,13 @@ func linkCredentialHash(config RemoteConfig, dek []byte) string {
 		_, _ = mac.Write([]byte{1})
 	} else {
 		_, _ = mac.Write([]byte{0})
+	}
+	// The proxy joins only when set, so sessions saved before proxies existed stay valid.
+	if proxy := config.Proxy; proxy.Enabled() {
+		for _, field := range []string{proxy.Type, proxy.Host, strconv.Itoa(proxy.Port), proxy.Username, proxy.Password} {
+			_, _ = mac.Write(binary.AppendUvarint(nil, uint64(len(field))))
+			_, _ = mac.Write([]byte(field))
+		}
 	}
 	return hex.EncodeToString(mac.Sum(nil))
 }

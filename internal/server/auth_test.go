@@ -741,11 +741,13 @@ func TestAIJobOperationsAuthorizationOverHTTP(t *testing.T) {
 				}
 			}
 			accepted(t, rpc(t, runtime, operator, "ai_steer", map[string]any{"jobId": started.JobID, "message": "peer"}))
-			messages, err := runtime.store.MsgList(runtime.aliceCtx, started.ConversationID)
-			if err != nil || len(messages) != 2 {
-				t.Fatalf("messages after authorized steer = %+v err=%v", messages, err)
-			}
+			// A steer is saved only once it reaches the model, which stays blocked here: the queued
+			// instruction shows up as dropped when the run is canceled. A foreign steer queued before
+			// it would be reported first.
 			accepted(t, rpc(t, runtime, operator, "ai_cancel", map[string]any{"jobId": started.JobID}))
+			if dropped := runtime.streams.wait(t, operation, "steerDropped"); dropped["text"] != "peer" {
+				t.Fatalf("dropped steer = %+v, want the authorized instruction only", dropped)
+			}
 		case "confirm":
 			confirmation := runtime.streams.wait(t, operation, "confirmRequired")
 			args := map[string]any{"jobId": started.JobID, "callId": confirmation["id"], "nonce": confirmation["confirmationNonce"], "decision": "allow"}

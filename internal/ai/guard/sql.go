@@ -16,7 +16,7 @@ type sqlToken struct {
 func ClassifySQL(statement string, rules []string) Ruling {
 	result := Allow()
 	if matchDangerRule(statement, rules) {
-		result = Dangerous("命中自定义危险规则")
+		result = CustomRuleHit("命中自定义危险规则")
 	}
 	statements, err := splitSQL(statement)
 	if err != nil {

@@ -128,17 +128,43 @@ func TestRepairHistoryOrphanResultsAndUnansweredCalls(t *testing.T) {
 	if orphanResults != 2 || unansweredCalls != 2 {
 		t.Fatalf("repair counts orphan=%d unanswered=%d", orphanResults, unansweredCalls)
 	}
-	if len(repaired) != 3 {
+	// Every call keeps its place and gets a result: the answered one its own, the unanswered ones an
+	// interrupted result, so no assistant message is left without content or tool calls.
+	want := []struct {
+		role        schema.RoleType
+		callID      string
+		interrupted bool
+	}{
+		{schema.Assistant, "", false},
+		{schema.Tool, "a", true},
+		{schema.Tool, "b", false},
+		{schema.Assistant, "", false},
+		{schema.Tool, "c", true},
+	}
+	if len(repaired) != len(want) {
 		t.Fatalf("repaired = %d messages: %s", len(repaired), describeMessages(repaired))
 	}
-	if len(repaired[0].ToolCalls) != 1 || repaired[0].ToolCalls[0].ID != "b" {
-		t.Fatalf("kept calls = %+v", repaired[0].ToolCalls)
+	for i, expected := range want {
+		message := repaired[i]
+		if message.Role != expected.role || message.ToolCallID != expected.callID {
+			t.Fatalf("repaired[%d] = %+v, want role %s call %q", i, message, expected.role, expected.callID)
+		}
+		if message.Role == schema.Assistant && len(message.ToolCalls) == 0 && message.Content == "" {
+			t.Fatalf("repaired[%d] is an empty assistant message", i)
+		}
+		if expected.role != schema.Tool {
+			continue
+		}
+		var output tools.Output
+		if err := json.Unmarshal([]byte(message.Content), &output); err != nil {
+			t.Fatalf("repaired[%d] content: %v", i, err)
+		}
+		if interrupted := !output.OK && strings.Contains(output.ModelText, "interrupted"); interrupted != expected.interrupted {
+			t.Fatalf("repaired[%d] = %+v, interrupted %v want %v", i, output, interrupted, expected.interrupted)
+		}
 	}
-	if repaired[1].Role != schema.Tool || repaired[1].ToolCallID != "b" {
-		t.Fatalf("kept result = %+v", repaired[1])
-	}
-	if repaired[2].Role != schema.Assistant || len(repaired[2].ToolCalls) != 0 {
-		t.Fatalf("unanswered assistant = %+v", repaired[2])
+	if got := len(repaired[0].ToolCalls); got != 2 {
+		t.Fatalf("first assistant keeps %d calls, want 2", got)
 	}
 }
 
@@ -187,7 +213,7 @@ func TestPersistToolRowsTruncatesAndStripsRuntimeFields(t *testing.T) {
 	}
 	runner := &Runner{store: storage}
 	current := &job{id: "job-1", args: ChatArgs{ConversationID: conversation.ID, PlanMode: true}}
-	if err := runner.persistToolCallRows(context.Background(), conversation.ID, current.id, []schema.ToolCall{namedToolCall("call-1", "exec_commands", `{"commands":["ls"]}`)}); err != nil {
+	if err := runner.persistToolCallRows(context.Background(), current, "", "", []schema.ToolCall{namedToolCall("call-1", "exec_commands", `{"commands":["ls"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	huge := strings.Repeat("输出", 40<<10)
@@ -320,7 +346,7 @@ func TestToolResultModelTextCompatibility(t *testing.T) {
 		}
 		runner := &Runner{store: storage}
 		current := &job{id: "job-1", args: ChatArgs{ConversationID: conversation.ID}}
-		if err := runner.persistToolCallRows(context.Background(), conversation.ID, current.id, []schema.ToolCall{namedToolCall("call-1", "db_list_tables", `{}`)}); err != nil {
+		if err := runner.persistToolCallRows(context.Background(), current, "", "", []schema.ToolCall{namedToolCall("call-1", "db_list_tables", `{}`)}); err != nil {
 			t.Fatal(err)
 		}
 		result := tools.Output{OK: true, Text: "无表", ModelText: "no tables"}

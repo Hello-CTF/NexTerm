@@ -18,6 +18,9 @@ const (
 type Selection struct {
 	Topics []string
 	IDs    []string
+	// Query is the user request used to rank entries by relevance. Empty
+	// keeps the topic, id order.
+	Query string
 }
 
 type Budget struct {
@@ -78,6 +81,7 @@ func (s *Store) Inject(ctx context.Context, scope Scope, history []*schema.Messa
 	if err != nil {
 		return Injection{}, err
 	}
+	entries = rankEntries(entries, selection.Query)
 	result := Injection{Selected: []Reference{}, Enabled: true}
 	prompt := promptHeader
 	for _, entry := range entries {

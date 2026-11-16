@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 )
 
@@ -276,6 +277,12 @@ func (r *Registry) operationResult(ctx context.Context, scope Scope, raw []byte)
 	}
 	record, err := r.deps.DurableOutcomes.OutcomeResult(ctx, args.OperationID)
 	if err != nil {
+		var appErr *ipc.Error
+		if errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound {
+			// A missing record is not evidence that the operation never ran: it may predate recording, still be in
+			// progress, or have lost its record write.
+			return Fail(fmt.Errorf("操作 %s 没有执行记录：该操作未被记录或仍在执行中，这不代表它没有执行；请先检查实际状态（屏幕、文件、进程等）再决定是否重试", args.OperationID))
+		}
 		return Fail(err)
 	}
 	var detail strings.Builder

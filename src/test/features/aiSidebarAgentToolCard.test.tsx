@@ -586,17 +586,7 @@ describe("AiSidebar agent tool card mounting", () => {
     expect(card.textContent).toContain("等待你确认");
     expect(card.querySelector('[title^="请求 req-9"]')).not.toBeNull();
 
-    await emit({
-      type: "toolResult",
-      id: "call-9",
-      ok: true,
-      summary: "部署完成",
-      text: "部署完成",
-      exitCode: 0,
-      handle: "build",
-    });
-    await flushUntil(() => agentCard(view!, "call-9")!.textContent?.includes("展开输出") === true);
-
+    // The tool runs only after its confirmation, so the decision comes first.
     await clickButtonFlush(agentCard(view!, "call-9")!, "允许一次");
     await flushUntil(() => mocks.confirm.mock.calls.length > 0);
     expect(mocks.confirm.mock.calls[0][0]).toEqual({
@@ -607,5 +597,17 @@ describe("AiSidebar agent tool card mounting", () => {
     });
     // Drain the resolution chain (interaction resolve, title sync) inside act.
     await flush();
+
+    await emit({
+      type: "toolResult",
+      id: "call-9",
+      ok: true,
+      summary: "部署完成",
+      text: "部署完成",
+      exitCode: 0,
+      handle: "build",
+    });
+    await flushUntil(() => agentCard(view!, "call-9")!.textContent?.includes("展开输出") === true);
+    expect(agentCard(view!, "call-9")!.textContent).toContain("build@web-01:/srv/app");
   });
 });

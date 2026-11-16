@@ -46,6 +46,7 @@ export type SettingsSectionId =
   | "settings-ai-model"
   | "settings-ai-privacy"
   | "settings-ai-rules"
+  | "settings-ai-run"
   | "settings-ai-skills"
   | "settings-memory"
   | "settings-vault"
@@ -77,6 +78,7 @@ const ALL_SETTINGS_SECTIONS = [
   { id: "settings-ai-model", label: t("模型"), icon: IconSparkles, group: "ai" },
   { id: "settings-ai-privacy", label: t("AI 信息脱敏"), icon: IconShield, group: "ai" },
   { id: "settings-ai-rules", label: t("AI 拦截规则"), icon: IconShield, group: "ai" },
+  { id: "settings-ai-run", label: t("AI 运行"), icon: IconActivity, group: "ai" },
   { id: "settings-ai-skills", label: t("技能"), icon: IconLayers, group: "ai" },
   { id: "settings-memory", label: t("记忆"), icon: IconBot, group: "ai" },
   { id: "settings-vault", label: t("凭据保护"), icon: IconLock, group: "security" },
@@ -151,6 +153,10 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
   "settings-ai-rules": {
     description: t("AI 操作命中后需确认或拒绝的危险命令规则"),
     keywords: ["rule", "danger", "block", "permission", "rm", t("拦截"), t("规则"), t("危险"), t("权限"), t("确认")],
+  },
+  "settings-ai-run": {
+    description: t("AI 助手单轮回答的最大步数"),
+    keywords: ["step", "steps", "limit", "iteration", "max turns", t("步数"), t("最大步数"), t("迭代"), t("上限"), t("继续")],
   },
   "settings-ai-skills": {
     description: t("管理 AI 技能"),
@@ -252,6 +258,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "keyword-highlight-preview", section: "settings-keyword-highlight", label: t("高亮预览"), keywords: ["preview", "sample", t("预览"), t("示例")] },
   { id: "layout-templates", section: "settings-layout-templates", label: t("布局模板"), description: t("保存工作区分屏布局，按模板打开主机终端并运行启动片段"), keywords: ["layout", "template", "arrangement", "split", t("布局"), t("模板"), t("分屏")] },
   { id: "quick-commands", section: "settings-quick-commands", label: t("快捷命令"), description: t("在终端按键条中发送的常用命令"), keywords: ["quick command", "snippet", "macro", t("命令"), t("常用命令"), t("片段"), t("按键条")] },
+  { id: "ai-max-turns", section: "settings-ai-run", label: t("单轮最大步数"), description: t("AI 助手每轮回答最多执行的步数，1-999"), keywords: ["step", "steps", "limit", "max turns", t("步数"), t("最大步数"), t("上限")] },
   { id: "memory-mode", section: "settings-memory", label: t("AI 使用记忆"), description: t("引用记忆、允许记忆工具或关闭"), keywords: ["memory", "inject", "tool", t("记忆"), t("记忆工具"), t("引用")] },
   { id: "vault-password", section: "settings-vault", label: t("用密码保护凭据"), keywords: ["password", "credential", "vault", t("密码"), t("凭据")] },
   { id: "vault-auto-lock", section: "settings-vault", label: t("闲置自动锁定"), keywords: ["lock", "idle", "timeout", t("锁定"), t("凭据")] },

@@ -15,6 +15,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/compose"
@@ -22,124 +23,127 @@ import (
 )
 
 type ExecCommandsArgs struct {
-	Commands []string `json:"commands" jsonschema:"required"`
-	Timeout  int      `json:"timeout,omitempty"`
-	AssetIDs []string `json:"asset_ids,omitempty"`
-	Tags     []string `json:"tags,omitempty"`
+	Commands []string `json:"commands" jsonschema:"required" jsonschema_description:"Shell commands to run in order (1-20); each runs in its own shell, so state does not carry over"`
+	Timeout  int      `json:"timeout,omitempty" jsonschema_description:"Per-command timeout in seconds (1-300; default 60)"`
+	AssetIDs []string `json:"asset_ids,omitempty" jsonschema_description:"Run on these already-connected assets (asset ids from list_assets; device/<id> for managed devices) instead of the current host; at most 64 targets"`
+	Tags     []string `json:"tags,omitempty" jsonschema_description:"Run on connected SSH sessions whose tags all match; combined with asset_ids means their intersection; not usable for devices"`
 }
 type ReadFileArgs struct {
-	Path     string `json:"path" jsonschema:"required"`
-	MaxBytes int64  `json:"max_bytes,omitempty"`
+	Path     string `json:"path" jsonschema:"required" jsonschema_description:"File path on the current host"`
+	MaxBytes int64  `json:"max_bytes,omitempty" jsonschema_description:"Maximum bytes to read (1 to 2097152; default 122880)"`
+	Offset   int    `json:"offset,omitempty" jsonschema_description:"First line to show (1-based; default 1)"`
+	Limit    int    `json:"limit,omitempty" jsonschema_description:"Number of lines to show (default 400; at most 2000)"`
 }
 type WriteFileArgs struct {
-	Path    string `json:"path" jsonschema:"required"`
-	Content string `json:"content" jsonschema:"required"`
+	Path    string `json:"path" jsonschema:"required" jsonschema_description:"File path on the current host; an existing file must have been read first"`
+	Content string `json:"content" jsonschema:"required" jsonschema_description:"Complete new UTF-8 file content"`
 }
 type ListDirArgs struct {
-	Path string `json:"path" jsonschema:"required"`
+	Path string `json:"path" jsonschema:"required" jsonschema_description:"Directory path on the current host"`
 }
 type SearchFilesArgs struct {
-	Path    string `json:"path" jsonschema:"required"`
-	Pattern string `json:"pattern" jsonschema:"required"`
-	By      string `json:"by" jsonschema:"required,enum=name,enum=content"`
+	Path    string `json:"path" jsonschema:"required" jsonschema_description:"Directory to search under"`
+	Pattern string `json:"pattern" jsonschema:"required" jsonschema_description:"File name glob when by=name; regular expression when by=content"`
+	By      string `json:"by" jsonschema:"required,enum=name,enum=content" jsonschema_description:"Match file names (name) or file contents (content)"`
 }
 type ReadScreenArgs struct {
-	TabID        string `json:"tab_id,omitempty"`
-	SinceSeq     uint64 `json:"since_seq,omitempty"`
-	MaxBytes     int64  `json:"max_bytes,omitempty"`
-	Cursor       string `json:"cursor,omitempty"`
-	HistoryLines int    `json:"history_lines,omitempty"`
-	Unwrap       bool   `json:"unwrap,omitempty"`
+	TabID        string `json:"tab_id,omitempty" jsonschema_description:"Terminal tab handle from terminal_list or terminal_create (default the current tab)"`
+	SinceSeq     uint64 `json:"since_seq,omitempty" jsonschema_description:"Read only output after this screen sequence number; cannot be combined with history_lines"`
+	MaxBytes     int64  `json:"max_bytes,omitempty" jsonschema_description:"Page size in bytes when reading with since_seq or cursor (1 to 122880; default 8192)"`
+	Cursor       string `json:"cursor,omitempty" jsonschema_description:"Opaque cursor from a previous page to continue reading; invalid after a terminal resize"`
+	HistoryLines int    `json:"history_lines,omitempty" jsonschema_description:"Also replay this many scrollback lines above the screen (0-400); cannot be combined with since_seq, cursor or max_bytes"`
+	Unwrap       bool   `json:"unwrap,omitempty" jsonschema_description:"Join soft-wrapped lines into logical lines"`
 }
 type SendKeysArgs struct {
-	Keys          string `json:"keys" jsonschema:"required"`
-	Enter         bool   `json:"enter,omitempty"`
-	WaitMS        int    `json:"wait_ms,omitempty"`
-	TabID         string `json:"tab_id,omitempty"`
-	Paste         bool   `json:"paste,omitempty"`
-	SubmitDelayMS int    `json:"submit_delay_ms,omitempty"`
-	Force         bool   `json:"force,omitempty"`
-	AllowControl  bool   `json:"allow_control,omitempty"`
+	Keys          string `json:"keys" jsonschema:"required" jsonschema_description:"Text to type; may include key tags such as <enter> and <ctrl+c>"`
+	Enter         bool   `json:"enter,omitempty" jsonschema_description:"Press Enter after the keys"`
+	WaitMS        int    `json:"wait_ms,omitempty" jsonschema_description:"Milliseconds to wait for the command to finish (0-10000; default 0 returns right after sending)"`
+	TabID         string `json:"tab_id,omitempty" jsonschema_description:"Terminal tab handle from terminal_list or terminal_create (default the current tab)"`
+	Paste         bool   `json:"paste,omitempty" jsonschema_description:"Send keys as literal text in bracketed paste; key tags are not interpreted"`
+	SubmitDelayMS int    `json:"submit_delay_ms,omitempty" jsonschema_description:"Delay before Enter in milliseconds (0-10000; default 150); only with paste=true and enter=true"`
+	Force         bool   `json:"force,omitempty" jsonschema_description:"Send even though the shell input line changed since you last read the screen"`
+	AllowControl  bool   `json:"allow_control,omitempty" jsonschema_description:"With paste=true, allow deliberate control bytes in keys"`
 }
 type WaitForArgs struct {
-	Pattern   *string  `json:"pattern,omitempty"`
-	TimeoutMS int64    `json:"timeout_ms,omitempty"`
-	SinceSeq  uint64   `json:"since_seq,omitempty"`
-	TabID     string   `json:"tab_id,omitempty"`
-	QuietMS   int64    `json:"quiet_ms,omitempty"`
-	TabIDs    []string `json:"tab_ids,omitempty"`
-	Mode      string   `json:"mode,omitempty"`
-	Lines     int      `json:"lines,omitempty"`
+	Pattern   *string  `json:"pattern,omitempty" jsonschema_description:"Regular expression to match against the last 30 lines; may be omitted only when quiet_ms or lines is set"`
+	TimeoutMS int64    `json:"timeout_ms,omitempty" jsonschema_description:"Maximum wait in milliseconds (1-120000; default 10000)"`
+	SinceSeq  uint64   `json:"since_seq,omitempty" jsonschema_description:"Match only output after this screen sequence number (anchor from send_keys or read_screen)"`
+	TabID     string   `json:"tab_id,omitempty" jsonschema_description:"Terminal tab handle (default the current tab); not combinable with tab_ids"`
+	QuietMS   int64    `json:"quiet_ms,omitempty" jsonschema_description:"Also require no terminal output for this many milliseconds (0-120000; default 0)"`
+	TabIDs    []string `json:"tab_ids,omitempty" jsonschema_description:"Wait across several tab handles; matches only output after each tab's anchor"`
+	Mode      string   `json:"mode,omitempty" jsonschema:"enum=any,enum=all" jsonschema_description:"With several tab_ids: any returns on the first satisfied tab, all waits for every tab (default all)"`
+	Lines     int      `json:"lines,omitempty" jsonschema_description:"Wait for at least this many new output lines instead of or together with pattern (0-100000)"`
 }
 type EmptyArgs struct{}
 type DockerLogsArgs struct {
-	ContainerID string `json:"container_id" jsonschema:"required"`
-	Tail        int    `json:"tail,omitempty"`
-	Grep        string `json:"grep,omitempty"`
+	ContainerID string `json:"container_id" jsonschema:"required" jsonschema_description:"Container id or name from docker_ps"`
+	Tail        int    `json:"tail,omitempty" jsonschema_description:"Number of most recent log lines to read (1-5000; default 200)"`
+	Grep        string `json:"grep,omitempty" jsonschema_description:"Keep only lines containing this substring (case-sensitive, not a regex)"`
 }
 type DockerExecArgs struct {
-	ContainerID string `json:"container_id" jsonschema:"required"`
-	Command     string `json:"cmd" jsonschema:"required"`
+	ContainerID string `json:"container_id" jsonschema:"required" jsonschema_description:"Container id or name from docker_ps"`
+	Command     string `json:"cmd" jsonschema:"required" jsonschema_description:"Shell command line, run inside the container with sh -c"`
 }
 type DockerControlArgs struct {
-	ContainerID string `json:"container_id" jsonschema:"required"`
-	Action      string `json:"action" jsonschema:"required,enum=start,enum=stop,enum=restart,enum=rm"`
+	ContainerID string `json:"container_id" jsonschema:"required" jsonschema_description:"Container id or name from docker_ps"`
+	Action      string `json:"action" jsonschema:"required,enum=start,enum=stop,enum=restart,enum=rm" jsonschema_description:"Operation to apply to the container; rm removes it"`
 }
 type DBListTablesArgs struct {
-	Schema string `json:"schema,omitempty"`
+	Schema string `json:"schema,omitempty" jsonschema_description:"Schema or database name to list (default the connection's current one)"`
 }
 type DBDescribeArgs struct {
-	Schema string `json:"schema,omitempty"`
-	Table  string `json:"table" jsonschema:"required"`
+	Schema string `json:"schema,omitempty" jsonschema_description:"Schema or database name containing the table (default the connection's current one)"`
+	Table  string `json:"table" jsonschema:"required" jsonschema_description:"Table name"`
 }
 type DBQueryArgs struct {
-	SQL string `json:"sql" jsonschema:"required"`
+	SQL string `json:"sql" jsonschema:"required" jsonschema_description:"A single SQL statement for the current connection"`
 }
 type RedisScanArgs struct {
-	Pattern string `json:"pattern,omitempty"`
-	Count   uint64 `json:"count,omitempty"`
+	Pattern string `json:"pattern,omitempty" jsonschema_description:"Glob-style key pattern (default *)"`
+	Count   uint64 `json:"count,omitempty" jsonschema_description:"SCAN COUNT hint per iteration (1-1000; default 100)"`
+	Cursor  uint64 `json:"cursor,omitempty" jsonschema_description:"Cursor returned by a previous redis_scan to continue from (default 0 starts a new scan)"`
 }
 type AskUserArgs struct {
-	Question string   `json:"question" jsonschema:"required"`
-	Options  []string `json:"options,omitempty"`
+	Question string   `json:"question" jsonschema:"required" jsonschema_description:"Question to show the user"`
+	Options  []string `json:"options,omitempty" jsonschema_description:"Suggested answers the user can pick from; each non-empty"`
 }
 type EditFileArgs struct {
-	Path       string `json:"path" jsonschema:"required"`
-	OldString  string `json:"old_string" jsonschema:"required"`
-	NewString  string `json:"new_string" jsonschema:"required"`
-	ReplaceAll bool   `json:"replace_all,omitempty"`
+	Path       string `json:"path" jsonschema:"required" jsonschema_description:"File path on the current host; the file must have been read first"`
+	OldString  string `json:"old_string" jsonschema:"required" jsonschema_description:"Exact text to replace; must match exactly one place unless replace_all is true"`
+	NewString  string `json:"new_string" jsonschema:"required" jsonschema_description:"Replacement text"`
+	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema_description:"Replace every occurrence of old_string instead of requiring a single match (default false)"`
 }
 type TodoWriteArgs struct {
-	Todos []TodoItem `json:"todos" jsonschema:"required"`
+	Todos []TodoItem `json:"todos" jsonschema:"required" jsonschema_description:"The complete todo list (at most 50 items); replaces the previous list"`
 }
 type ExitPlanModeArgs struct {
-	Plan string `json:"plan" jsonschema:"required"`
+	Plan string `json:"plan" jsonschema:"required" jsonschema_description:"The plan to present to the user for review"`
 }
 type TerminalCreateArgs struct {
-	Title      string `json:"title,omitempty"`
-	Command    string `json:"command,omitempty"`
-	Background bool   `json:"background,omitempty"`
-	AssetID    string `json:"asset_id,omitempty"`
-	Connect    bool   `json:"connect,omitempty"`
+	Title      string `json:"title,omitempty" jsonschema_description:"Tab title"`
+	Command    string `json:"command,omitempty" jsonschema_description:"Startup command written to the new shell's stdin (ssh, docker, local and device sessions only); newlines run several commands"`
+	Background bool   `json:"background,omitempty" jsonschema_description:"Create the tab detached in the background instead of the user's foreground (default false)"`
+	AssetID    string `json:"asset_id,omitempty" jsonschema_description:"Asset id from list_assets to open the tab on (default the current session); always needs user confirmation"`
+	Connect    bool   `json:"connect,omitempty" jsonschema_description:"With asset_id, connect the asset first when it has no live session (default false)"`
 }
 type TerminalRenameArgs struct {
-	TabID string `json:"tab_id,omitempty"`
-	Title string `json:"title" jsonschema:"required"`
+	TabID string `json:"tab_id,omitempty" jsonschema_description:"Terminal tab handle (default the current tab)"`
+	Title string `json:"title" jsonschema:"required" jsonschema_description:"New tab title"`
 }
 type TerminalListArgs struct {
-	Cursor string `json:"cursor,omitempty"`
-	Limit  int    `json:"limit,omitempty"`
+	Cursor string `json:"cursor,omitempty" jsonschema_description:"Cursor from the previous page to continue listing"`
+	Limit  int    `json:"limit,omitempty" jsonschema_description:"Tabs per page (1-200; default 50)"`
 
-	IncludeExited bool `json:"include_exited,omitempty" jsonschema:"description=Also list tabs whose shell has exited (hidden by default)"`
+	IncludeExited bool `json:"include_exited,omitempty" jsonschema_description:"Also list tabs whose shell has exited (hidden by default)"`
 }
 type OperationResultArgs struct {
-	OperationID string `json:"operation_id" jsonschema:"required"`
+	OperationID string `json:"operation_id" jsonschema:"required" jsonschema_description:"operation_id returned by the original mutating tool result"`
 }
 
 // LoadSkillArgs is the load_skill tool payload. The JSON shape matches the
 // skills service contract (name only).
 type LoadSkillArgs struct {
-	Name string `json:"name" jsonschema:"required"`
+	Name string `json:"name" jsonschema:"required" jsonschema_description:"Skill name"`
 }
 
 var einoNames = []string{
@@ -150,35 +154,38 @@ var einoNames = []string{
 	"terminal_create", "terminal_rename", "terminal_list", "operation_result",
 }
 
+// fileWriteBoundHelp states fileToolTimeout and fileWriteTimeout for write_file and edit_file.
+const fileWriteBoundHelp = "Its lookups stop after 60 seconds and the write itself after 120 seconds, or when the run is cancelled. A write stopped while the remote side had not answered a write step fails with an unknown outcome: the file may or may not have been written or replaced, so read it again with read_file before any retry or further edit."
+
 var einoDescriptions = map[string]string{
-	"exec_commands":    "Execute shell commands sequentially in the current session (1-20 commands). Optional asset_ids and tags instead select the current owner's already-connected SSH sessions without auto-connecting; tags must all match, and asset_ids plus tags means their intersection. Managed devices can be targeted only by naming their asset id (device/<id>) in asset_ids, never by tags; devices have no environment tag, so they are always treated as production and every device needs typed confirmation by the user (shown to the user as 受管设备, no environment tag, treated as production). Production targets require confirmation. For a remote SSH/device host, use this tool to inspect that host's shell history; shell_history is limited to the current desktop process OS user in a local scope.",
-	"read_file":        "Read a UTF-8 text file and record the content version for subsequent writes.",
-	"write_file":       "Create a new file atomically without overwriting existing files; overwriting an existing file requires user authorization and may overwrite external changes made after confirmation; before writing, the file must be read or confirmed to not exist. A .nexterm-bak backup is made only when the asset enables it; the result states whether one was made.",
-	"list_dir":         "List directory contents, at most 500 entries.",
-	"search_files":     "Search by file name glob or file content regex, without going through the shell.",
-	"read_screen":      "Read the visible screen and screen sequence number of the terminal in the current scope, or of the tab named by tab_id (a terminal_list handle, a tab this task created, or a read-only handle of a terminal the user @-referenced); pass since_seq to read only new output after that sequence number, paged by max_bytes, or pass the opaque cursor from a previous page instead (a cursor is bound to the terminal geometry and fails explicitly after a resize); history_lines replays up to that many scrollback lines above the screen from the raw output stream; unwrap=true joins soft-wrapped lines into logical lines. The header carries the tab identity (title, kind, shell-reported cwd, stable handle) when available. Includes command state when the terminal supports OSC 133.",
-	"send_keys":        "Send keys to the terminal in the current scope; may include <enter> and <ctrl+c>; returns a screen sequence anchor; optional tab_id selects a tab created by this task's terminal_create or an unmarked terminal_list handle; @-referenced terminals on other connections are read-only and refuse send_keys. If the terminal input changed after this task last read the screen (new user input), the write is refused unless force=true confirms you know about the new input. With paste=true, keys are literal text wrapped in bracketed-paste markers when the terminal mode is on: carriage returns and control bytes are rejected (allow_control=true acknowledges deliberate control bytes), <...> sequences are sent literally, enter submits after submit_delay_ms (default 150, paste only), and when the terminal supports it the paste, delay, and Enter share one write lock so user input cannot interleave. submitted_seq is the post-write output anchor and write_confirmed is only transport acknowledgment, not remote application acceptance. When wait_ms>0 and the terminal supports OSC 133, waits for the command to finish and returns the exit code and screen tail; otherwise returns right after sending and notes that the result is unverified.",
-	"wait_for":         "Wait for the last 30 lines of the current terminal to match a regex; optional tab_id selects a tab created by this task, an unmarked terminal_list handle, or a read-only handle of a terminal the user @-referenced. Pass since_seq to match only new output after that screen sequence anchor. With quiet_ms>0, return only when the pattern also remains satisfied and the terminal has had no output for at least that many milliseconds; pattern may be omitted only for a quiet-only wait. lines waits for at least that many new rendered lines instead of a pattern (both may be combined). tab_ids waits across multiple tabs anchored at each tab's latest output sequence, with mode=any returning on the first satisfied tab and mode=all (default) waiting for every tab; per-tab anchors, line counts, and idle state are reported in the wait result metadata. Can be canceled by the task.",
-	"shell_history":    "Read only the shell history (zsh/bash/fish) of the OS user running the current NexTerm desktop process; available only in a desktop local scope or with no remote scope. Returns the newest N entries (default 50, at most 500), redacted. Requires user confirmation. For a remote SSH/device host, use exec_commands on that host instead; never use the desktop user's history as a substitute for remote history.",
+	"exec_commands":    "Execute shell commands sequentially on the current session's host (1-20 commands). Each command runs in its own non-interactive shell without stdin, so cd, export and other shell state do not carry over to the next command (chain with && inside one command when needed), and a command that waits for input (such as a sudo password prompt) hangs until the timeout. Every command runs even after an earlier one fails; exitCode is the first non-zero exit code and the result names that command. The timeout applies to each command: when one times out, the output gathered so far is kept, that command is marked as possibly still running with an unknown exit code, and the remaining commands are not run. Optional asset_ids and tags instead select the current owner's already-connected SSH sessions without auto-connecting; tags must all match, and asset_ids plus tags means their intersection. Managed devices can be targeted only by naming their asset id (device/<id>) in asset_ids, never by tags; devices have no environment tag, so they are always treated as production and every device needs typed confirmation by the user (shown to the user as 受管设备, no environment tag, treated as production). Production targets require confirmation. For a remote SSH/device host, use this tool to inspect that host's shell history; shell_history is limited to the current desktop process OS user in a local scope.",
+	"read_file":        "Read a UTF-8 text file and record the whole file's content version for subsequent writes. Shows a window of lines (at most 120 KiB per call); when more lines remain, the result states the range shown, the total line count, and the offset and limit that read the next range.",
+	"write_file":       "Create a new file atomically without overwriting existing files; overwriting an existing file may need user confirmation depending on the permission mode and may overwrite external changes made after confirmation; before writing, the file must be read or confirmed to not exist. A .nexterm-bak backup is made only when the asset enables it; the result states whether one was made. " + fileWriteBoundHelp,
+	"list_dir":         "List directory contents, at most 500 entries (60-second timeout).",
+	"search_files":     "Search under path by file name glob (by=name) or file content regex (by=content), without going through the shell. A glob without / matches the base name; a glob with / matches the path relative to path (or the absolute path when it starts with /), and a ** segment matches any number of directories, e.g. **/*.go. Returns at most 100 results, 3 matching lines per file, 6 directory levels below path, within 30 seconds; a timeout returns the partial results found so far, and files skipped from content search (over 1 MiB, not UTF-8, unreadable) and directories that could not be listed are counted in the result.",
+	"read_screen":      "Read the visible screen and screen sequence number of the terminal in the current scope, or of the tab named by tab_id (a terminal_list handle, a tab this task created, or a read-only handle of a terminal the user @-referenced); pass since_seq to read only new output after that sequence number, paged by max_bytes, or pass the opaque cursor from a previous page instead (a cursor is bound to the terminal geometry and fails explicitly after a resize); history_lines replays up to that many scrollback lines above the screen from the raw output stream and cannot be combined with since_seq, cursor, or max_bytes; a since_seq newer than the tab's latest sequence (for example an anchor from another terminal) is rejected; unwrap=true joins soft-wrapped lines into logical lines. The header carries the tab identity (title, kind, shell-reported cwd, stable handle) when available. Includes command state when the terminal supports OSC 133.",
+	"send_keys":        "Send keys to the terminal in the current scope; may include key tags such as <enter> and <ctrl+c>. " + SendKeysTagHelp + " Returns the screen sequence read before the write as an anchor, so wait_for or read_screen with since_seq set to it sees all output the keys produced; optional tab_id selects a tab created by this task's terminal_create or an unmarked terminal_list handle; @-referenced terminals on other connections are read-only and refuse send_keys. If the shell input line changed after this task last read the screen (new user input), the write is refused unless force=true confirms you know about the new input; the check is skipped while a command is running, on the alternate screen, or when no shell prompt line is recognized. Writes to a terminal that a terminal takeover currently owns are refused. With paste=true, keys are literal text wrapped in bracketed-paste markers when the terminal mode is on: carriage returns and control bytes are rejected (allow_control=true acknowledges deliberate control bytes), <...> sequences are sent literally, enter submits after submit_delay_ms (default 150, paste only), and when the terminal supports it the paste, delay, and Enter share one write lock so user input cannot interleave. submitted_seq is the post-write output anchor and write_confirmed is only transport acknowledgment, not remote application acceptance. When wait_ms>0 and the terminal supports OSC 133, waits for the command to finish and returns the exit code and screen tail; otherwise returns right after sending and notes that the result is unverified.",
+	"wait_for":         "Wait for the last 30 lines of the current terminal to match a regex (^ and $ match at line boundaries, ignoring a row's trailing spaces); optional tab_id selects a tab created by this task, an unmarked terminal_list handle, or a read-only handle of a terminal the user @-referenced. Pass since_seq to match only new output after that screen sequence anchor; a since_seq newer than the tab's latest sequence (for example an anchor from another terminal) is rejected. With quiet_ms>0, return only when the pattern also remains satisfied and the terminal has had no output for at least that many milliseconds; pattern may be omitted or empty only when quiet_ms or lines is set. lines waits for at least that many new output lines (counted by line feeds after the anchor) instead of a pattern; both may be combined. When lines>0 or several tab_ids are given, the pattern is matched only against output produced after each tab's anchor, never against text already on the screen. tab_ids waits across multiple tabs anchored at each tab's latest output sequence, with mode=any returning on the first satisfied tab and mode=all (default) waiting for every tab; per-tab anchors, line counts, and idle state are reported in the wait result metadata. Can be canceled by the task.",
+	"shell_history":    "Read only the shell history (zsh/bash/fish) of the OS user running the current NexTerm desktop process; available only in a desktop local scope or with no remote scope. Returns the newest entries, redacted. May need user confirmation depending on the permission mode. For a remote SSH/device host, use exec_commands on that host instead; never use the desktop user's history as a substitute for remote history.",
 	"docker_ps":        "List Docker containers in the current session.",
 	"docker_logs":      "Read container logs and filter locally by substring.",
 	"docker_exec":      "Execute a command inside a container using sh -c.",
 	"docker_control":   "Start, stop, restart, or remove a container.",
-	"db_list_tables":   "List MySQL tables.",
-	"db_describe":      "Read MySQL table fields and indexes.",
-	"db_query":         "Execute SQL; write operations must go through permission confirmation.",
-	"redis_scan":       "Run one Redis SCAN starting from cursor 0.",
+	"db_list_tables":   "List MySQL or PostgreSQL tables (30-second timeout).",
+	"db_describe":      "Read MySQL or PostgreSQL table fields and indexes (30-second timeout).",
+	"db_query":         "Execute SQL; write operations go through the permission check and may need user confirmation depending on the permission mode.",
+	"redis_scan":       "List Redis keys matching a pattern with SCAN, repeating SCAN until the iteration completes, 300 keys are found, or about 5 seconds pass. A returned cursor other than 0 means more keys may still match, even when few or no keys were returned: pass it as cursor to continue.",
 	"list_assets":      "List available connection assets with asset_id and tags for terminal_create and exec_commands targeting.",
 	"ask_user":         "Pause the agent and wait for the user to answer the question.",
-	"edit_file":        "Replace text exactly; existing files are overwritten non-transactionally with user authorization and may overwrite external changes made after confirmation; the file must be read before writing. A .nexterm-bak backup is made only when the asset enables it; the result states whether one was made.",
+	"edit_file":        "Replace text exactly; existing files are overwritten non-transactionally (may need user confirmation depending on the permission mode) and may overwrite external changes made after confirmation; the file must be read before writing. A .nexterm-bak backup is made only when the asset enables it; the result states whether one was made. " + fileWriteBoundHelp,
 	"todo_write":       "Replace the full todo list of the current task.",
 	"exit_plan_mode":   "Submit the plan for user review; the plan is not executed automatically.",
-	ReminderTool:       "Create a one-shot reminder (requires user confirmation); when the time comes, the message is delivered to the current conversation; message is the reminder content, and the time is specified by either delay_minutes or at (RFC3339).",
-	NotifyTool:         "Send the user an in-app notification, for long-task completion or matters needing the user's immediate attention; message is the notification content (no more than 200 characters); the content must also be written into the current reply body, because the popup may be missed.",
-	"terminal_create":  "Create a new terminal tab in the current session or on optional asset_id (an owner-checked, supported, live session; assets are never auto-connected unless connect=true explicitly opts in, in which case a missing live session is established first and a creation failure after a successful connect names the residual session). Starts a new shell and requires user confirmation; optional title sets the tab title, optional command is the startup command (supported only by ssh/docker/local/device sessions; it is written verbatim to the new shell's standard input, and when it contains newlines it runs as multiple commands in sequence; unsupported kinds such as winrm are rejected, in which case create the tab first and then send the command with send_keys passing tab_id). Returns the new tab's tab_id and stable handle; by default the tab is shown in the foreground of the user's workspace, the AI works in it, and the user can take over input at any time; with background=true the tab is created detached in the background instead, and the user can take over in 「后台会话」 (Background Sessions). Either way, send_keys/read_screen/wait_for with tab_id can later operate tabs created by this task, including tabs on another owner-checked session.",
-	"terminal_rename":  "Rename the terminal tab in the current scope; title is the new title (required), tab_id defaults to the current tab. Custom titles are not overwritten by remote title sequences and are preserved after background session reconnection.",
+	ReminderTool:       "Create a one-shot reminder (may need user confirmation depending on the permission mode); when the time comes, the message is delivered to the current conversation.",
+	NotifyTool:         "Send the user an in-app notification, for long-task completion or matters needing the user's immediate attention; the content must also be written into the current reply body, because the popup may be missed.",
+	"terminal_create":  "Create a new terminal tab in the current session or on optional asset_id (an owner-checked, supported, live session; assets are never auto-connected unless connect=true explicitly opts in, in which case a missing live session is established first and a creation failure after a successful connect names the residual session). Starts a new shell and may need user confirmation depending on the permission mode (a target asset_id always needs it); optional title sets the tab title, optional command is the startup command (supported only by ssh/docker/local/device sessions; it is written verbatim to the new shell's standard input, and when it contains newlines it runs as multiple commands in sequence; unsupported kinds such as winrm are rejected, in which case create the tab first and then send the command with send_keys passing tab_id). Returns the new tab's tab_id and stable handle; by default the tab is shown in the foreground of the user's workspace, the AI works in it, and the user can take over input at any time; with background=true the tab is created detached in the background instead, and the user can take over in 「后台会话」 (Background Sessions). Either way, send_keys/read_screen/wait_for with tab_id can later operate tabs created by this task, including tabs on another owner-checked session.",
+	"terminal_rename":  "Rename a terminal tab in the current scope. Custom titles are not overwritten by remote title sequences and are preserved after background session reconnection.",
 	"terminal_list":    "List the open terminal tabs visible to the current owner with their stable handles, kinds, assets, titles, shell-reported cwds, and lifecycle state, paged by cursor/limit; exited tabs are hidden unless include_exited=true (the result reports how many were hidden); handles resolve to the exact tab and session they were issued for and can be passed as tab_id. Unmarked tabs accept send_keys/read_screen/wait_for/terminal_rename; tabs marked read_only were @-referenced by the user and accept only read_screen/wait_for; tabs marked outside_scope cannot be used until the user @-references them, so ask the user instead of retrying.",
-	"operation_result": "Query the recorded outcome of one uncertain mutation by its operation ID (returned by terminal_create and other mutating tools): the operation's state (initiated/succeeded/failed), failure stage, residual session or resource left behind, error, and the recorded result payload. Use it to check the original operation's result before deciding whether to retry; it never implies the operation ran exactly once.",
+	"operation_result": "Query the recorded outcome of one uncertain mutation by the operation_id a tool result returned (terminal_create, send_keys, and replayed or unrecorded results of other mutating tools): the operation's state (initiated/succeeded/failed), failure stage, residual session or resource left behind, error, and the recorded result payload. Use it to check the original operation's result before deciding whether to retry; it never implies the operation ran exactly once. No record means the operation was not recorded or is still running, not that it never ran: check the actual state before retrying.",
 }
 
 func einoToolSchemas() []Schema {
@@ -294,7 +301,10 @@ type Execution struct {
 	Permission     guard.Config
 	Memory         *guard.Memory
 	PlanMode       bool
-	Subagents      *SubagentConfig
+	// Subagent marks the tool execution of a spawned subagent. It cannot pause
+	// for the user, so a call that would ask for confirmation fails instead.
+	Subagent  bool
+	Subagents *SubagentConfig
 
 	SubagentManager *subagent.Manager
 
@@ -590,6 +600,10 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 	limits.NewModelForProfile = e.Subagents.ModelForProfile
 	limits.ResolveDefaultProfileID = e.Subagents.ActiveProfileID
 	limits.OnFinish = e.persistSubagentRun
+	limits.ToolSafety = func(allowed []string) (adk.ChatModelAgentMiddleware, func(context.Context, string, string) (string, error)) {
+		handler, unknown := NewToolSafety(allowed)
+		return handler, unknown
+	}
 	var manager *subagent.Manager
 	limits.NewTools = func(ctx context.Context, _ subagent.Scope) ([]tool.BaseTool, error) {
 		return e.scopedSubagentTools(ctx, manager)
@@ -671,9 +685,26 @@ func (s spawnOutputTool) InvokableRun(ctx context.Context, arguments string, opt
 	}()
 	result, err := s.InvokableTool.InvokableRun(ctx, arguments, opts...)
 	if err != nil {
-		return "", err
+		// A subagent failure must not end the parent run; only the parent's
+		// own cancellation propagates as an error.
+		if ctx.Err() != nil {
+			return "", err
+		}
+		encoded, marshalErr := json.Marshal(Fail(err))
+		if marshalErr != nil {
+			return "", marshalErr
+		}
+		return string(encoded), nil
 	}
-	encoded, err := json.Marshal(OK(result))
+	current := OK(result)
+	var spawned subagent.SpawnOutput
+	if json.Unmarshal([]byte(result), &spawned) == nil {
+		current = Output{OK: spawned.OK, Text: spawned.Text, ModelText: spawned.ModelText, ExitCode: spawned.ExitCode}
+		if !current.OK && current.ExitCode == 0 {
+			current.ExitCode = 1
+		}
+	}
+	encoded, err := json.Marshal(current)
 	if err != nil {
 		return "", err
 	}
@@ -681,7 +712,7 @@ func (s spawnOutputTool) InvokableRun(ctx context.Context, arguments string, opt
 }
 
 func (e *Execution) scopedSubagentTools(ctx context.Context, manager *subagent.Manager) ([]tool.BaseTool, error) {
-	child := &Execution{JobID: e.JobID, ConversationID: e.ConversationID, Registry: e.Registry, Scope: e.Scope, Permission: e.Permission, Memory: e.Memory, PlanMode: e.PlanMode}
+	child := &Execution{JobID: e.JobID, ConversationID: e.ConversationID, Registry: e.Registry, Scope: e.Scope, Permission: e.Permission, Memory: e.Memory, PlanMode: e.PlanMode, Subagent: true}
 	available, err := child.Tools()
 	if err != nil {
 		return nil, err
@@ -729,7 +760,7 @@ func (e *Execution) subagentAllowedTools() []string {
 }
 
 func (e *Execution) run(ctx context.Context, name string, input any) (Output, error) {
-	return Guarded(ctx, name, func() (Output, error) {
+	return runWatched(ctx, name, toolWatchdog(input), func(ctx context.Context) (Output, error) {
 		return e.runInner(ctx, name, input)
 	})
 }
@@ -886,6 +917,15 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		if err != nil {
 			return Fail(err), nil
 		}
+		// Refuse before asking for confirmation: these calls can never write.
+		if err := e.Registry.takeoverWriteError(tabID); err != nil {
+			return Fail(err), nil
+		}
+		if !input.Paste {
+			if _, err := EncodeKeys(input.Keys, input.Enter); err != nil {
+				return Fail(err), nil
+			}
+		}
 		if input.TabID != "" && input.TabID != e.Scope.TabID {
 			sessionID, err := e.Registry.tabSession(ctx, tabID)
 			if err != nil {
@@ -922,6 +962,9 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 	}
 	if decision.Action == guard.ActionDeny {
 		return Fail(errors.New("权限策略已拒绝: " + decision.Ruling.Reason)), nil
+	}
+	if decision.Action == guard.ActionAsk && e.Subagent {
+		return Fail(subagentConfirmationError(ruling.Reason)), nil
 	}
 	preparation, err := e.Registry.Prepare(ctx, e.JobID, e.Scope, call)
 	if err != nil {
@@ -971,6 +1014,9 @@ func (e *Execution) executionResult(ctx context.Context, call Call, result Outpu
 		if e.Permission.Mode == guard.Unattended {
 			return Fail(errors.New("生产环境多主机执行需要用户确认，无人值守运行禁止此操作")), nil
 		}
+		if e.Subagent {
+			return Fail(subagentConfirmationError(result.Text)), nil
+		}
 		targets := make([]string, 0, len(challenge.Detail.ProductionTargets))
 		for _, target := range challenge.Detail.ProductionTargets {
 			targets = append(targets, target.SessionName+" ("+target.Environment+")")
@@ -995,6 +1041,16 @@ func (e *Execution) executionResult(ctx context.Context, call Call, result Outpu
 		return Output{}, tool.StatefulInterrupt(ctx, info, state)
 	}
 	return result, nil
+}
+
+// subagentConfirmationError tells a subagent model that a call needing user
+// confirmation was not run, so it hands the action back to the parent agent,
+// which can ask the user.
+func subagentConfirmationError(reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		reason = "未说明原因"
+	}
+	return errors.New("此操作需要用户确认（" + reason + "），但子代理内无法请求确认，操作未执行。不要重试；请在结果中说明需要执行的操作，由主代理执行（主代理可以请求用户确认）")
 }
 
 // SessionRuling rebuilds the ordinary confirmation a session approval records.

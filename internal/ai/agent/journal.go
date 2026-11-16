@@ -395,13 +395,13 @@ func (r *Runner) RunList(ctx context.Context, conversationID string, limit int) 
 		return nil, err
 	}
 	for index, row := range rows {
-		result[index] = RunDTO{
+		result[index] = r.reconcileRunDTO(RunDTO{
 			ID: row.ID, ConversationID: row.ConversationID, Status: row.Status, Attempt: row.Attempt, Seq: row.Seq,
 			PlanMode: row.PlanMode, Source: row.Source, ProfileID: row.ProfileID, Answer: row.Answer, Turns: row.Turns,
 			TokensIn: row.TokensIn, TokensOut: row.TokensOut, CacheCreationTokens: row.CacheCreationTokens, LatencyMS: row.LatencyMS,
 			Retries: counts[row.ID].Retries, Failures: counts[row.ID].Failures, Error: row.Error,
 			CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, FinishedAt: row.FinishedAt,
-		}
+		}, row)
 	}
 	return result, nil
 }

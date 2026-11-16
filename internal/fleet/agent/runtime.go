@@ -874,7 +874,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 			return
 		}
 		hello := r.hello("", "")
-		channel, err := DialChannel(ctx, client.WSURL(), hello, client.Insecure(), defaultWSKeepAlive, defaultWSPingTimeout)
+		channel, err := DialChannel(ctx, client.WSURL(), hello, client.DialPolicy(), defaultWSKeepAlive, defaultWSPingTimeout)
 		if err != nil {
 			if isOwnerUnavailable(err) {
 				if !r.waitOwner(ctx) {
@@ -1042,7 +1042,7 @@ func (r *Runtime) DialPurposeBridge(ctx context.Context, bridgeID, purpose strin
 	if client == nil {
 		return nil, ErrNoEndpoint
 	}
-	conn, err := DialBridge(ctx, client.WSURL(), r.hello(bridgeID, purpose), client.Insecure())
+	conn, err := DialBridge(ctx, client.WSURL(), r.hello(bridgeID, purpose), client.DialPolicy())
 	if err != nil {
 		return nil, err
 	}
@@ -1109,7 +1109,7 @@ func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 			r.logger.Warn("bridge aborted: no healthy endpoint", "bridge_id", bridgeID)
 			return
 		}
-		conn, err := DialBridge(ctx, client.WSURL(), r.hello(bridgeID, purpose), client.Insecure())
+		conn, err := DialBridge(ctx, client.WSURL(), r.hello(bridgeID, purpose), client.DialPolicy())
 		if err != nil {
 			if r.handleDenied(err) {
 				return

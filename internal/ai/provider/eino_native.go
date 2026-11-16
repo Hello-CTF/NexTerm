@@ -239,9 +239,17 @@ func (c *Client) decorateMessage(message *schema.Message, state *attemptState) *
 	if state.actualModel() == "" {
 		state.setServingModel(state.requestedModel)
 	}
-	extra[MessageExtraRunID] = state.runID
-	extra[MessageExtraCallID] = state.callID
-	extra[MessageExtraServingModel] = state.actualModel()
+	// String extras are concatenated when streamed frames are merged, so the
+	// identity strings ride on the first frame of an attempt only.
+	if state.identitySent.CompareAndSwap(false, true) {
+		extra[MessageExtraRunID] = state.runID
+		extra[MessageExtraCallID] = state.callID
+		extra[MessageExtraServingModel] = state.actualModel()
+	} else {
+		delete(extra, MessageExtraRunID)
+		delete(extra, MessageExtraCallID)
+		delete(extra, MessageExtraServingModel)
+	}
 	extra[MessageExtraContextWindow] = c.config.ContextWindow
 	if tokens := state.cacheCreationTokens(); tokens > 0 {
 		extra[MessageExtraCacheCreation] = tokens

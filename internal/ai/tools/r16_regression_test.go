@@ -401,7 +401,7 @@ func TestOperationResultQuery(t *testing.T) {
 		}
 	}
 	missing := registry.Execute(context.Background(), "job", scope, Call{ID: "q2", Name: "operation_result", Args: json.RawMessage(`{"operation_id":"op-unknown"}`)}, nil)
-	if missing.OK || !strings.Contains(missing.Text, "不存在") {
+	if missing.OK || !strings.Contains(missing.Text, "没有执行记录") || !strings.Contains(missing.Text, "不代表它没有执行") {
 		t.Fatalf("operation_result unknown = %+v", missing)
 	}
 }

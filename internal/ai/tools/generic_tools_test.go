@@ -79,8 +79,8 @@ func TestWaitForQuietOnly(t *testing.T) {
 		t.Fatalf("missing pattern and quiet_ms = %+v", invalid)
 	}
 	emptyPattern := NewRegistry(Dependencies{Terminal: &fakeTerminal{}}).Execute(context.Background(), "job", Scope{TabID: "tab"}, Call{ID: "empty", Name: "wait_for", Args: json.RawMessage(`{"pattern":""}`)}, nil)
-	if !emptyPattern.OK {
-		t.Fatalf("explicit empty pattern must preserve immediate match: %+v", emptyPattern)
+	if emptyPattern.OK || !strings.Contains(emptyPattern.Text, ErrInvalidToolCall.Error()) {
+		t.Fatalf("an empty pattern without quiet_ms or lines would match immediately and must be rejected: %+v", emptyPattern)
 	}
 }
 

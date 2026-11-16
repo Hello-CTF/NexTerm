@@ -284,7 +284,11 @@ func productionModules(services ProductionServices) []Module {
 		modules = append(modules, Module{
 			Name: "ai-profiles",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
-				return registerAICommands(dispatcher, services.Profiles, services.Store, productionScopeValidator(&services))
+				var runs conversationRunGuard
+				if services.Agent != nil {
+					runs = services.Agent
+				}
+				return registerAICommandsGuarded(dispatcher, services.Profiles, services.Store, runs, productionScopeValidator(&services))
 			},
 		})
 	}

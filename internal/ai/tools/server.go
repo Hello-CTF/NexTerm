@@ -70,61 +70,106 @@ func (r *Registry) execCommandsCurrent(ctx context.Context, scope Scope, args Ex
 	if err != nil {
 		return Fail(err)
 	}
-	capOutput := func(text string) (string, string, bool) {
-		display, cut := capText(text)
-		model := display
-		if cut {
-			model = strings.TrimSuffix(display, "\n[输出已截断]") + "\n[output truncated]"
-		}
-		return display, model, cut
-	}
-	var output, modelOutput strings.Builder
-	exitCode := 0
+	timeout := time.Duration(args.Timeout) * time.Second
+	var blocks []execBlock
+	var summary execSummary
 	truncated := false
-	execFailed := false
-	for _, command := range args.Commands {
+	for index, command := range args.Commands {
 		if err := ctx.Err(); err != nil {
 			return Fail(err)
 		}
-		commandContext, cancel := context.WithTimeout(ctx, time.Duration(args.Timeout)*time.Second)
-		result, execErr := transport.Exec(commandContext, command, base.ExecOptions{Timeout: time.Duration(args.Timeout) * time.Second, ExpectedGeneration: transport.Generation()})
+		commandContext, cancel := context.WithTimeout(ctx, timeout)
+		result, execErr := transport.Exec(commandContext, command, base.ExecOptions{Timeout: timeout, ExpectedGeneration: transport.Generation()})
+		deadlineHit := errors.Is(commandContext.Err(), context.DeadlineExceeded)
 		cancel()
-		fmt.Fprintf(&output, "$ %s\n", command)
-		fmt.Fprintf(&modelOutput, "$ %s\n", command)
-		stdout, modelStdout, stdoutCut := capOutput(result.Stdout)
-		stderr, modelStderr, stderrCut := capOutput(result.Stderr)
-		truncated = truncated || stdoutCut || stderrCut || result.Truncated
-		output.WriteString(stdout)
-		modelOutput.WriteString(modelStdout)
-		if stderr != "" {
-			output.WriteString("\n[stderr]\n")
-			output.WriteString(stderr)
-			modelOutput.WriteString("\n[stderr]\n")
-			modelOutput.WriteString(modelStderr)
-		}
+		prefix := fmt.Sprintf("$ %s\n", command)
+		block := execBlock{prefix: prefix, modelPrefix: prefix, stdout: result.Stdout, stderr: result.Stderr}
+		var footer, modelFooter strings.Builder
+		truncated = truncated || result.Truncated
 		if result.ExitCode != nil {
-			exitCode = *result.ExitCode
-			fmt.Fprintf(&output, "\n[exit_code=%d]\n", exitCode)
-			fmt.Fprintf(&modelOutput, "\n[exit_code=%d]\n", exitCode)
+			summary.exit(index, *result.ExitCode)
+			fmt.Fprintf(&footer, "\n[exit_code=%d]\n", *result.ExitCode)
+			fmt.Fprintf(&modelFooter, "\n[exit_code=%d]\n", *result.ExitCode)
 		}
+		stop := false
 		if execErr != nil {
 			if ctx.Err() != nil {
 				return Fail(ctx.Err())
 			}
-			if errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
-				return Fail(execErr)
+			if errors.Is(execErr, context.DeadlineExceeded) || deadlineHit {
+				// The command's own deadline expired while the run is still alive: keep what it and the earlier
+				// commands printed, and do not start the rest, which may depend on it or contend with it while it runs.
+				fmt.Fprintf(&footer, "\n[超时（%d 秒），命令可能仍在运行，退出码未知]\n\n", args.Timeout)
+				fmt.Fprintf(&modelFooter, "\n[timeout after %ds; may still be running; exit code unknown]\n\n", args.Timeout)
+				summary.timedOut, summary.timedOutIndex = true, index
+				for _, skipped := range args.Commands[index+1:] {
+					fmt.Fprintf(&footer, "$ %s\n[未执行：前面的命令超时]\n\n", skipped)
+					fmt.Fprintf(&modelFooter, "$ %s\n[not run: an earlier command timed out]\n\n", skipped)
+				}
+				stop = true
+			} else {
+				if errors.Is(execErr, context.Canceled) {
+					return Fail(execErr)
+				}
+				summary.exit(index, 1)
+				summary.execFailed = true
+				fmt.Fprintf(&footer, "\n[执行失败: %v]\n", execErr)
+				fmt.Fprintf(&modelFooter, "\n[execution failed: %v]\n", execErr)
 			}
-			exitCode = 1
-			execFailed = true
-			fmt.Fprintf(&output, "\n[执行失败: %v]\n", execErr)
-			fmt.Fprintf(&modelOutput, "\n[execution failed: %v]\n", execErr)
 		}
-		output.WriteByte('\n')
-		modelOutput.WriteByte('\n')
+		if !stop {
+			footer.WriteByte('\n')
+			modelFooter.WriteByte('\n')
+		}
+		block.footer, block.modelFooter = footer.String(), modelFooter.String()
+		blocks = append(blocks, block)
+		if stop {
+			break
+		}
 	}
-	text, _, cut := capOutput(output.String())
-	_, modelText, _ := capOutput(modelOutput.String())
-	return Output{OK: true, Text: text, ModelText: modelText, ExitCode: exitCode, Truncated: truncated || cut, ExecFailed: execFailed}
+	// Each command's output is capped on its own, so every header and exit code survives the combined cap.
+	text, modelText, cut := renderExecBlocks(blocks)
+	// The summary goes after the cap, so a long output never hides which command failed or timed out.
+	note, modelNote := summary.notes(len(args.Commands), args.Timeout)
+	text += note
+	modelText += modelNote
+	if summary.timedOut {
+		exitCode := summary.exitCode
+		if exitCode == 0 {
+			exitCode = 1
+		}
+		return Output{Text: text, ModelText: modelText, ExitCode: exitCode, ExitUnknown: true, Truncated: truncated || cut, ExecFailed: true}
+	}
+	return Output{OK: true, Text: text, ModelText: modelText, ExitCode: summary.exitCode, Truncated: truncated || cut, ExecFailed: summary.execFailed}
+}
+
+// execSummary is what a sequential exec_commands run reports as a whole. Its exit code is the first non-zero exit in
+// command order, so a later success never masks an earlier failure.
+type execSummary struct {
+	exitCode      int
+	failedIndex   int
+	execFailed    bool
+	timedOut      bool
+	timedOutIndex int
+}
+
+func (s *execSummary) exit(index, code int) {
+	if code != 0 && s.exitCode == 0 {
+		s.exitCode, s.failedIndex = code, index
+	}
+}
+
+func (s execSummary) notes(total, timeoutSeconds int) (string, string) {
+	var text, model strings.Builder
+	if s.exitCode != 0 && total > 1 {
+		fmt.Fprintf(&text, "[第 %d 条命令最先以非零退出码 %d 结束；exitCode 取第一个非零退出码]\n", s.failedIndex+1, s.exitCode)
+		fmt.Fprintf(&model, "[command %d was the first to exit non-zero (exit code %d); exitCode reports the first non-zero exit code]\n", s.failedIndex+1, s.exitCode)
+	}
+	if s.timedOut {
+		fmt.Fprintf(&text, "[第 %d 条命令超过 %d 秒超时，可能仍在运行；其后 %d 条命令未执行]\n", s.timedOutIndex+1, timeoutSeconds, total-s.timedOutIndex-1)
+		fmt.Fprintf(&model, "[command %d hit the %ds timeout and may still be running; the %d commands after it were not run]\n", s.timedOutIndex+1, timeoutSeconds, total-s.timedOutIndex-1)
+	}
+	return text.String(), model.String()
 }
 
 func normalizeExecTargetFilters(assetIDs, tags []string) ([]string, []string, error) {
@@ -254,10 +299,22 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 		return r.prepareExecBatchProduction(ctx, jobID, call, args, targets)
 	}
 
-	var output strings.Builder
+	var blocks []execBlock
 	exitCode := 0
 	truncated := false
 	execFailed := false
+	failedIndex, failedAsset := 0, ""
+	var timedOutAssets []string
+	timedOutIndex := 0
+	// appendFooter adds text to the last block, or starts a body-less block when there is none.
+	appendFooter := func(text, model string) {
+		if len(blocks) == 0 {
+			blocks = append(blocks, execBlock{})
+		}
+		last := &blocks[len(blocks)-1]
+		last.footer += text
+		last.modelFooter += model
+	}
 	for index, command := range args.Commands {
 		if err := ctx.Err(); err != nil {
 			return Fail(err)
@@ -271,46 +328,82 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 			if ctx.Err() != nil {
 				return Fail(ctx.Err())
 			}
-			fmt.Fprintf(&output, "\n第 %d 条命令未执行: %v\n", index+1, execErr)
+			failure := fmt.Sprintf("\n第 %d 条命令未执行: %v\n", index+1, execErr)
 			if index > 0 {
-				output.WriteString("此前命令已经执行；未从头重试，请检查各主机状态后再决定下一步\n")
+				failure += "此前命令已经执行；未从头重试，请检查各主机状态后再决定下一步\n"
 			}
-			text, cut := capText(output.String())
-			return Output{Text: text, ModelText: text, ExitCode: 1, Truncated: truncated || cut, ExecFailed: true}
+			appendFooter(failure, failure)
+			text, modelText, cut := renderExecBlocks(blocks)
+			return Output{Text: text, ModelText: modelText, ExitCode: 1, Truncated: truncated || cut, ExecFailed: true}
 		}
-		fmt.Fprintf(&output, "$ %s\n", command)
-		for _, result := range batch.Results {
-			fmt.Fprintf(&output, "[asset_id=%s session_id=%s status=%s]\n", result.AssetID, result.SessionID, result.Status)
-			stdout, stdoutCut := capText(result.Stdout)
-			stderr, stderrCut := capText(result.Stderr)
-			truncated = truncated || stdoutCut || stderrCut || result.Truncated
-			output.WriteString(stdout)
-			if stderr != "" {
-				output.WriteString("\n[stderr]\n")
-				output.WriteString(stderr)
+		header := fmt.Sprintf("$ %s\n", command)
+		if len(batch.Results) == 0 {
+			blocks = append(blocks, execBlock{prefix: header, modelPrefix: header})
+		}
+		for resultIndex, result := range batch.Results {
+			prefix := fmt.Sprintf("[asset_id=%s session_id=%s status=%s]\n", result.AssetID, result.SessionID, result.Status)
+			if resultIndex == 0 {
+				prefix = header + prefix
+			}
+			truncated = truncated || result.Truncated
+			block := execBlock{prefix: prefix, modelPrefix: prefix, stdout: result.Stdout, stderr: result.Stderr}
+			var footer, modelFooter strings.Builder
+			if result.ExitCode != nil {
+				fmt.Fprintf(&footer, "\n[exit_code=%d]\n", *result.ExitCode)
+				fmt.Fprintf(&modelFooter, "\n[exit_code=%d]\n", *result.ExitCode)
+			}
+			recordFailure := func(code int) {
+				if exitCode == 0 && code != 0 {
+					exitCode, failedIndex, failedAsset = code, index, result.AssetID
+				}
 			}
 			if result.ExitCode != nil {
-				fmt.Fprintf(&output, "\n[exit_code=%d]\n", *result.ExitCode)
-				if *result.ExitCode != 0 {
-					exitCode = *result.ExitCode
-				}
+				recordFailure(*result.ExitCode)
 			}
-			if result.Error != "" {
-				fmt.Fprintf(&output, "\n[执行失败: %s]\n", result.Error)
+			if result.Status == execbatch.StatusTimeout {
+				// The target's deadline expired while the run is alive: the output it printed so far is kept and
+				// the remaining commands are not sent to any target.
+				fmt.Fprintf(&footer, "\n[超时（%d 秒），命令可能仍在运行，退出码未知]\n", args.Timeout)
+				fmt.Fprintf(&modelFooter, "\n[timeout after %ds; may still be running; exit code unknown]\n", args.Timeout)
+				timedOutAssets = append(timedOutAssets, result.AssetID)
+				timedOutIndex = index
+			} else if result.Error != "" {
+				fmt.Fprintf(&footer, "\n[执行失败: %s]\n", result.Error)
+				fmt.Fprintf(&modelFooter, "\n[execution failed: %s]\n", result.Error)
 			}
 			if result.Status != execbatch.StatusSuccess {
-				if exitCode == 0 {
-					exitCode = 1
-				}
+				recordFailure(1)
 				if result.Status != execbatch.StatusExitError {
 					execFailed = true
 				}
 			}
-			output.WriteByte('\n')
+			footer.WriteString("\n")
+			modelFooter.WriteString("\n")
+			block.footer, block.modelFooter = footer.String(), modelFooter.String()
+			blocks = append(blocks, block)
+		}
+		if len(timedOutAssets) > 0 {
+			for _, skipped := range args.Commands[index+1:] {
+				appendFooter(fmt.Sprintf("$ %s\n[未执行：前面的命令超时]\n\n", skipped), fmt.Sprintf("$ %s\n[not run: an earlier command timed out]\n\n", skipped))
+			}
+			break
 		}
 	}
-	text, cut := capText(output.String())
-	return Output{OK: true, Text: text + identityNote, ModelText: text, ExitCode: exitCode, Truncated: truncated || cut, ExecFailed: execFailed, Notes: identityNote}
+	// Each target's output is capped on its own, so every header and exit code survives the combined cap.
+	text, modelText, cut := renderExecBlocks(blocks)
+	// The summary goes after the cap, so a long output never hides which command failed or timed out.
+	if exitCode != 0 && (len(args.Commands) > 1 || len(targets.SessionIDs) > 1) {
+		text += fmt.Sprintf("[第 %d 条命令在 asset_id=%s 上最先以非零退出码 %d 结束；exitCode 取第一个非零退出码]\n", failedIndex+1, failedAsset, exitCode)
+		modelText += fmt.Sprintf("[command %d on asset_id=%s was the first to exit non-zero (exit code %d); exitCode reports the first non-zero exit code]\n", failedIndex+1, failedAsset, exitCode)
+	}
+	if len(timedOutAssets) > 0 {
+		skipped := len(args.Commands) - timedOutIndex - 1
+		assets := strings.Join(timedOutAssets, ", ")
+		text += fmt.Sprintf("[第 %d 条命令在 %s 上超过 %d 秒超时，可能仍在运行；其后 %d 条命令未在任何主机执行]\n", timedOutIndex+1, assets, args.Timeout, skipped)
+		modelText += fmt.Sprintf("[command %d hit the %ds timeout on %s and may still be running; the %d commands after it were not run on any host]\n", timedOutIndex+1, args.Timeout, assets, skipped)
+		return Output{Text: text + identityNote, ModelText: modelText, ExitCode: exitCode, ExitUnknown: true, Truncated: truncated || cut, ExecFailed: true, Notes: identityNote}
+	}
+	return Output{OK: true, Text: text + identityNote, ModelText: modelText, ExitCode: exitCode, Truncated: truncated || cut, ExecFailed: execFailed, Notes: identityNote}
 }
 
 func (r *Registry) prepareExecBatchProduction(ctx context.Context, jobID string, call Call, args ExecCommandsArgs, targets ExecTargetSet) Output {
@@ -358,6 +451,8 @@ func (r *Registry) readFile(ctx context.Context, jobID string, scope Scope, raw 
 	var args struct {
 		Path     string `json:"path"`
 		MaxBytes int64  `json:"max_bytes"`
+		Offset   int    `json:"offset"`
+		Limit    int    `json:"limit"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
@@ -371,21 +466,125 @@ func (r *Registry) readFile(ctx context.Context, jobID string, scope Scope, raw 
 	if args.MaxBytes < 1 || args.MaxBytes > 2<<20 {
 		return Fail(invalid("max_bytes 必须在 1 字节到 2 MiB 之间"))
 	}
+	if args.Offset == 0 {
+		args.Offset = 1
+	}
+	if args.Limit == 0 {
+		args.Limit = MaxOutputLines
+	}
+	if args.Offset < 1 || args.Limit < 1 || args.Limit > maxReadFileLines {
+		return Fail(invalid("offset 必须从 1 开始，limit 必须在 1-%d 行之间", maxReadFileLines))
+	}
 	files, err := r.fileSystem(ctx, scope)
 	if err != nil {
 		return Fail(err)
 	}
-	content, readErr := files.ReadFile(ctx, args.Path, args.MaxBytes)
+	readCtx, cancel := context.WithTimeout(ctx, fileToolTimeout)
+	defer cancel()
+	content, readErr := files.ReadFile(readCtx, args.Path, args.MaxBytes)
 	if readErr != nil {
-		exists, existsErr := files.Exists(ctx, args.Path)
+		if failure, timedOut := toolTimeout(ctx, readCtx, "read_file", fileToolTimeout); timedOut {
+			return failure
+		}
+		exists, existsErr := files.Exists(readCtx, args.Path)
 		if existsErr == nil && !exists {
 			r.state(jobID).rememberRead(targetKey(scope, args.Path), fileVersion{Exists: false})
 		}
 		return Fail(readErr)
 	}
+	// The version covers the whole file, whichever line range is shown.
 	r.state(jobID).rememberRead(targetKey(scope, args.Path), versionOf(content))
-	text, truncated := capText(strings.ToValidUTF8(string(content), "�"))
-	return Output{OK: true, Text: text, Truncated: truncated}
+	return readFileWindow(strings.ToValidUTF8(string(content), "�"), args.Offset, args.Limit)
+}
+
+// maxReadFileLines bounds one read_file range; MaxOutputBytes still caps the bytes shown.
+const maxReadFileLines = 2000
+
+// fileToolTimeout bounds read_file, list_dir and the lookups of write_file and edit_file, so a remote file system that
+// stops answering fails the call instead of holding it until the run is canceled. The writes themselves are bounded
+// by fileWriteTimeout.
+var fileToolTimeout = 60 * time.Second
+
+// toolTimeout reports whether the tool's own deadline (not the run's cancellation) ended the call, and the failure
+// to return for it.
+func toolTimeout(runCtx, toolCtx context.Context, tool string, timeout time.Duration) (Output, bool) {
+	if err := toolTimeoutError(runCtx, toolCtx, tool, timeout); err != nil {
+		return Fail(err), true
+	}
+	return Output{}, false
+}
+
+// toolTimeoutError is toolTimeout's failure as an error, nil when the tool's own deadline did not end the call.
+func toolTimeoutError(runCtx, toolCtx context.Context, tool string, timeout time.Duration) error {
+	if runCtx.Err() != nil || !errors.Is(toolCtx.Err(), context.DeadlineExceeded) {
+		return nil
+	}
+	return fmt.Errorf("%s 超时（%d 秒）：远端未在时限内响应，已停止等待", tool, int(timeout/time.Second))
+}
+
+// readFileWindow shows lines offset..offset+limit-1 (1-based) of a file read in full. A whole file that fits keeps
+// the exact content with no footer; any other range ends with a footer naming the lines shown, the total, and the
+// arguments that read the next range.
+func readFileWindow(content string, offset, limit int) Output {
+	lines := strings.SplitAfter(content, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	total := len(lines)
+	if total == 0 && offset == 1 {
+		return Output{OK: true, Text: content}
+	}
+	if offset > total {
+		text := fmt.Sprintf("[文件共 %d 行，offset=%d 超出末尾]", total, offset)
+		model := fmt.Sprintf("[the file has %d lines; offset=%d is past the end]", total, offset)
+		return Output{OK: true, Text: text, ModelText: model}
+	}
+	end := offset - 1 + limit
+	if end > total {
+		end = total
+	}
+	var shown strings.Builder
+	last := offset - 1
+	longLine := false
+	for index := offset - 1; index < end; index++ {
+		line := lines[index]
+		if shown.Len()+len(line) > MaxOutputBytes {
+			if index == offset-1 {
+				// A single line larger than the byte cap is shown up to the cap.
+				cut := MaxOutputBytes
+				for cut > 0 && !utf8.ValidString(line[:cut]) {
+					cut--
+				}
+				shown.WriteString(line[:cut])
+				last = index + 1
+				longLine = true
+			}
+			break
+		}
+		shown.WriteString(line)
+		last = index + 1
+	}
+	text := shown.String()
+	if offset == 1 && last == total && !longLine {
+		return Output{OK: true, Text: text}
+	}
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	model := text
+	switch {
+	case longLine:
+		text += fmt.Sprintf("[输出已截断：第 %d 行超过 %d 字节，仅显示开头；文件共 %d 行]", last, MaxOutputBytes, total)
+		model += fmt.Sprintf("[output truncated: line %d exceeds %d bytes and only its start is shown; the file has %d lines]", last, MaxOutputBytes, total)
+	default:
+		text += fmt.Sprintf("[显示第 %d-%d 行，共 %d 行]", offset, last, total)
+		model += fmt.Sprintf("[showing lines %d-%d of %d]", offset, last, total)
+	}
+	if last < total {
+		text += fmt.Sprintf("\n[输出已截断：继续读取请传 offset=%d limit=%d]", last+1, limit)
+		model += fmt.Sprintf("\n[output truncated: to continue, call read_file with offset=%d limit=%d]", last+1, limit)
+	}
+	return Output{OK: true, Text: text, ModelText: model, Truncated: last < total || longLine}
 }
 
 // ReadRefFile reads file content for @-reference injection, reusing read_file's read guard
@@ -419,8 +618,13 @@ func (r *Registry) listDir(ctx context.Context, scope Scope, raw []byte) Output 
 	if err != nil {
 		return Fail(err)
 	}
-	entries, err := files.List(ctx, args.Path)
+	listCtx, cancel := context.WithTimeout(ctx, fileToolTimeout)
+	defer cancel()
+	entries, err := files.List(listCtx, args.Path)
 	if err != nil {
+		if failure, timedOut := toolTimeout(ctx, listCtx, "list_dir", fileToolTimeout); timedOut {
+			return failure
+		}
 		return Fail(err)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
@@ -455,11 +659,12 @@ func (r *Registry) searchFiles(ctx context.Context, scope Scope, raw []byte) Out
 	if err != nil {
 		return Fail(err)
 	}
-	searchContext, cancel := context.WithTimeout(ctx, 30*time.Second)
+	searchContext, cancel := context.WithTimeout(ctx, searchFilesTimeout)
 	defer cancel()
-	search := fileSearch{files: files, pattern: args.Pattern, by: args.By, results: make([]string, 0, 100)}
+	search := fileSearch{files: files, by: args.By, results: make([]string, 0, 100)}
 	if args.By == "name" {
-		if _, err := path.Match(args.Pattern, "probe"); err != nil {
+		search.glob, err = compileNameGlob(args.Pattern)
+		if err != nil {
 			return Fail(invalid("文件名 glob 无效: %v", err))
 		}
 	} else {
@@ -468,8 +673,16 @@ func (r *Registry) searchFiles(ctx context.Context, scope Scope, raw []byte) Out
 			return Fail(invalid("内容正则无效: %v", err))
 		}
 	}
-	if err := search.walk(searchContext, args.Path, 0); err != nil {
-		return Fail(err)
+	timedOut := false
+	if err := search.walk(searchContext, args.Path, "", 0); err != nil {
+		if ctx.Err() != nil {
+			return Fail(ctx.Err())
+		}
+		if !errors.Is(searchContext.Err(), context.DeadlineExceeded) {
+			return Fail(err)
+		}
+		// The search's own deadline: what was found so far is still an answer, flagged as partial.
+		timedOut = true
 	}
 	text := strings.Join(search.results, "\n")
 	modelText := ""
@@ -477,22 +690,46 @@ func (r *Registry) searchFiles(ctx context.Context, scope Scope, raw []byte) Out
 		text = "无匹配"
 		modelText = "no matches"
 	}
-	text, cut := capText(text)
-	return Output{OK: true, Text: text, ModelText: modelText, Truncated: search.truncated || cut}
+	text, cappedModel, cut := capHeadTail(text)
+	note, modelNote := search.notes(timedOut)
+	if cut && modelText == "" {
+		modelText = cappedModel
+	}
+	if note != "" {
+		if modelText == "" {
+			modelText = text
+		}
+		text += "\n" + note
+		modelText += "\n" + modelNote
+	}
+	return Output{OK: true, Text: text, ModelText: modelText, Truncated: search.truncated || cut || timedOut}
 }
+
+var searchFilesTimeout = 30 * time.Second
+
+const (
+	searchMaxResults      = 100
+	searchMaxDepth        = 6
+	searchMaxEntries      = 10000
+	searchMaxContentBytes = 1 << 20
+)
 
 type fileSearch struct {
 	files     base.FileSystem
-	pattern   string
 	by        string
+	glob      nameGlob
 	regex     *regexp.Regexp
 	results   []string
 	visited   int
 	truncated bool
+	// Files and directories the search could not look into, by reason; reported instead of silently dropped.
+	skippedLarge, skippedBinary, skippedUnreadable, skippedDirs int
 }
 
-func (s *fileSearch) walk(ctx context.Context, directory string, depth int) error {
-	if len(s.results) >= 100 || depth > 6 || s.visited > 10000 {
+// walk searches directory, whose path relative to the search root is relative ("" for the root). Only a failure to
+// list the root, or the context ending, stops the search; a subdirectory that cannot be listed is counted and skipped.
+func (s *fileSearch) walk(ctx context.Context, directory, relative string, depth int) error {
+	if len(s.results) >= searchMaxResults || depth > searchMaxDepth || s.visited > searchMaxEntries {
 		s.truncated = true
 		return nil
 	}
@@ -501,7 +738,11 @@ func (s *fileSearch) walk(ctx context.Context, directory string, depth int) erro
 	}
 	entries, err := s.files.List(ctx, directory)
 	if err != nil {
-		return err
+		if depth == 0 || ctx.Err() != nil {
+			return err
+		}
+		s.skippedDirs++
+		return nil
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	for _, entry := range entries {
@@ -509,7 +750,7 @@ func (s *fileSearch) walk(ctx context.Context, directory string, depth int) erro
 			return err
 		}
 		s.visited++
-		if s.visited > 10000 {
+		if s.visited > searchMaxEntries {
 			s.truncated = true
 			return nil
 		}
@@ -517,8 +758,12 @@ func (s *fileSearch) walk(ctx context.Context, directory string, depth int) erro
 		if entryPath == "" {
 			entryPath = strings.TrimRight(directory, "/") + "/" + entry.Name
 		}
+		entryRelative := entry.Name
+		if relative != "" {
+			entryRelative = relative + "/" + entry.Name
+		}
 		if entry.Kind == base.FileDirectory {
-			if err := s.walk(ctx, entryPath, depth+1); err != nil {
+			if err := s.walk(ctx, entryPath, entryRelative, depth+1); err != nil {
 				return err
 			}
 			continue
@@ -527,17 +772,16 @@ func (s *fileSearch) walk(ctx context.Context, directory string, depth int) erro
 			continue
 		}
 		if s.by == "name" {
-			matched, _ := path.Match(s.pattern, entry.Name)
-			if matched {
+			if s.glob.match(entry.Name, entryRelative, entryPath) {
 				s.results = append(s.results, entryPath)
 			}
-		} else if entry.Size <= 1<<20 {
-			if err := s.searchContent(ctx, entryPath); err != nil {
-				return err
-			}
+		} else if entry.Size > searchMaxContentBytes {
+			s.skippedLarge++
+		} else if err := s.searchContent(ctx, entryPath); err != nil {
+			return err
 		}
-		if len(s.results) >= 100 {
-			s.results = s.results[:100]
+		if len(s.results) >= searchMaxResults {
+			s.results = s.results[:searchMaxResults]
 			s.truncated = true
 			return nil
 		}
@@ -546,8 +790,16 @@ func (s *fileSearch) walk(ctx context.Context, directory string, depth int) erro
 }
 
 func (s *fileSearch) searchContent(ctx context.Context, name string) error {
-	content, err := s.files.ReadFile(ctx, name, 1<<20)
-	if err != nil || !utf8.Valid(content) {
+	content, err := s.files.ReadFile(ctx, name, searchMaxContentBytes)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		s.skippedUnreadable++
+		return nil
+	}
+	if !utf8.Valid(content) {
+		s.skippedBinary++
 		return nil
 	}
 	matches := 0
@@ -555,12 +807,109 @@ func (s *fileSearch) searchContent(ctx context.Context, name string) error {
 		if s.regex.MatchString(line) {
 			s.results = append(s.results, fmt.Sprintf("%s:%d:%s", name, lineNumber+1, line))
 			matches++
-			if matches == 3 || len(s.results) >= 100 {
+			if matches == 3 || len(s.results) >= searchMaxResults {
 				break
 			}
 		}
 	}
 	return nil
+}
+
+// notes describes, in display and model wording, why the results may be incomplete.
+func (s *fileSearch) notes(timedOut bool) (string, string) {
+	var text, model []string
+	if timedOut {
+		text = append(text, fmt.Sprintf("[搜索超时（%d 秒），以上为部分结果]", int(searchFilesTimeout/time.Second)))
+		model = append(model, fmt.Sprintf("[search timed out after %ds; the results above are partial]", int(searchFilesTimeout/time.Second)))
+	} else if s.truncated {
+		text = append(text, fmt.Sprintf("[结果不完整：达到 %d 条结果、%d 层目录或 %d 个条目的上限]", searchMaxResults, searchMaxDepth, searchMaxEntries))
+		model = append(model, fmt.Sprintf("[results incomplete: reached the limit of %d results, %d directory levels or %d entries]", searchMaxResults, searchMaxDepth, searchMaxEntries))
+	}
+	var skippedText, skippedModel []string
+	add := func(count int, display, english string) {
+		if count > 0 {
+			skippedText = append(skippedText, fmt.Sprintf(display, count))
+			skippedModel = append(skippedModel, fmt.Sprintf(english, count))
+		}
+	}
+	add(s.skippedLarge, "%d 个超过 1 MiB 的文件", "%d files over 1 MiB")
+	add(s.skippedBinary, "%d 个非 UTF-8 文件", "%d non-UTF-8 files")
+	add(s.skippedUnreadable, "%d 个无法读取的文件", "%d unreadable files")
+	add(s.skippedDirs, "%d 个无法列出的目录", "%d directories that could not be listed")
+	if len(skippedText) > 0 {
+		text = append(text, "[已跳过："+strings.Join(skippedText, "，")+"]")
+		model = append(model, "[skipped: "+strings.Join(skippedModel, ", ")+"]")
+	}
+	return strings.Join(text, "\n"), strings.Join(model, "\n")
+}
+
+// nameGlob is a search_files name pattern. A pattern without "/" matches the file's base name, as path.Match does.
+// A pattern with "/" matches the whole path: relative to the search root, or the absolute path when it starts with
+// "/". In a path pattern a "**" segment matches any number of directories, including none.
+type nameGlob struct {
+	pattern  string
+	segments []string
+	absolute bool
+}
+
+func compileNameGlob(pattern string) (nameGlob, error) {
+	if !strings.Contains(pattern, "/") {
+		if _, err := path.Match(pattern, "probe"); err != nil {
+			return nameGlob{}, err
+		}
+		return nameGlob{pattern: pattern}, nil
+	}
+	absolute := strings.HasPrefix(pattern, "/")
+	cleaned := strings.TrimPrefix(path.Clean(pattern), "/")
+	segments := strings.Split(cleaned, "/")
+	for _, segment := range segments {
+		if segment == "**" {
+			continue
+		}
+		if _, err := path.Match(segment, "probe"); err != nil {
+			return nameGlob{}, err
+		}
+	}
+	return nameGlob{pattern: pattern, segments: segments, absolute: absolute}, nil
+}
+
+func (g nameGlob) match(name, relative, absolutePath string) bool {
+	if g.segments == nil {
+		matched, _ := path.Match(g.pattern, name)
+		return matched
+	}
+	target := relative
+	if g.absolute {
+		target = strings.TrimPrefix(path.Clean(absolutePath), "/")
+	}
+	return matchGlobSegments(g.segments, strings.Split(target, "/"))
+}
+
+func matchGlobSegments(pattern, name []string) bool {
+	for len(pattern) > 0 {
+		if pattern[0] == "**" {
+			for len(pattern) > 0 && pattern[0] == "**" {
+				pattern = pattern[1:]
+			}
+			if len(pattern) == 0 {
+				return true
+			}
+			for skip := 0; skip <= len(name); skip++ {
+				if matchGlobSegments(pattern, name[skip:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if len(name) == 0 {
+			return false
+		}
+		if matched, _ := path.Match(pattern[0], name[0]); !matched {
+			return false
+		}
+		pattern, name = pattern[1:], name[1:]
+	}
+	return len(name) == 0
 }
 
 func (s *sessionTerminal) TabSession(ctx context.Context, tabID string) (string, error) {
@@ -696,6 +1045,9 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
 	}
+	if args.HistoryLines > 0 && (args.SinceSeq > 0 || args.Cursor != "" || args.MaxBytes != 0) {
+		return Fail(invalid("history_lines 不能与 since_seq、cursor 或 max_bytes 同时使用；按序号翻页请去掉 history_lines"))
+	}
 	if args.MaxBytes == 0 {
 		args.MaxBytes = defaultDiffBytes
 	}
@@ -764,14 +1116,14 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 	if err != nil {
 		return Fail(err)
 	}
-	buffered, cursor := terminalInputOf(screen)
-	r.state(jobID).observeInput(tabID, buffered, cursor)
+	state, stateErr := r.commandState(ctx, tabID)
+	r.observeArbitrationInput(jobID, tabID, screen, stateErr == nil && state.Running)
 	header := r.screenIdentityHeader(ctx, tabID) +
 		fmt.Sprintf("光标 (%d, %d)，空闲 %dms，屏幕序号 %d", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Seq)
 	if screen.AltScreen {
 		header += "，AltScreen"
 	}
-	if state, stateErr := r.commandState(ctx, tabID); stateErr == nil && state.Sequence > 0 {
+	if stateErr == nil && state.Sequence > 0 {
 		status := "空闲"
 		if state.Running {
 			status = "运行中"
@@ -812,11 +1164,6 @@ func (r *Registry) screenIdentityHeader(ctx context.Context, tabID string) strin
 	return line + "\n"
 }
 
-// terminalInputOf extracts the observable input buffer state from a screen.
-func terminalInputOf(screen Screen) (string, int) {
-	return TerminalInputCursor(screen)
-}
-
 // readScreenHistory returns up to maxLines rendered scrollback lines
 // directly above the visible screen, replayed from a bounded raw tail
 // window. It reports the exact raw anchors of the window and the earliest
@@ -839,7 +1186,7 @@ func (r *Registry) readScreenHistory(ctx context.Context, tabID string, maxLines
 	if err != nil {
 		return Fail(err)
 	}
-	rendered, _ := renderOutputDiffSplit(data, cols, rows)
+	rendered, _ := renderOutputDiffSplit(data, cols, rows, diffHistoryLines)
 	scrollback := rendered
 	if len(scrollback) > maxLines {
 		scrollback = scrollback[len(scrollback)-maxLines:]
@@ -854,7 +1201,7 @@ func (r *Registry) readScreenHistory(ctx context.Context, tabID string, maxLines
 	if unwrap {
 		lines = unwrapLines(lines, cols)
 	}
-	text, truncated := capText(strings.Join(lines, "\n"))
+	text, _, truncated := capHeadTail(strings.Join(lines, "\n"))
 	if truncated {
 		header += "；本页渲染已截断，用更小的 history_lines 重读"
 	}
@@ -871,6 +1218,9 @@ func (r *Registry) readScreenHistory(ctx context.Context, tabID string, maxLines
 func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq uint64, maxBytes int, unwrap bool, cols, rows int) Output {
 	data, start, latest, err := r.outputSince(ctx, tabID, sinceSeq, maxBytes)
 	if err != nil {
+		return Fail(err)
+	}
+	if err := anchorBeyondLatest(sinceSeq, latest); err != nil {
 		return Fail(err)
 	}
 	lines := renderOutputDiff(data, cols, rows)
@@ -896,7 +1246,7 @@ func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq u
 			header += " 或 cursor=" + cursor
 		}
 	}
-	text, truncated := capText(strings.Join(lines, "\n"))
+	text, _, truncated := capHeadTail(strings.Join(lines, "\n"))
 	if truncated {
 		header += fmt.Sprintf("；本页渲染已截断，用 since_seq=%d 配合更小 max_bytes 重读", start)
 	}
@@ -944,6 +1294,9 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 	if err != nil {
 		return Fail(err)
 	}
+	if err := r.takeoverWriteError(tabID); err != nil {
+		return Fail(err)
+	}
 	var encoded []byte
 	if !args.Paste {
 		encoded, err = EncodeKeys(args.Keys, args.Enter)
@@ -951,18 +1304,24 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 			return Fail(err)
 		}
 	}
-	// User-input arbitration: refuse to write when the input buffer changed
-	// after this job last observed it, unless the call forces through with
-	// full knowledge. A failed snapshot degrades to an explicit note instead
-	// of silently skipping the check.
-	arbitrationNote := ""
-	buffered, cursor := "", 0
+	// User-input arbitration: refuse to write when the shell input line
+	// changed after this job last observed it, unless the call forces
+	// through with full knowledge. Screens without a comparable input line
+	// (a running command, the alternate screen, program output) are not
+	// checked. A failed snapshot degrades to an explicit note instead of
+	// silently skipping the check.
 	screen, snapshotErr := r.deps.Terminal.Snapshot(ctx, tabID)
+	before, err := r.commandState(ctx, tabID)
+	if err != nil {
+		return Fail(err)
+	}
+	arbitrationNote := ""
+	buffered, cursor, predictable := "", 0, false
 	if snapshotErr != nil {
 		arbitrationNote = "；终端输入状态无法校验（快照失败），已直接写入"
 	} else {
-		buffered, cursor = TerminalInputCursor(screen)
-		if changed, observed := r.state(jobID).inputChanged(tabID, buffered, cursor); observed && changed {
+		buffered, cursor, predictable = arbitrationInput(screen, before.Running)
+		if predictable && r.state(jobID).pendingInput(tabID, buffered, cursor) {
 			if !args.Force {
 				return Fail(ErrUserInputPending)
 			}
@@ -976,24 +1335,26 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 	if args.Paste && strings.Contains(args.Keys, "\n") && (snapshotErr != nil || !screen.BracketedPaste) {
 		return Fail(invalid("当前终端未开启 bracketed-paste 模式，paste 中的换行会被编码为回车并提前提交；请拆分为多条 send_keys（或开启 bracketed paste 后再试）"))
 	}
-	before, err := r.commandState(ctx, tabID)
-	if err != nil {
-		return Fail(err)
-	}
 	sameLockSubmit := true
 	literalGuarded := false
 	if _, ok := r.deps.Terminal.(PasteLiteralTerminal); ok {
 		literalGuarded = true
 	}
+	// The write phase is bounded so a terminal that stops accepting input
+	// (a stalled channel or a write gate held behind one) fails this call
+	// instead of hanging the run; the submit delay is added on top.
+	writeBudget := sendKeysWriteTimeout
+	if args.Paste && args.Enter {
+		writeBudget += sendKeysSubmitDelay(args)
+	}
+	writeCtx, cancelWrite := context.WithTimeout(ctx, writeBudget)
+	defer cancelWrite()
 	if args.Paste {
-		delay := time.Duration(defaultSubmitDelayMS) * time.Millisecond
-		if args.SubmitDelayMS > 0 {
-			delay = time.Duration(args.SubmitDelayMS) * time.Millisecond
-		}
+		delay := sendKeysSubmitDelay(args)
 		if submitter, ok := r.deps.Terminal.(PasteSubmitTerminal); ok {
 			// The same-lock implementer owns the in-lock literal-newline guard.
 			literalGuarded = true
-			err = submitter.WritePasteSubmit(ctx, tabID, args.Keys, args.Enter, delay)
+			err = submitter.WritePasteSubmit(writeCtx, tabID, args.Keys, args.Enter, delay)
 			if err != nil && args.Enter && !errors.Is(err, session.ErrPasteGuarded) && !errors.Is(err, session.ErrUnsupported) && !errors.Is(err, session.ErrTabNotFound) {
 				// The paste block may already be written while the Enter
 				// never left — a write failure, a mode flip, a close, or a
@@ -1004,10 +1365,13 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 			}
 		} else {
 			sameLockSubmit = false
-			err = r.writePasteSplit(ctx, tabID, args.Keys, args.Enter, delay)
+			err = r.writePasteSplit(writeCtx, tabID, args.Keys, args.Enter, delay)
 		}
 	} else {
-		err = r.deps.Terminal.Write(ctx, tabID, encoded)
+		err = r.deps.Terminal.Write(writeCtx, tabID, encoded)
+	}
+	if err != nil && ctx.Err() == nil && errors.Is(writeCtx.Err(), context.DeadlineExceeded) {
+		err = fmt.Errorf("发送按键超时：%s 内终端未接受输入，终端可能无响应；按键可能稍后仍会送达，请先读取屏幕确认再决定是否重试: %w", writeBudget, err)
 	}
 	if err != nil {
 		// The write was initiated: its outcome is uncertain, so the failure
@@ -1019,17 +1383,23 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 	if r.deps.Audit != nil {
 		_ = r.deps.Audit(context.WithoutCancel(ctx), AuditEntry{SessionID: scope.SessionID, AssetID: scope.AssetID, Kind: "takeover", Payload: map[string]any{"keys": "<redacted>", "enter": args.Enter, "paste": args.Paste, "tab": tabID}})
 	}
-	r.observePostWriteInput(jobID, tabID, buffered, cursor, args, encoded)
+	r.observePostWriteInput(jobID, tabID, buffered, cursor, predictable, args, encoded)
 	var proofScreen Screen
 	var proofErr error
 	if args.Paste {
 		proofScreen, proofErr = r.deps.Terminal.Snapshot(ctx, tabID)
 	}
+	// The anchor is the sequence read before the write, so output the keys
+	// produce immediately can never land before it.
+	anchor := ""
+	if snapshotErr == nil && screen.Seq > 0 {
+		anchor = fmt.Sprintf("（屏幕序号 %d）", screen.Seq)
+	}
 	var result Output
 	if args.WaitMS == 0 {
-		result = OK("已发送" + screenAnchorSuffix(ctx, r.deps.Terminal, tabID))
+		result = OK("已发送" + anchor)
 	} else if _, ok := r.deps.Terminal.(CommandStateTerminal); !ok {
-		result = OK("已发送" + screenAnchorSuffix(ctx, r.deps.Terminal, tabID) + "；该终端不支持 OSC 133 命令跟踪，无法确认命令是否完成，请用 wait_for 校验新输出")
+		result = OK("已发送" + anchor + "；该终端不支持 OSC 133 命令跟踪，无法确认命令是否完成，请用 wait_for 校验新输出")
 	} else {
 		result = r.waitCommandFinish(ctx, tabID, before, args.WaitMS)
 	}
@@ -1093,24 +1463,27 @@ func (r *Registry) writePasteSplit(ctx context.Context, tabID, text string, ente
 // write: deterministic text/paste writes predict the resulting buffer, and
 // unpredictable control keys fall back to the live post-write screen so new
 // user input still trips the next arbitration check.
-func (r *Registry) observePostWriteInput(jobID, tabID, buffered string, cursor int, args sendKeysArgs, encoded []byte) {
+func (r *Registry) observePostWriteInput(jobID, tabID, buffered string, cursor int, predictable bool, args sendKeysArgs, encoded []byte) {
 	state := r.state(jobID)
-	if args.Paste {
-		if args.Enter {
-			state.observeInput(tabID, "", 0)
-			return
-		}
-		if predicted, predictedCursor, ok := predictedInput(buffered, cursor, []byte(args.Keys)); ok {
+	if predictable {
+		if args.Paste {
+			if args.Enter {
+				state.observeInput(tabID, "", 0)
+				return
+			}
+			if predicted, predictedCursor, ok := predictedInput(buffered, cursor, []byte(args.Keys)); ok {
+				state.observeInput(tabID, predicted, predictedCursor)
+				return
+			}
+		} else if predicted, predictedCursor, ok := predictedInput(buffered, cursor, encoded); ok {
 			state.observeInput(tabID, predicted, predictedCursor)
 			return
 		}
-	} else if predicted, predictedCursor, ok := predictedInput(buffered, cursor, encoded); ok {
-		state.observeInput(tabID, predicted, predictedCursor)
-		return
 	}
-	if screen, err := r.deps.Terminal.Snapshot(context.Background(), tabID); err == nil {
-		observed, observedCursor := TerminalInputCursor(screen)
-		state.observeInput(tabID, observed, observedCursor)
+	ctx := context.Background()
+	if screen, err := r.deps.Terminal.Snapshot(ctx, tabID); err == nil {
+		commandState, stateErr := r.commandState(ctx, tabID)
+		r.observeArbitrationInput(jobID, tabID, screen, stateErr == nil && commandState.Running)
 	}
 }
 
@@ -1129,14 +1502,22 @@ func withSubmissionProof(screen Screen, snapshotErr error, result Output) Output
 	return result
 }
 
-// screenAnchorSuffix reports the post-write screen sequence so the caller can
-// anchor a wait_for since_seq read; it degrades to empty when unavailable.
-func screenAnchorSuffix(ctx context.Context, terminal Terminal, tabID string) string {
-	screen, err := terminal.Snapshot(ctx, tabID)
-	if err != nil || screen.Seq == 0 {
-		return ""
+// takeoverWriteError refuses a chat-agent terminal write while a takeover
+// owns the tab, so the two never type into the same input line at once.
+func (r *Registry) takeoverWriteError(tabID string) error {
+	if r.deps.TakeoverActive != nil && r.deps.TakeoverActive(tabID) {
+		return ErrTakeoverActive
 	}
-	return fmt.Sprintf("（屏幕序号 %d）", screen.Seq)
+	return nil
+}
+
+// anchorBeyondLatest rejects an output anchor newer than the tab's latest
+// sequence: the stream would clamp it and silently read nothing.
+func anchorBeyondLatest(sinceSeq, latest uint64) error {
+	if sinceSeq > latest {
+		return invalid("since_seq=%d 超过该终端的最新序号 %d；它可能是另一个终端的锚点，请先 read_screen 获取该终端的屏幕序号", sinceSeq, latest)
+	}
+	return nil
 }
 
 func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope, call Call) Output {
@@ -1537,6 +1918,17 @@ func (r *Registry) terminalRename(ctx context.Context, jobID string, scope Scope
 	return OK(fmt.Sprintf("已将终端标签页 %s 重命名为「%s」", tabID, args.Title))
 }
 
+// sendKeysWriteTimeout bounds the write phase of one send_keys call (gate
+// wait plus channel write).
+var sendKeysWriteTimeout = 20 * time.Second
+
+func sendKeysSubmitDelay(args sendKeysArgs) time.Duration {
+	if args.SubmitDelayMS > 0 {
+		return time.Duration(args.SubmitDelayMS) * time.Millisecond
+	}
+	return time.Duration(defaultSubmitDelayMS) * time.Millisecond
+}
+
 const (
 	maxSendKeysWaitMS = 10_000
 	busyReturnGraceMS = 1_500
@@ -1677,7 +2069,7 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 	if args.Mode != "" && args.Mode != "any" && args.Mode != "all" {
 		return Fail(invalid("mode 必须为 any 或 all"))
 	}
-	if args.Pattern == nil && args.QuietMS == 0 && args.Lines == 0 {
+	if (args.Pattern == nil || *args.Pattern == "") && args.QuietMS == 0 && args.Lines == 0 {
 		return Fail(invalid("pattern 不能为空；仅 quiet_ms 大于 0 或 lines 大于 0 时可以省略"))
 	}
 	if args.TabID != "" && len(args.TabIDs) > 0 {
@@ -1691,10 +2083,14 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 	if args.Pattern != nil {
 		pattern = *args.Pattern
 	}
-	regex, err := regexp.Compile(pattern)
+	regex, err := CompileWaitPattern(pattern)
 	if err != nil {
 		return Fail(invalid("正则无效: %v", err))
 	}
+	// Every step, tab resolution included, runs under the wait deadline so
+	// the call always ends with its structured outcome within timeout_ms.
+	waitContext, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
+	defer cancel()
 	if args.Lines > 0 || len(args.TabIDs) > 1 {
 		mode := args.Mode
 		if mode == "" {
@@ -1704,16 +2100,22 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 		if len(tabIDs) == 0 {
 			tabIDs = []string{args.TabID}
 		}
-		waitContext, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
-		defer cancel()
 		var matcher *regexp.Regexp
 		if pattern != "" {
 			matcher = regex
 		}
-		return r.waitForTabs(waitContext, jobID, scope, tabIDs, matcher, pattern, args.Lines, args.QuietMS, mode, args.SinceSeq)
+		result := r.waitForTabs(waitContext, jobID, scope, tabIDs, matcher, pattern, args.Lines, args.QuietMS, mode, args.SinceSeq)
+		if matcher != nil && result.Wait != nil {
+			result.Notes += "; the pattern was matched only against output produced after each tab's anchor, not against text already on screen"
+			result.Text += "；pattern 仅匹配各标签锚点之后的新输出，不匹配已在屏幕上的内容"
+		}
+		return result
 	}
-	tabID, err := r.resolveReadableTab(ctx, jobID, scope, args.TabID)
+	tabID, err := r.waitResolveTab(waitContext, jobID, scope, args.TabID)
 	if err != nil {
+		if waitContext.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+			return legacyWaitTimeoutOutput(args.TabID, nil, Screen{})
+		}
 		return Fail(err)
 	}
 	if args.QuietMS > 0 {
@@ -1721,21 +2123,21 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 			return Fail(errors.New("该终端不支持同步安静快照"))
 		}
 	}
-	waitContext, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
-	defer cancel()
 	if args.SinceSeq > 0 {
-		return r.waitForNewOutput(waitContext, tabID, regex, args.SinceSeq, args.QuietMS)
+		return r.waitForNewOutput(waitContext, tabID, regex, pattern, args.SinceSeq, args.QuietMS)
 	}
 	ticker := time.NewTicker(r.deps.pollInterval())
 	defer ticker.Stop()
+	var lastTail []string
+	var lastScreen Screen
 	for {
 		screen, snapshotErr := r.waitSnapshot(waitContext, tabID, args.QuietMS > 0)
 		if snapshotErr != nil {
 			// The wait budget exhausted mid-snapshot is the wait's own
-			// timeout: surface the structured timeout output, not a raw
-			// context error.
+			// timeout: surface the structured timeout output with the last
+			// observed screen, not a raw context error.
 			if waitContext.Err() == context.DeadlineExceeded && ctx.Err() == nil {
-				return legacyWaitTimeoutOutput(tabID, nil, Screen{})
+				return legacyWaitTimeoutOutput(tabID, lastTail, lastScreen)
 			}
 			return Fail(snapshotErr)
 		}
@@ -1746,7 +2148,8 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 		if len(tail) > 30 {
 			tail = tail[len(tail)-30:]
 		}
-		if regex.MatchString(strings.Join(tail, "\n")) && (args.QuietMS == 0 || screen.IdleMS >= args.QuietMS) {
+		lastTail, lastScreen = tail, screen
+		if MatchWaitLines(regex, tail) && (args.QuietMS == 0 || screen.IdleMS >= args.QuietMS) {
 			output := OK(waitSatisfiedText(pattern, screen.IdleMS, args.QuietMS))
 			output.Wait = &WaitOutcome{Mode: "single", Satisfied: true, Tabs: []WaitTabOutcome{{
 				TabID: tabID, Matched: true, IdleMS: screen.IdleMS, ToSeq: screen.Seq, Note: "匹配自可见屏幕尾部，无输出锚点",
@@ -1784,11 +2187,35 @@ func waitSatisfiedText(pattern string, idleMS, quietMS int64) string {
 	return fmt.Sprintf("模式已出现，终端已安静 %dms（要求 %dms）", idleMS, quietMS)
 }
 
+// waitSnapshot reads the wait target's screen, bounded by ctx even when the
+// terminal read itself blocks.
 func (r *Registry) waitSnapshot(ctx context.Context, tabID string, synchronized bool) (Screen, error) {
-	if synchronized {
-		return r.deps.Terminal.(WaitSnapshotTerminal).WaitSnapshot(ctx, tabID)
+	return boundedCall(ctx, func() (Screen, error) {
+		if synchronized {
+			return r.deps.Terminal.(WaitSnapshotTerminal).WaitSnapshot(ctx, tabID)
+		}
+		return r.deps.Terminal.Snapshot(ctx, tabID)
+	})
+}
+
+// waitOutputSince reads output after seq for a wait, bounded by ctx.
+func (r *Registry) waitOutputSince(ctx context.Context, tabID string, seq uint64, maxBytes int) ([]byte, uint64, uint64, error) {
+	type page struct {
+		data          []byte
+		start, latest uint64
 	}
-	return r.deps.Terminal.Snapshot(ctx, tabID)
+	result, err := boundedCall(ctx, func() (page, error) {
+		data, start, latest, err := r.outputSince(ctx, tabID, seq, maxBytes)
+		return page{data: data, start: start, latest: latest}, err
+	})
+	return result.data, result.start, result.latest, err
+}
+
+// waitResolveTab resolves a wait target, bounded by ctx.
+func (r *Registry) waitResolveTab(ctx context.Context, jobID string, scope Scope, requested string) (string, error) {
+	return boundedCall(ctx, func() (string, error) {
+		return r.resolveReadableTab(ctx, jobID, scope, requested)
+	})
 }
 
 // waitForNewOutput matches only output produced after the anchor sequence, so
@@ -1796,7 +2223,7 @@ func (r *Registry) waitSnapshot(ctx context.Context, tabID string, synchronized 
 // advances through the new output in bounded windows, carrying an overlap so
 // patterns spanning a window seam still match; every byte after the anchor is
 // scanned at least once (evicted bytes are flagged in the timeout output).
-func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, regex *regexp.Regexp, sinceSeq uint64, quietMS int64) Output {
+func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, regex *regexp.Regexp, pattern string, sinceSeq uint64, quietMS int64) Output {
 	cols, rows := 80, 24
 	if screen, err := r.waitSnapshot(waitContext, tabID, quietMS > 0); err == nil {
 		cols, rows = screen.Cols, screen.Rows
@@ -1809,10 +2236,19 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 	gap := false
 	matched := false
 	toSeq := sinceSeq
+	first := true
 	for {
-		data, start, latest, err := r.outputSince(waitContext, tabID, scanPos, waitScanBytes)
+		data, start, latest, err := r.waitOutputSince(waitContext, tabID, scanPos, waitScanBytes)
 		if err != nil {
-			return Fail(err)
+			if waitContext.Err() != context.DeadlineExceeded {
+				return Fail(err)
+			}
+			data, start, latest = nil, scanPos, toSeq
+		} else if first {
+			if err := anchorBeyondLatest(sinceSeq, latest); err != nil {
+				return Fail(err)
+			}
+			first = false
 		}
 		toSeq = latest
 		if start > scanPos {
@@ -1820,7 +2256,7 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 		}
 		window := append(carry, data...)
 		rendered := renderOutputDiff(window, cols, rows)
-		matched = matched || regex.MatchString(strings.Join(rendered, "\n"))
+		matched = matched || MatchWaitLines(regex, rendered)
 		if matched && quietMS == 0 {
 			output := OK(fmt.Sprintf("模式已出现（新输出，屏幕序号 %d）", latest))
 			output.Wait = &WaitOutcome{Mode: "single", Satisfied: true, Tabs: []WaitTabOutcome{{
@@ -1830,11 +2266,11 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 		}
 		if matched && quietMS > 0 {
 			screen, snapshotErr := r.waitSnapshot(waitContext, tabID, quietMS > 0)
-			if snapshotErr != nil {
+			if snapshotErr != nil && waitContext.Err() != context.DeadlineExceeded {
 				return Fail(snapshotErr)
 			}
-			if screen.IdleMS >= quietMS {
-				output := OK(fmt.Sprintf("%s（新输出，屏幕序号 %d）", waitSatisfiedText(regex.String(), screen.IdleMS, quietMS), latest))
+			if snapshotErr == nil && screen.IdleMS >= quietMS {
+				output := OK(fmt.Sprintf("%s（新输出，屏幕序号 %d）", waitSatisfiedText(pattern, screen.IdleMS, quietMS), latest))
 				output.Wait = &WaitOutcome{Mode: "single", Satisfied: true, Tabs: []WaitTabOutcome{{
 					TabID: tabID, Matched: true, IdleMS: screen.IdleMS, FromSeq: sinceSeq, ToSeq: latest,
 				}}}

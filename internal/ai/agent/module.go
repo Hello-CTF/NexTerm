@@ -262,6 +262,16 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "ai_run_settings_get", func(ctx context.Context, _ *ipc.Call, _ struct{}) (RunSettings, error) {
+				return r.RunSettings(ctx)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_run_settings_set", func(ctx context.Context, _ *ipc.Call, input RunSettingsInput) (RunSettings, error) {
+				return r.SetRunSettings(ctx, input)
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "ai_grant_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]guard.DeviceGrant, error) {
 				if r.config.Grants == nil {
 					return nil, ipc.NewError(ipc.CodeUnsupported, "设备授权未配置")

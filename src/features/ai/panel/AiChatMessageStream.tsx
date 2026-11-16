@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { modelApi } from "../../../ipc/commands";
 import { IconAlert, IconRefresh, IconBot, IconShield, IconInfo, IconList } from "../../../ui/icons";
 import { useUi } from "../../../app/store";
@@ -6,6 +6,7 @@ import { PLAN_EXECUTE_MESSAGE, confirmTitle, toolLabel, CONFIRM_HELP, permanentS
 import { CONFIRM_ACTION_LABELS, CONFIRM_ALWAYS_BLOCK_LABEL } from "./aiConfirmLabels";
 import { ChatBubble, ConfirmBody, ProductionEnvironmentChallenge } from "./AiMessageBubbles";
 import type { AiChatCtx } from "./aiChatCtx";
+import { continuableOutcomeId, useContinueRun } from "./continueRun";
 import { t as tr } from "../../../i18n";
 
 // Onboarding: with no model profile the composer cannot work, so the empty
@@ -38,6 +39,8 @@ function NoModelHint({ onConfigure }: { onConfigure: () => void }) {
 
 export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
   const { setScrollEl, messageWindowStart, loadOlderMessages, conv, conversationError, conversationIdRef, restoreConversation, virtual, activeMatchIndex, busy, handleApprovePlan, handleRetryRun, handleEditResend, agentToolCallFor, submitAgentApproval, submittingCardId, confirmCard, confirmCardRef, confirm, productionNames, handleProductionState, productionBlocked, questionCard, answer, questionInput, setQuestionInput, follow, setModelPanelOpen } = ctx;
+  const continueRun = useContinueRun(ctx);
+  const continuableId = useMemo(() => continuableOutcomeId(conv.items), [conv.items]);
   return (
     <>
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -110,6 +113,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                   planApproved={planApproved}
                   onApprovePlan={handleApprovePlan}
                   onRetry={handleRetryRun}
+                  onContinue={!busy && item.id === continuableId ? continueRun : undefined}
                   onEdit={handleEditResend}
                   agentToolCall={item.role === "tool" ? agentToolCallFor(item) : null}
                   onAgentApproval={submitAgentApproval}

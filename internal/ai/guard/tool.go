@@ -13,7 +13,7 @@ func ClassifyTool(name string, args json.RawMessage, config Config) Ruling {
 		return ruling
 	}
 	if matchDangerArgs(args, config.DangerRules) {
-		return Worst(ruling, Dangerous("工具参数命中自定义危险规则"))
+		return Worst(ruling, CustomRuleHit("工具参数命中自定义危险规则"))
 	}
 	return ruling
 }
@@ -72,7 +72,7 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 		return Allow()
 	case "write_file", "edit_file":
 		if matchDangerRule(stringField(fields, "path"), config.DangerRules) {
-			return Dangerous("文件路径命中自定义危险规则")
+			return CustomRuleHit("文件路径命中自定义危险规则")
 		}
 		return Confirm(KindWriteFS, "写入或编辑文件")
 	case "exec_commands":
@@ -100,7 +100,7 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 	case "docker_exec":
 		result := Confirm(KindDockerMutate, "容器内执行命令")
 		if matchDangerRule(stringField(fields, "container_id"), config.DangerRules) {
-			result = Worst(result, Dangerous("容器参数命中自定义危险规则"))
+			result = Worst(result, CustomRuleHit("容器参数命中自定义危险规则"))
 		}
 		return Worst(result, ClassifyCommand(stringField(fields, "cmd"), config.DangerRules))
 	case "docker_control":

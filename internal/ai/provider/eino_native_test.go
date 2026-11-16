@@ -78,10 +78,17 @@ func TestNativeStreamHonorsOverrideToolsFallbackAndMetadata(t *testing.T) {
 	servingModel := extraString(messages[0].Extra, MessageExtraServingModel)
 	contextWindow := extraUint64(messages[0].Extra, MessageExtraContextWindow)
 	for _, message := range messages[1:] {
-		if extraString(message.Extra, MessageExtraRunID) != runID || extraString(message.Extra, MessageExtraCallID) != callID ||
-			extraString(message.Extra, MessageExtraServingModel) != servingModel || extraUint64(message.Extra, MessageExtraContextWindow) != contextWindow {
-			t.Fatalf("frame metadata = %+v, want %s/%s/%s/%d", message.Extra, runID, callID, servingModel, contextWindow)
+		// String extras are concatenated by schema.ConcatMessages, so only the
+		// first frame may carry them.
+		if extraString(message.Extra, MessageExtraRunID) != "" || extraString(message.Extra, MessageExtraCallID) != "" ||
+			extraString(message.Extra, MessageExtraServingModel) != "" || extraUint64(message.Extra, MessageExtraContextWindow) != contextWindow {
+			t.Fatalf("later frame metadata = %+v", message.Extra)
 		}
+	}
+	if merged, err := schema.ConcatMessages(messages); err != nil ||
+		extraString(merged.Extra, MessageExtraRunID) != runID || extraString(merged.Extra, MessageExtraCallID) != callID ||
+		extraString(merged.Extra, MessageExtraServingModel) != servingModel {
+		t.Fatalf("merged metadata = %+v err=%v", merged, err)
 	}
 	if runID == "" || callID == "" || servingModel != "served-backup" || contextWindow != 1000 {
 		t.Fatalf("stream metadata = %s/%s/%s/%d", runID, callID, servingModel, contextWindow)
@@ -520,5 +527,15 @@ func TestProjectModelMessagesLeavesUnrecognizedJSONUntouched(t *testing.T) {
 	projected := ProjectModelMessages([]*schema.Message{message})
 	if projected[0].Content != content {
 		t.Fatalf("unrecognized JSON changed: %s", projected[0].Content)
+	}
+}
+
+func TestProjectOmissionMarkerOnlyRewritesTruncatedResults(t *testing.T) {
+	text := "head\n[... 已省略 3 行 / 40 字节 ...]\ntail"
+	if got := projectOmissionMarker(text, true); got != "head\n[... omitted 3 lines / 40 bytes ...]\ntail" {
+		t.Fatalf("truncated projection = %q", got)
+	}
+	if got := projectOmissionMarker(text, false); got != text {
+		t.Fatalf("untruncated output was rewritten: %q", got)
 	}
 }
