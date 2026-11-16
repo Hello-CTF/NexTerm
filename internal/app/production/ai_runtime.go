@@ -372,6 +372,10 @@ func (r *productionScopeResolver) resolve(ctx context.Context, scope tools.Scope
 		return tools.Scope{}, false, ipc.NewError(ipc.CodeUnsupported, "资产存储未配置")
 	}
 	var tabErr error
+	// tabMoved marks a persisted scope whose tab now lives under another
+	// session: a 持久终端 tab keeps its ID when it reattaches after a restart or
+	// from another machine, while the session ID changes.
+	tabMoved := false
 	if scope.TabID != "" {
 		tab, err := r.sessions.TabFor(validationCtx, scope.TabID)
 		if err != nil {
@@ -381,7 +385,10 @@ func (r *productionScopeResolver) resolve(ctx context.Context, scope tools.Scope
 			tabErr = productionScopeError(err)
 		} else {
 			if sessionID != "" && tab.SessionID != sessionID {
-				return tools.Scope{}, false, ipc.NewError(ipc.CodeForbidden, "AI 终端范围中的 session 与 tab 不匹配")
+				if !allowMissingSession {
+					return tools.Scope{}, false, ipc.NewError(ipc.CodeForbidden, "AI 终端范围中的 session 与 tab 不匹配")
+				}
+				tabMoved = true
 			}
 			sessionID = tab.SessionID
 		}
@@ -395,7 +402,8 @@ func (r *productionScopeResolver) resolve(ctx context.Context, scope tools.Scope
 				return tools.Scope{}, false, productionScopeError(sessionErr)
 			}
 		}
-		if sessionErr == nil && scope.AssetID != "" && connected.Asset().ID != scope.AssetID {
+		assetMatches := sessionErr == nil && (scope.AssetID == "" || connected.Asset().ID == scope.AssetID)
+		if sessionErr == nil && !assetMatches && !tabMoved {
 			return tools.Scope{}, false, ipc.NewError(ipc.CodeForbidden, "AI 终端范围中的 asset 与实际 session 不匹配")
 		}
 		if scope.AssetID != "" {
@@ -403,9 +411,13 @@ func (r *productionScopeResolver) resolve(ctx context.Context, scope tools.Scope
 				return tools.Scope{}, false, err
 			}
 		}
-		if sessionErr == nil && (scope.AssetID == "" || connected.Info().Status == session.StatusConnected) {
+		if assetMatches && (scope.AssetID == "" || connected.Info().Status == session.StatusConnected) {
 			if tabErr != nil {
 				return tools.Scope{}, false, tabErr
+			}
+			if tabMoved {
+				resolved.SessionID = sessionID
+				return resolved, true, r.validateDatabase(validationCtx, resolved.ConnID)
 			}
 			return scope, false, r.validateDatabase(validationCtx, scope.ConnID)
 		}
