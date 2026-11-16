@@ -259,6 +259,37 @@ describe("keyword highlight decorations", () => {
     expect(after.map((d) => d.x)).toEqual([2, 0]);
   });
 
+  it("keeps the current decorations on a rule or theme notification until the rescan replaces them", async () => {
+    stubMatchMedia();
+    term = new Terminal({ cols: 40, rows: 5, allowProposedApi: true });
+    const host = document.createElement("div");
+    document.body.append(host);
+    term.open(host);
+    let style: KeywordHighlightRule = rule("FAIL");
+    let notify = () => {};
+    highlighter = attachKeywordHighlight(term, {
+      rules: () => compileKeywordHighlights(settings(style)),
+      theme: () => "dark",
+      now: () => clock,
+      subscribe: (listener) => {
+        notify = listener;
+        return () => {};
+      },
+    });
+    await write(term, "a FAIL\r\n");
+    highlighter.scanNow();
+    const before = highlighter.rendered();
+    expect(before).toHaveLength(1);
+
+    notify();
+    expect(highlighter.rendered()).toEqual(before);
+
+    style = rule("FAIL", { foreground: "green" });
+    notify();
+    highlighter.scanNow();
+    expect(highlighter.rendered().map((d) => d.foreground)).toEqual([highlightForeground("green", "dark")]);
+  });
+
   it("pauses during an output burst and resumes once it quiets down", async () => {
     const { term, highlighter } = open([rule("FAIL")]);
     await write(term, Array.from({ length: BURST_LINES + 50 }, () => "y FAIL").join("\r\n"));

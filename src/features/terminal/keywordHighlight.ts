@@ -278,9 +278,10 @@ export function attachKeywordHighlight(term: Terminal, options: KeywordHighlight
     }
   };
 
+  // A new generation makes every line rescan with the new rules or theme; the old decorations stay until the scan
+  // replaces them, so the terminal never shows a frame without highlights.
   const restart = () => {
     generation++;
-    clear();
     schedule();
   };
 
@@ -372,7 +373,14 @@ export function attachSessionKeywordHighlight(
     visible: session.visible,
     subscribe: (listener) => {
       changed = listener;
-      const offRules = subscribeKeywordHighlights(listener);
+      // Every account preference refresh (each sync round) notifies; only a changed value rescans.
+      let settings = getKeywordHighlights();
+      const offRules = subscribeKeywordHighlights(() => {
+        const next = getKeywordHighlights();
+        if (next === settings) return;
+        settings = next;
+        listener();
+      });
       let theme = getResolvedTerminalTheme();
       const offTheme = subscribeAppearancePrefs(() => {
         const next = getResolvedTerminalTheme();
