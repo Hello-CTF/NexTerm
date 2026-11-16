@@ -23,7 +23,7 @@ export function Cwd({ cwd }: { cwd: string | null }) {
   if (!cwd) return null;
   return (
     <button
-      className="nx-badge max-w-[220px] truncate font-mono text-neutral-400 hover:text-neutral-100"
+      className="nx-badge nx-cwd max-w-[220px] truncate font-mono text-neutral-400 hover:text-neutral-100"
       title={t("工作目录：{cwd}\n单击复制完整路径", { cwd })}
       onClick={copy}
     >
