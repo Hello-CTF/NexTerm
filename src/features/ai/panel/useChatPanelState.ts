@@ -206,6 +206,23 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
     })();
   };
 
+  // Makes the chosen mode the default of every host without its own mode, and lets this host follow it, so one
+  // choice covers the other terminals the AI moves to.
+  const applyModeGlobally = (mode: AiPermissionConfig["mode"]) => {
+    void (async () => {
+      if (!permScope) return;
+      try {
+        const global = await aiApi.getPermission();
+        await aiApi.setPermission({ ...global, mode });
+        await aiApi.setPermission({ ...global, mode }, permScope, true);
+        setPermDeviceOverride(false);
+      } catch (e) {
+        pushToast("error", tr("未能保存权限设置：{value}", { value: describeError(e) }));
+      }
+      await loadPermission();
+    })();
+  };
+
   const slashQuery = /^\/([a-z0-9-]*)$/.exec(input)?.[1] ?? null;
   const modelQuery = /^\/model\s+(.*)$/i.exec(input)?.[1] ?? null;
   useEffect(() => {
@@ -324,7 +341,7 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
 
   const composeMessage = composeUserMessage;
 
-  return { isRestoreActive, leadingReplayJobIds, setConversationRuns, updateConversationId, clearMessageHistory, resetMessageHistory, permOpen, setPermOpen, setAtOpen, composeMessage, deletedConversationIdsRef, conversationRuns, inputRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, historyOpen, setHistoryOpen, setCompacting, compacting, slashQuery, modelQuery, modelOptions, skillOptions, searchOpen, setSearchOpen, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, conversations, runStatusByConv, permError, loadPermission, perm, permDeviceOverride, followGlobalMode, switchMode, setScrollEl, messageWindowStart, loadOlderMessages, virtual, activeMatchIndex, follow, slashIndex, setSlashIndex, atOpen, refCandidates, atItems, atIndex, setAtIndex, imageInputRef };
+  return { isRestoreActive, leadingReplayJobIds, setConversationRuns, updateConversationId, clearMessageHistory, resetMessageHistory, permOpen, setPermOpen, setAtOpen, composeMessage, deletedConversationIdsRef, conversationRuns, inputRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, historyOpen, setHistoryOpen, setCompacting, compacting, slashQuery, modelQuery, modelOptions, skillOptions, searchOpen, setSearchOpen, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, conversations, runStatusByConv, permError, loadPermission, perm, permDeviceOverride, followGlobalMode, switchMode, applyModeGlobally, setScrollEl, messageWindowStart, loadOlderMessages, virtual, activeMatchIndex, follow, slashIndex, setSlashIndex, atOpen, refCandidates, atItems, atIndex, setAtIndex, imageInputRef };
 }
 
 export type UseChatPanelStateOut = ReturnType<typeof useChatPanelState>;

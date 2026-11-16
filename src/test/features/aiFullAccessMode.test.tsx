@@ -28,7 +28,7 @@ afterEach(() => {
   mounted = undefined;
 });
 
-function renderPanels(perm: AiPermissionConfig, permScope?: string) {
+function renderPanels(perm: AiPermissionConfig, permScope?: string, applyModeGlobally = vi.fn()) {
   const switchMode = vi.fn();
   const ctx = {
     permOpen: true,
@@ -40,6 +40,7 @@ function renderPanels(perm: AiPermissionConfig, permScope?: string) {
     permDeviceOverride: false,
     followGlobalMode: vi.fn(),
     switchMode,
+    applyModeGlobally,
     planMode: false,
     setPlanMode: vi.fn(),
     aiScopeAssetId: undefined,
@@ -90,5 +91,23 @@ describe("full access permission mode", () => {
     await flushUntil(() => switchMode.mock.calls.length > 0);
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(switchMode).toHaveBeenCalledWith("silent");
+  });
+
+  it("makes a host's full access the global default after confirming for every host", async () => {
+    mocks.ask.mockResolvedValue(true);
+    const applyModeGlobally = vi.fn();
+    const switchMode = renderPanels({ mode: "full_access", dangerRules: [] }, "session-1", applyModeGlobally);
+    const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "设为全局默认");
+    if (!button) throw new Error("global default button not found");
+    click(button);
+    await flushUntil(() => applyModeGlobally.mock.calls.length > 0);
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("在所有未单独设置模式的主机上");
+    expect(applyModeGlobally).toHaveBeenCalledWith("full_access");
+    expect(switchMode).not.toHaveBeenCalled();
+  });
+
+  it("offers the global default only for a per-host mode", () => {
+    renderPanels({ mode: "full_access", dangerRules: [] });
+    expect([...document.querySelectorAll("button")].some((item) => item.textContent === "设为全局默认")).toBe(false);
   });
 });
