@@ -67,7 +67,10 @@ describe("choosing a model in the AI panel", () => {
 
     click(chip(first));
     await flush();
-    expect(menuItem(first, "Work").querySelector(".nx-menu-hint")?.textContent).toBe("默认");
+    // The default profile keeps its model name next to the default mark.
+    expect(menuItem(first, "Work").querySelector(".nx-menu-hint")?.textContent).toBe("默认 · a-model");
+    expect(menuItem(first, "Fast").querySelector(".nx-menu-hint")?.textContent).toBe("b-model");
+    expect(chip(first).title).toContain("Work · a-model");
     click(menuItem(first, "Fast"));
     await flush();
 

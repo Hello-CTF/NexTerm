@@ -89,7 +89,7 @@ export function ModelSelector({ onManage, tabKey = "" }: { onManage: () => void;
       <button
         ref={chipRef}
         className="nx-chip pointer-coarse:min-h-6 max-w-full min-w-0"
-        title={t("模型配置（可保存多份模型档案）")}
+        title={active?.model ? `${active.name} · ${active.model}\n${t("模型配置（可保存多份模型档案）")}` : t("模型配置（可保存多份模型档案）")}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={toggle}
@@ -135,7 +135,7 @@ export function ModelSelector({ onManage, tabKey = "" }: { onManage: () => void;
                 </span>
                 <span className="nx-menu-label">{p.name}</span>
                 <span className="nx-menu-hint">
-                  {view.activeId === p.id ? t("默认") : p.model}
+                  {view.activeId === p.id ? (p.model ? `${t("默认")} · ${p.model}` : t("默认")) : p.model}
                 </span>
               </button>
             ))
