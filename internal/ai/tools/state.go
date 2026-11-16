@@ -136,7 +136,7 @@ type screenRead struct {
 	alt        bool
 }
 
-// swapScreenRead records the read and returns the one before it.
+// swapScreenRead records the read in this job and returns the one before it.
 func (s *jobState) swapScreenRead(tabID string, read screenRead) (screenRead, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

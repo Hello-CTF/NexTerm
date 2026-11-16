@@ -269,6 +269,8 @@ func (r *Runner) setupEino(current *job, assembleInput bool) error {
 	runtime := &einoRuntime{contextWindow: contextWindow, maxTurns: r.maxTurns(current.ctx)}
 	current.eino = runtime
 	compaction := newCompactionHandler(chatModel, contextWindow, func() {
+		// The compacted history may no longer hold the earlier screen reads a repeat read_screen would build on.
+		r.config.Tools.ForgetScreenReads(current.args.ConversationID)
 		current.queueEmits(statusEvent("compacting", runtime.currentTurn()))
 	}, func(message *schema.Message, latency time.Duration) error {
 		return r.emitUsageChannel(current, message, latency, "summary")

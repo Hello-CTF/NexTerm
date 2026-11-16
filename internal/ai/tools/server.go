@@ -1138,7 +1138,7 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 		}
 		header += "\n" + line
 	}
-	previous, seen := r.state(jobID).swapScreenRead(tabID, screenRead{seq: screen.Seq, cols: screen.Cols, rows: screen.Rows, alt: screen.AltScreen})
+	previous, seen := r.swapScreenRead(ctx, jobID, tabID, screenRead{seq: screen.Seq, cols: screen.Cols, rows: screen.Rows, alt: screen.AltScreen})
 	// A full-screen program redraws its whole screen, so its screen is its state. On a normal screen the lines above
 	// the prompt are earlier commands the model already read: a repeat read in the same buffer and geometry returns
 	// only what was printed since.

@@ -101,3 +101,23 @@ func TestCompactConversationRefusesShortOrBusyConversations(t *testing.T) {
 	delete(runner.jobs, "busy-job")
 	runner.mu.Unlock()
 }
+
+func TestCompactAndDeleteForgetTheConversationScreenReads(t *testing.T) {
+	runner, storage, _ := compactTestRunner(t, "已检查")
+	conversationID := seedConversation(t, storage, 3)
+	runner.config.Tools.RememberScreenReadForTest(conversationID, "tab", 7)
+	if _, err := runner.CompactConversation(context.Background(), conversationID); err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.config.Tools.RememberedScreenReads(conversationID); got != 0 {
+		t.Fatalf("after compaction %d screen reads are still remembered", got)
+	}
+
+	runner.config.Tools.RememberScreenReadForTest(conversationID, "tab", 9)
+	if err := runner.DeleteConversation(context.Background(), conversationID, func(context.Context) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.config.Tools.RememberedScreenReads(conversationID); got != 0 {
+		t.Fatalf("after deletion %d screen reads are still remembered", got)
+	}
+}
