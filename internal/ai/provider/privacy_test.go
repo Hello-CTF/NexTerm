@@ -569,3 +569,40 @@ func TestPrivacyFailureNamesTheModelOnlyForModelErrors(t *testing.T) {
 		t.Fatalf("non-model failure = %q", err)
 	}
 }
+
+func TestPrivacyProfileOverrideWinsOverTheGlobalSwitch(t *testing.T) {
+	// The resolver behaves like the privacy manager with the global switch off: it redacts only a forced request.
+	globalOff := WithPrivacy(func(ctx context.Context) (*privacy.Exchange, error) {
+		if !privacy.ForceEnabled(ctx) {
+			return nil, nil
+		}
+		return privacy.NewScopedExchange(privateValues("secret"), [32]byte{1})
+	})
+	globalOn := privacyOption(privateValues("secret"))
+	for _, test := range []struct {
+		name     string
+		options  []Option
+		redacted bool
+	}{
+		{name: "follow off", options: []Option{globalOff}},
+		{name: "forced on", options: []Option{WithPrivacyOverride(PrivacyOn), globalOff}, redacted: true},
+		{name: "follow on", options: []Option{globalOn}, redacted: true},
+		{name: "forced off", options: []Option{globalOn, WithPrivacyOverride(PrivacyOff)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var received atomic.Value
+			client := privacyClient(t, func(w http.ResponseWriter, r *http.Request) {
+				data, _ := io.ReadAll(r.Body)
+				received.Store(string(data))
+				writePrivacyBlock(w, "ok", nil)
+			}, test.options...)
+			if _, err := client.ChatBlock(t.Context(), ChatRequest{Messages: []ChatMessage{UserMessage("the secret value")}}); err != nil {
+				t.Fatal(err)
+			}
+			body, _ := received.Load().(string)
+			if got := !strings.Contains(body, "secret value"); got != test.redacted {
+				t.Fatalf("redacted = %v, want %v; body %s", got, test.redacted, body)
+			}
+		})
+	}
+}

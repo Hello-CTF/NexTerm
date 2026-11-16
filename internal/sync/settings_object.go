@@ -39,8 +39,9 @@ type aiProfileRecord struct {
 	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
 	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`
 
-	CircuitFailureThreshold *int `json:"circuitFailureThreshold,omitempty"`
-	CircuitCooldownSeconds  *int `json:"circuitCooldownSeconds,omitempty"`
+	CircuitFailureThreshold *int   `json:"circuitFailureThreshold,omitempty"`
+	CircuitCooldownSeconds  *int   `json:"circuitCooldownSeconds,omitempty"`
+	Privacy                 string `json:"privacy,omitempty"`
 }
 
 type aiProfilesState struct {
@@ -57,6 +58,7 @@ func aiProfileRecordFromPayload(payload aiProfileObject) aiProfileRecord {
 		ContextWindow:   payload.ContextWindow, MaxTokens: payload.MaxTokens, Proxy: payload.Proxy, Stream: payload.Stream,
 		RequestTimeoutSeconds: payload.RequestTimeoutSeconds, IdleTimeoutSeconds: payload.IdleTimeoutSeconds,
 		CircuitFailureThreshold: payload.CircuitFailureThreshold, CircuitCooldownSeconds: payload.CircuitCooldownSeconds,
+		Privacy: payload.Privacy,
 	}
 }
 
@@ -68,7 +70,7 @@ func aiProfilePayloadFromRecord(record aiProfileRecord, updatedAt int64) aiProfi
 		ContextWindow:   record.ContextWindow, MaxTokens: record.MaxTokens, Proxy: record.Proxy, Stream: record.Stream,
 		RequestTimeoutSeconds: record.RequestTimeoutSeconds, IdleTimeoutSeconds: record.IdleTimeoutSeconds,
 		CircuitFailureThreshold: record.CircuitFailureThreshold, CircuitCooldownSeconds: record.CircuitCooldownSeconds,
-		UpdatedAt: updatedAt,
+		Privacy: record.Privacy, UpdatedAt: updatedAt,
 	}
 }
 

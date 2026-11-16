@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import type { ModelProfile } from "../ipc/commands";
-import { click, clickButton, flush, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { chooseSelectOption, click, clickButton, flush, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   overview: vi.fn(),
@@ -183,6 +183,24 @@ describe("ModelManager AI-1 profile fields", () => {
     await flush();
 
     expect(savedPayload()).toMatchObject({ id: "m-deepseek", circuitFailureThreshold: 7 });
+  });
+
+  it("saves the profile's redaction override and leaves it out while following the global switch", async () => {
+    await mountManager({ ...demoProfile(), privacy: "off" });
+
+    chooseSelectOption(view!.container, "AI 信息脱敏", "始终开启");
+    await flush();
+    expect(view!.container.textContent).toContain("有未保存的修改");
+    clickButton(view!.container, "保存");
+    await flush();
+    expect(savedPayload()).toMatchObject({ id: "m-deepseek", privacy: "on" });
+
+    mocks.save.mockClear();
+    chooseSelectOption(view!.container, "AI 信息脱敏", "跟随全局设置");
+    await flush();
+    clickButton(view!.container, "保存");
+    await flush();
+    expect(savedPayload()).not.toHaveProperty("privacy");
   });
 
   it("new profiles start with unlimited output and empty circuit-breaker settings; circuit status is queried only after save", async () => {

@@ -95,7 +95,11 @@ proxy: string | null, stream: boolean,
 fallbackModel?: string | null,
 maxTokens?: number | null,
 requestTimeoutSeconds?: number | null, idleTimeoutSeconds?: number | null,
-circuitFailureThreshold?: number | null, circuitCooldownSeconds?: number | null, };
+circuitFailureThreshold?: number | null, circuitCooldownSeconds?: number | null,
+// Overrides the global AI redaction switch for this profile; absent or "" follows it.
+privacy?: ModelPrivacyOverride, };
+
+export type ModelPrivacyOverride = "" | "on" | "off";
 
 export type ModelListDto = { models: Array<string>, malformed: number, };
 
@@ -228,7 +232,7 @@ fingerprint: string, addedAt: number, };
 export type SyncCollectAIProfile = { id: string, name: string, baseUrl: string, model: string,
 fallbackModel?: string, temperature?: number, reasoningEffort?: string, contextWindow: number, maxTokens?: number,
 proxy: string | null, stream: boolean, requestTimeoutSeconds?: number, idleTimeoutSeconds?: number,
-circuitFailureThreshold?: number, circuitCooldownSeconds?: number,
+circuitFailureThreshold?: number, circuitCooldownSeconds?: number, privacy?: string,
 updatedAt: number, apiKey?: string, apiKeySet: boolean, apiKeyState: SyncCollectSecretState, };
 
 export type SyncCollectAssetsResult = { assets: SyncCollectAsset[], hasMore: boolean, nextAfterId?: string, };

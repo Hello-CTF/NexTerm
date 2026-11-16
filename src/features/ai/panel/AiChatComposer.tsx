@@ -9,14 +9,14 @@ import { ModelSelector } from "../ModelSelector";
 import { UsageRing } from "../UsageRing";
 import { modelApi } from "../../../ipc/commands";
 import { ModelPanel } from "../ModelPanel";
-import { PrivacyIndicator, usePrivacyGuard } from "../PrivacyIndicator";
+import { PrivacyIndicator, useChatProfilePrivacy, usePrivacyGuard } from "../PrivacyIndicator";
 import { acknowledgePrivacyImageNotice, PRIVACY_IMAGE_NOTICE, usePrivacyImageNoticeSeen } from "../privacyImageNotice";
 import { PLAN_MODE_HINT, statusText, MODE_LABEL } from "./aiSidebarShared";
 import type { AiChatCtx } from "./aiChatCtx";
 import { t } from "../../../i18n";
 
 export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
-  const privacyGuard = usePrivacyGuard();
+  const privacyGuard = usePrivacyGuard(useChatProfilePrivacy(ctx.tabKey));
   const imageNoticeSeen = usePrivacyImageNoticeSeen();
   const { planMode, editing, editSubmitting, input, submitEditResend, setEditing, activeRun, stop, follow, syncNotice, activeGeneration, activeRunRef, resyncRun, busy, hitlWaiting, conv, aiScopeProduction, refs, setRefs, images, setImages, slashMenuOpen, slashItems, slashEmptyText, slashIndex, setSlashIndex, modelQuery, skillOptions, atOpen, atItems, atIndex, setAtIndex, pickRef, inputRef, sessionId, onInputChange, onPaste, setAtOpen, steer, send, setModelPanelOpen, imageInputRef, onPickImages, conversationRuns, perm, permOpen, permError, permScope, setPermOpen, tabId, bindings, reclaimKeyLabel, runTakeover, modelPanelOpen, setInput } = ctx;
   // A prompt queued elsewhere (the jump palette's "ask AI" row) prefills the visible composer; it is never sent.

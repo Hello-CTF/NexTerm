@@ -51,7 +51,7 @@ func fullTestAIProfile(id string) aiProfileObject {
 		Model: "model-x", FallbackModel: "model-y", Temperature: testPtr(0.7), ReasoningEffort: "high", ContextWindow: 128000,
 		MaxTokens: testPtr(4096), Proxy: testPtr("http://proxy.example.com:8080"), Stream: true,
 		RequestTimeoutSeconds: testPtr(120), IdleTimeoutSeconds: testPtr(30),
-		CircuitFailureThreshold: testPtr(5), CircuitCooldownSeconds: testPtr(60),
+		CircuitFailureThreshold: testPtr(5), CircuitCooldownSeconds: testPtr(60), Privacy: "on",
 		UpdatedAt: 100,
 	}
 }
@@ -494,7 +494,8 @@ func TestApplyAIProfileRoundtripPreservesFieldsAndSealsKey(t *testing.T) {
 		record.RequestTimeoutSeconds == nil || *record.RequestTimeoutSeconds != *payload.RequestTimeoutSeconds ||
 		record.IdleTimeoutSeconds == nil || *record.IdleTimeoutSeconds != *payload.IdleTimeoutSeconds ||
 		record.CircuitFailureThreshold == nil || *record.CircuitFailureThreshold != *payload.CircuitFailureThreshold ||
-		record.CircuitCooldownSeconds == nil || *record.CircuitCooldownSeconds != *payload.CircuitCooldownSeconds {
+		record.CircuitCooldownSeconds == nil || *record.CircuitCooldownSeconds != *payload.CircuitCooldownSeconds ||
+		record.Privacy != payload.Privacy {
 		t.Fatalf("profile fields not preserved: %+v", record)
 	}
 	if !strings.HasPrefix(record.APIKey, store.SecretEnvelopePrefix) {
@@ -671,7 +672,8 @@ func TestApplyAIProfileReadableByProfilesManager(t *testing.T) {
 		profile.RequestTimeoutSeconds == nil || *profile.RequestTimeoutSeconds != *payload.RequestTimeoutSeconds ||
 		profile.IdleTimeoutSeconds == nil || *profile.IdleTimeoutSeconds != *payload.IdleTimeoutSeconds ||
 		profile.CircuitFailureThreshold == nil || *profile.CircuitFailureThreshold != *payload.CircuitFailureThreshold ||
-		profile.CircuitCooldownSeconds == nil || *profile.CircuitCooldownSeconds != *payload.CircuitCooldownSeconds {
+		profile.CircuitCooldownSeconds == nil || *profile.CircuitCooldownSeconds != *payload.CircuitCooldownSeconds ||
+		string(profile.Privacy) != payload.Privacy {
 		t.Fatalf("manager sees drifted fields: %+v", profile)
 	}
 	config, ok, err := manager.ActiveConfig(ctx)

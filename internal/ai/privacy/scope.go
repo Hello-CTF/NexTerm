@@ -23,6 +23,20 @@ func conversationFromContext(ctx context.Context) string {
 	return ConversationID(ctx)
 }
 
+type forceEnabledContextKey struct{}
+
+// WithForceEnabled marks a request whose model profile turns redaction on
+// regardless of the owner's global switch.
+func WithForceEnabled(ctx context.Context) context.Context {
+	return context.WithValue(ctx, forceEnabledContextKey{}, true)
+}
+
+// ForceEnabled reports whether WithForceEnabled marked the request.
+func ForceEnabled(ctx context.Context) bool {
+	forced, _ := ctx.Value(forceEnabledContextKey{}).(bool)
+	return forced
+}
+
 // ConversationID returns the conversation scope attached after authorization.
 func ConversationID(ctx context.Context) string {
 	id, _ := ctx.Value(conversationContextKey{}).(string)

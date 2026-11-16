@@ -494,6 +494,7 @@ export type CollectAIProfile = {
   idleTimeoutSeconds?: number | null;
   circuitFailureThreshold?: number | null;
   circuitCooldownSeconds?: number | null;
+  privacy?: string;
   updatedAt: number;
   apiKey?: string | null;
   apiKeySet: boolean;

@@ -42,12 +42,13 @@ func DefaultTimeouts() Timeouts {
 type Option func(*clientOptions)
 
 type clientOptions struct {
-	privacy  func(context.Context) (*privacy.Exchange, error)
-	timeouts Timeouts
-	retry    RetryPolicy
-	circuit  *CircuitBreaker
-	sleep    func(context.Context, time.Duration) error
-	random   func() float64
+	privacy         func(context.Context) (*privacy.Exchange, error)
+	privacyOverride PrivacyOverride
+	timeouts        Timeouts
+	retry           RetryPolicy
+	circuit         *CircuitBreaker
+	sleep           func(context.Context, time.Duration) error
+	random          func() float64
 }
 
 func WithTimeouts(timeouts Timeouts) Option {
@@ -128,7 +129,7 @@ func NewClient(config Config, options ...Option) (*Client, error) {
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 	return &Client{
-		privacy:  settings.privacy,
+		privacy:  resolvePrivacy(settings.privacy, settings.privacyOverride),
 		config:   config,
 		http:     &http.Client{Transport: &wireTransport{base: transport, idle: settings.timeouts.Idle}},
 		timeouts: settings.timeouts,

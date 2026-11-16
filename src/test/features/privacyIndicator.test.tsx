@@ -13,7 +13,7 @@ vi.mock("../../ipc/commands", () => ({
 }));
 vi.mock("../../app/store", () => ({ useUi: { getState: () => ({ addTab: mocks.addTab }) } }));
 vi.mock("../../features/settings/settingsNavigation", () => ({ showSettingsSection: mocks.show }));
-import { PrivacyIndicator, usePrivacyGuard } from "../../features/ai/PrivacyIndicator";
+import { PrivacyIndicator, privacyGuardFor, usePrivacyGuard } from "../../features/ai/PrivacyIndicator";
 
 const status = (patch: Partial<PrivacyStatus>): PrivacyStatus => ({
   config: { enabled: true, precision: "int8", revision: "a".repeat(40), version: "v0.1.3" },
@@ -61,5 +61,24 @@ describe("AI chat privacy indicator", () => {
     mounted = mount(createElement(Probe));
     await waitForRendered(() => expect(mocks.status).toHaveBeenCalled());
     expect(mounted.container.querySelector('[aria-label^="脱敏"]')).toBeNull();
+  });
+});
+
+describe("model profile redaction override", () => {
+  const off = (patch: Partial<PrivacyStatus> = {}) => status({ config: { enabled: false, precision: "int8", revision: "a".repeat(40), version: "v0.1.3" }, ...patch });
+
+  it("follows the global switch without an override", () => {
+    expect(privacyGuardFor(status({}))).toEqual({ enabled: true, broken: false });
+    expect(privacyGuardFor(off())).toEqual({ enabled: false, broken: false });
+  });
+
+  it("turns the guard on or off for the profile whatever the global switch says", () => {
+    expect(privacyGuardFor(off(), "on")).toEqual({ enabled: true, broken: false });
+    expect(privacyGuardFor(status({}), "off")).toEqual({ enabled: false, broken: false });
+  });
+
+  it("reports a forced guard without a chosen local model as broken, since requests are blocked", () => {
+    const unchosen = off({ config: { enabled: false, precision: "int8", revision: "", version: "" } });
+    expect(privacyGuardFor(unchosen, "on")).toEqual({ enabled: true, broken: true });
   });
 });

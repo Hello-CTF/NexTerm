@@ -28,6 +28,8 @@ Before installing an update, the desktop app verifies the Minisign signature of 
 
 Off by default. In Settings → AI privacy redaction (AI 信息脱敏), download the latest released `QuantumNous/astrlink-guard` model (downloaded from Hugging Face; weights are not bundled), select INT8, FP32, or FP16, then enable it.
 
+Each model profile can override this switch under Advanced parameters → AI data masking (AI 信息脱敏): follow the global setting, always on, or always off. Always on also needs a chosen local model, otherwise that model's requests are blocked; a model set to always off receives requests in plaintext.
+
 - When enabled, an unavailable model or runtime blocks requests instead of sending plaintext; images and other non-text content are not redacted and go to the AI provider unchanged; detection can miss sensitive information.
 - Placeholders stay stable within a conversation, and responses and tool arguments are restored automatically.
 - Local inference needs Linux (glibc 2.27 or newer with libstdc++; musl is not supported), Windows, macOS 13.4+, iOS/iPadOS 15.1+, or Android 7.0+. Redaction is unavailable on platforms ONNX Runtime no longer publishes (currently Intel Macs); the rest of the app works.

@@ -197,6 +197,15 @@ describe("M165 known_host and AI profile payloads match Go byte for byte", () =>
     };
     expect(marshalSyncPayload(aiProfilePayload(p))).toBe(fixtureText("aiProfileMinimal"));
   });
+
+  it("places the redaction override after the circuit breaker fields", () => {
+    const p: SyncCollectAIProfile = {
+      id: "p-3", name: "private", baseUrl: "https://api.example.com/v1", model: "m",
+      contextWindow: 8192, proxy: null, stream: true, privacy: "off",
+      updatedAt: 1700000003000, apiKeySet: false, apiKeyState: "revealed",
+    };
+    expect(marshalSyncPayload(aiProfilePayload(p))).toBe(fixtureText("aiProfilePrivacy"));
+  });
 });
 
 describe("ai_grant payloads match Go byte for byte", () => {

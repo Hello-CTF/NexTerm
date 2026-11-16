@@ -408,3 +408,28 @@ func TestManagerDownloadCancellationBelongsToInitiatingOwner(t *testing.T) {
 		t.Fatal("canceled download activated or published a model")
 	}
 }
+
+func TestManagerForcedExchangeRedactsWhileTheSwitchIsOff(t *testing.T) {
+	manager, _, installation, _ := managedFixture(t)
+	alice := privacyOwner(t, "alice", "conversation")
+	if exchange, err := manager.Exchange(WithForceEnabled(alice)); err == nil || exchange != nil {
+		t.Fatalf("forced redaction without a chosen model must block, exchange=%v err=%v", exchange, err)
+	}
+	if _, err := manager.Configure(alice, false, INT8, installation.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if exchange, err := manager.Exchange(alice); err != nil || exchange != nil {
+		t.Fatalf("the switch is off: exchange=%v err=%v", exchange, err)
+	}
+	exchange, err := manager.Exchange(WithForceEnabled(alice))
+	if err != nil || exchange == nil {
+		t.Fatalf("forced exchange=%v err=%v", exchange, err)
+	}
+	text, err := exchange.Protect(alice, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text == "secret" {
+		t.Fatal("forced exchange sent the value unredacted")
+	}
+}
