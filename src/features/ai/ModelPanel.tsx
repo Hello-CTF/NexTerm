@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { modelApi, type AiUsageSummaryRow, type ModelProfile, type ModelProfilesView, type ProviderTestResult } from "../../ipc/commands";
-import type { AiCircuitStatusDto } from "../../ipc/types";
+import type { AiCircuitStatusDto, ModelPrivacyOverride } from "../../ipc/types";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { Combobox } from "../../ui/Combobox";
+import { Select } from "../../ui/Select";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import {
@@ -225,12 +226,13 @@ export function ModelManager({
     if (!draft) return;
     setBusy(true);
     try {
-      const { temperature, contextWindow, reasoningEffort, ...rest } = draft;
+      const { temperature, contextWindow, reasoningEffort, privacy, ...rest } = draft;
       const payload = {
         ...rest,
         ...(temperature === null ? {} : { temperature }),
         ...(contextWindow === null ? {} : { contextWindow }),
         ...(reasoningEffort ? { reasoningEffort } : {}),
+        ...(privacy ? { privacy } : {}),
       } as ModelProfile;
       const saved = await modelApi.save(payload);
       setDraft((current) => {
@@ -636,6 +638,23 @@ export function ModelManager({
                         onChange={(value) => patch({ reasoningEffort: value })}
                       />
                       <div className="nx-hint mt-1 text-[10.5px]">{t("仅对支持的 OpenAI 兼容端点生效，可输入自定义值。")}</div>
+                    </Field>
+
+                    <Field label={t("AI 信息脱敏")} htmlFor={`${fieldId}-privacy`}>
+                      <Select
+                        id={`${fieldId}-privacy`}
+                        ariaLabel={t("AI 信息脱敏")}
+                        value={draft.privacy ?? ""}
+                        options={[
+                          { value: "", label: t("跟随全局设置") },
+                          { value: "on", label: t("始终开启") },
+                          { value: "off", label: t("始终关闭") },
+                        ]}
+                        onChange={(value) => patch({ privacy: value as ModelPrivacyOverride })}
+                      />
+                      <div className="nx-hint mt-1 text-[10.5px]">
+                        {t("只对这个模型生效，覆盖设置中的 AI 信息脱敏开关。始终开启需要已选择本地隐私模型，否则请求会被阻止。")}
+                      </div>
                     </Field>
 
                     <Field label={t("最大输出")} htmlFor={`${fieldId}-max-tokens`}>

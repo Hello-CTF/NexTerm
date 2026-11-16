@@ -3,6 +3,37 @@
   display: contents;
 }
 
+/* The terminal toolbar stays one row at every width: buttons and badges keep their labels on one line, and the
+   title and working directory give up space first, ending in an ellipsis. */
+.nx-toolbar.nx-term-toolbar {
+  flex-wrap: nowrap;
+}
+
+.nx-term-toolbar > *,
+.nx-term-toolbar > .nx-toolbar-extra > * {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.nx-term-toolbar > .nx-toolbar-title,
+.nx-term-toolbar > .nx-toolbar-extra > .nx-cwd {
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nx-term-toolbar > .nx-toolbar-title {
+  min-width: 4em;
+}
+
+/* Narrow panes show the toolbar buttons as icons; their names stay in the title and the accessible label. */
+@container term (max-width: 860px) {
+  .nx-term-toolbar .nx-term-btn-label {
+    display: none;
+  }
+}
+
 @container term (max-width: 560px) {
   /* One row: title, connection dot, the menu button. The labels that fill a second row on wide panes are listed in
      the menu button's "状态" group instead. */

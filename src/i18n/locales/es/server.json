@@ -1683,6 +1683,7 @@
   "当前文件服务不支持安全条件创建: %w": "El servicio de archivos actual no admite la creación condicional segura: %w",
   "当前服务管理器不支持结束计划任务": "El administrador de servicios actual no admite finalizar tareas programadas",
   "当前桌面会话没有可用的图形剪贴板": "Esta sesión de escritorio no tiene portapapeles gráfico",
+  "当前模型配置强制开启了 AI 脱敏，但尚未选择本地隐私模型，请求未发送": "Este perfil de modelo fuerza la anonimización de IA, pero no hay ningún modelo de privacidad local elegido; la solicitud no se envió",
   "当前没有正在进行的调试记录": "No hay ningún registro de depuración en curso",
   "当前版本 %s 不低于最新发行版 %s，无需更新\n": "La versión actual %s no es anterior a la última versión publicada %s; no hace falta actualizar\n",
   "当前版本: %s\n目标版本: %s\n": "Versión actual: %s\nVersión de destino: %s\n",

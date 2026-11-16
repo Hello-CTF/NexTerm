@@ -69,3 +69,22 @@ func TestProfileJSONTemperatureAndReasoningEffortCompat(t *testing.T) {
 }
 
 func profileFloat64Ptr(value float64) *float64 { return &value }
+
+func TestProfilePrivacyOverrideRoundTripsAndUnknownValuesFollowTheGlobalSwitch(t *testing.T) {
+	for raw, want := range map[string]provider.PrivacyOverride{`"on"`: provider.PrivacyOn, `"off"`: provider.PrivacyOff, `""`: provider.PrivacyFollow, `"maybe"`: provider.PrivacyFollow} {
+		var profile Profile
+		if err := json.Unmarshal([]byte(`{"model":"m","privacy":`+raw+`}`), &profile); err != nil {
+			t.Fatal(err)
+		}
+		if got := profile.Normalized().Privacy; got != want {
+			t.Fatalf("privacy %s normalized to %q, want %q", raw, got, want)
+		}
+	}
+	encoded, err := json.Marshal(Profile{Model: "m"}.Normalized())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "privacy") {
+		t.Fatalf("a profile following the global switch must not store an override: %s", encoded)
+	}
+}

@@ -639,7 +639,9 @@ describe("AiSidebar stuck busy-state fixes", () => {
     events.resolve([{ type: "canceled", message: "已停止", seq: 1 }]);
     await flushReplay();
     expect(textOf(view!)).toContain("已停止");
-    expect(textOf(view!)).toContain("未送达");
+    // A stopped run hands the instruction it never read back to the composer instead of sending it.
+    expect(view!.container.querySelector("textarea")!.value).toBe("Pending steer");
+    expect(textOf(view!)).not.toContain("未送达");
     expect(useUi.getState().aiBusy).toBe(false);
 
     emit({ type: "done", answer: "late answer must not replace canceled" });

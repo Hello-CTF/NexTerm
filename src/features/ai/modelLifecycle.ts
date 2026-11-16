@@ -162,6 +162,7 @@ export function sameModelProfile(a: ModelProfile, b: ModelProfile): boolean {
     (a.maxTokens ?? null) === (b.maxTokens ?? null) &&
     (a.circuitFailureThreshold ?? null) === (b.circuitFailureThreshold ?? null) &&
     (a.circuitCooldownSeconds ?? null) === (b.circuitCooldownSeconds ?? null) &&
-    (a.reasoningEffort ?? "") === (b.reasoningEffort ?? "")
+    (a.reasoningEffort ?? "") === (b.reasoningEffort ?? "") &&
+    (a.privacy ?? "") === (b.privacy ?? "")
   );
 }

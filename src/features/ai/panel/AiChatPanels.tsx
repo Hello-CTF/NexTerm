@@ -9,10 +9,14 @@ import type { AiChatCtx } from "./aiChatCtx";
 import { t } from "../../../i18n";
 
 export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
-  const { permOpen, setPermOpen, permError, loadPermission, perm, permScope, permDeviceOverride, followGlobalMode, switchMode, planMode, setPlanMode, aiScopeAssetId, tasksOpen } = ctx;
+  const { permOpen, setPermOpen, permError, loadPermission, perm, permScope, permDeviceOverride, followGlobalMode, switchMode, applyModeGlobally, planMode, setPlanMode, aiScopeAssetId, tasksOpen } = ctx;
   const chooseMode = async (mode: AiPermissionMode) => {
     if (mode === "full_access" && perm?.mode !== "full_access" && !(await ask(fullAccessConfirmText(Boolean(permScope)), { title: t("开启完全放行"), kind: "warning" }))) return;
     switchMode(mode);
+  };
+  const chooseGlobalMode = async (mode: AiPermissionMode) => {
+    if (mode === "full_access" && !(await ask(fullAccessConfirmText(false), { title: t("开启完全放行"), kind: "warning" }))) return;
+    applyModeGlobally(mode);
   };
   return (
     <>
@@ -76,6 +80,16 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
               </div>
               <div className="mb-2.5 text-[10.5px] leading-relaxed text-neutral-500">
                 {MODE_OPTIONS.find((m) => m.value === perm.mode)?.hint}
+                {permScope && (
+                  <button
+                    type="button"
+                    className="ml-1 text-neutral-400 underline hover:text-neutral-200"
+                    title={t("把当前模式设为全局默认，所有未单独设置模式的主机（包括这台）都使用它")}
+                    onClick={() => void chooseGlobalMode(perm.mode)}
+                  >
+                    {t("设为全局默认")}
+                  </button>
+                )}
               </div>
 
               <button

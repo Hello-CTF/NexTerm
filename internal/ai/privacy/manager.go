@@ -478,9 +478,14 @@ func (m *Manager) Exchange(ctx context.Context) (*Exchange, error) {
 		return nil, userError("隐私服务已关闭")
 	}
 	state, err := m.read(ctx, id)
-	if err != nil || !state.Enabled {
+	if err != nil || (!state.Enabled && !ForceEnabled(ctx)) {
 		m.mu.Unlock()
 		return nil, err
+	}
+	if !state.Enabled && state.Revision == "" {
+		// A profile forces redaction on, but no local model was ever chosen: block rather than send unredacted.
+		m.mu.Unlock()
+		return nil, userError("当前模型配置强制开启了 AI 脱敏，但尚未选择本地隐私模型，请求未发送")
 	}
 	previous := state.Seed
 	seed, err := m.seed(ctx, &state)

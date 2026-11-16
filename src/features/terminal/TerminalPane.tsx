@@ -2637,11 +2637,12 @@ export function TerminalPane({
         <button
           className={`nx-btn nx-btn-ghost nx-btn-sm @max-[560px]:hidden ${searchOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
           title={tr("搜索终端内容 ({searchBindingLabel})", { searchBindingLabel })}
+          aria-label={tr("搜索")}
           aria-pressed={searchOpen}
           onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
         >
           <IconSearch size={13} />
-          {tr("搜索")}
+          <span className="nx-term-btn-label">{tr("搜索")}</span>
         </button>
 
         {encoding !== "utf-8" && (
@@ -2677,10 +2678,11 @@ export function TerminalPane({
             <button
               className={`nx-btn nx-btn-sm @max-[560px]:hidden ${blocksOpen ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
               title={tr("命令列表：按命令查看、复制或定位输出")}
+              aria-label={tr("命令列表")}
               onClick={toggleBlocksPanel}
             >
               <IconList size={13} />
-              {tr("命令列表")}
+              <span className="nx-term-btn-label">{tr("命令列表")}</span>
               {blocks.length > 0 && <span className="nx-count">{blocks.length}</span>}
             </button>
           </>
@@ -2688,11 +2690,12 @@ export function TerminalPane({
         <button
           className={`nx-btn nx-btn-sm @max-[560px]:hidden ${sidebarShown ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
           aria-pressed={sidebarShown}
+          aria-label={tr("侧栏")}
           title={tr("会话侧栏 ({value})", { value: formatBinding(bindings.sessionSidebar) })}
           onClick={toggleSidebarHere}
         >
           <IconPanelRight size={13} />
-          {tr("侧栏")}
+          <span className="nx-term-btn-label">{tr("侧栏")}</span>
         </button>
         {broadcastCount > 0 && (
           <button

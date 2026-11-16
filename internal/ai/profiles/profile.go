@@ -28,6 +28,9 @@ type Profile struct {
 
 	CircuitFailureThreshold *int `json:"circuitFailureThreshold,omitempty"`
 	CircuitCooldownSeconds  *int `json:"circuitCooldownSeconds,omitempty"`
+
+	// Privacy overrides the owner's AI redaction switch for this profile: "on", "off", or empty to follow it.
+	Privacy provider.PrivacyOverride `json:"privacy,omitempty"`
 }
 
 const MaskedAPIKey = "••••••••••••"
@@ -81,6 +84,9 @@ func (p Profile) Normalized() Profile {
 	p.IdleTimeoutSeconds = clampOptionalInt(p.IdleTimeoutSeconds, 0, maxIdleTimeoutSeconds)
 	p.CircuitFailureThreshold = clampOptionalInt(p.CircuitFailureThreshold, 1, maxCircuitThreshold)
 	p.CircuitCooldownSeconds = clampOptionalInt(p.CircuitCooldownSeconds, 1, maxCircuitCooldownSeconds)
+	if !p.Privacy.Valid() {
+		p.Privacy = provider.PrivacyFollow
+	}
 	if p.Name == "" {
 		p.Name = p.Model
 		if p.Name == "" {
@@ -106,6 +112,9 @@ func (p Profile) ClientOptions() []provider.Option {
 	}
 	if p.IdleTimeoutSeconds != nil {
 		options = append(options, provider.WithIdleTimeout(time.Duration(*p.IdleTimeoutSeconds)*time.Second))
+	}
+	if p.Privacy != provider.PrivacyFollow {
+		options = append(options, provider.WithPrivacyOverride(p.Privacy))
 	}
 	return options
 }
@@ -152,6 +161,8 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 
 		CircuitFailureThreshold *int `json:"circuitFailureThreshold"`
 		CircuitCooldownSeconds  *int `json:"circuitCooldownSeconds"`
+
+		Privacy provider.PrivacyOverride `json:"privacy"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
@@ -178,6 +189,7 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 	p.IdleTimeoutSeconds = wire.IdleTimeoutSeconds
 	p.CircuitFailureThreshold = wire.CircuitFailureThreshold
 	p.CircuitCooldownSeconds = wire.CircuitCooldownSeconds
+	p.Privacy = wire.Privacy
 	return nil
 }
 

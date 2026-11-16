@@ -274,8 +274,9 @@ type CollectAIProfile struct {
 	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
 	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`
 
-	CircuitFailureThreshold *int `json:"circuitFailureThreshold,omitempty"`
-	CircuitCooldownSeconds  *int `json:"circuitCooldownSeconds,omitempty"`
+	CircuitFailureThreshold *int   `json:"circuitFailureThreshold,omitempty"`
+	CircuitCooldownSeconds  *int   `json:"circuitCooldownSeconds,omitempty"`
+	Privacy                 string `json:"privacy,omitempty"`
 
 	UpdatedAt   int64   `json:"updatedAt"`
 	APIKey      *string `json:"apiKey,omitempty"`
@@ -344,6 +345,7 @@ func (s *Service) CollectAIProfiles(ctx context.Context, request CollectAIProfil
 			Stream: record.Stream, RequestTimeoutSeconds: record.RequestTimeoutSeconds,
 			IdleTimeoutSeconds:      record.IdleTimeoutSeconds,
 			CircuitFailureThreshold: record.CircuitFailureThreshold, CircuitCooldownSeconds: record.CircuitCooldownSeconds,
+			Privacy:   record.Privacy,
 			UpdatedAt: revision, APIKeySet: record.APIKey != "", APIKeyState: secretState,
 		}
 		if secretState == CollectSecretRevealed && record.APIKey != "" {

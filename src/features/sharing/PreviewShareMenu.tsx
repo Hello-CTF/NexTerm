@@ -205,11 +205,12 @@ export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChan
       <button
         type="button"
         title={t("创建预览链接")}
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs max-sm:min-h-10 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 @max-[560px]:hidden"
+        aria-label={t("预览链接")}
+        className="flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-xs max-sm:min-h-10 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 @max-[560px]:hidden"
         onClick={toggle}
       >
         <IconGlobe className="h-3.5 w-3.5" />
-        {t("预览链接")}
+        <span className="nx-term-btn-label">{t("预览链接")}</span>
       </button>
       {open && (
         <div className="absolute right-0 z-30 mt-1 w-80 max-w-[calc(100vw-1.5rem)] @max-[560px]:fixed @max-[560px]:inset-x-3 @max-[560px]:top-14 @max-[560px]:w-auto rounded-md border border-neutral-700 bg-neutral-900 p-3 shadow-xl">

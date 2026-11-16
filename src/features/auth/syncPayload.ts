@@ -95,6 +95,7 @@ export function aiProfilePayload(p: SyncCollectAIProfile): unknown {
   if (p.idleTimeoutSeconds !== undefined && p.idleTimeoutSeconds !== null) o.idleTimeoutSeconds = p.idleTimeoutSeconds;
   if (p.circuitFailureThreshold !== undefined && p.circuitFailureThreshold !== null) o.circuitFailureThreshold = p.circuitFailureThreshold;
   if (p.circuitCooldownSeconds !== undefined && p.circuitCooldownSeconds !== null) o.circuitCooldownSeconds = p.circuitCooldownSeconds;
+  if (p.privacy) o.privacy = p.privacy;
   o.updatedAt = p.updatedAt;
   return o;
 }

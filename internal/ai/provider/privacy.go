@@ -18,6 +18,39 @@ func WithPrivacy(resolve func(context.Context) (*privacy.Exchange, error)) Optio
 	return func(options *clientOptions) { options.privacy = resolve }
 }
 
+// PrivacyOverride is a model profile's redaction choice: empty follows the
+// owner's global switch, "on" redacts even when it is off, "off" never redacts.
+type PrivacyOverride string
+
+const (
+	PrivacyFollow PrivacyOverride = ""
+	PrivacyOn     PrivacyOverride = "on"
+	PrivacyOff    PrivacyOverride = "off"
+)
+
+// Valid reports whether the override is one of the known choices.
+func (o PrivacyOverride) Valid() bool {
+	return o == PrivacyFollow || o == PrivacyOn || o == PrivacyOff
+}
+
+// WithPrivacyOverride applies a model profile's redaction choice on top of
+// WithPrivacy, whatever order the options come in.
+func WithPrivacyOverride(override PrivacyOverride) Option {
+	return func(options *clientOptions) { options.privacyOverride = override }
+}
+
+// resolvePrivacy combines the owner's resolver with the profile's override.
+func resolvePrivacy(resolve func(context.Context) (*privacy.Exchange, error), override PrivacyOverride) func(context.Context) (*privacy.Exchange, error) {
+	switch {
+	case resolve == nil || override == PrivacyOff:
+		return nil
+	case override == PrivacyOn:
+		return func(ctx context.Context) (*privacy.Exchange, error) { return resolve(privacy.WithForceEnabled(ctx)) }
+	default:
+		return resolve
+	}
+}
+
 // privacyFailure names the local model only when it or its runtime failed;
 // other causes such as a locked vault keep a neutral prefix.
 func privacyFailure(err error) error {
