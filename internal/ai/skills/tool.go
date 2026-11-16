@@ -25,7 +25,8 @@ func (m *Manager) LoadSkillSchema() tools.Schema {
 		Name: LoadSkillToolName,
 		Description: "Load one of the available skills (built-in or the user's own) by name and return its Markdown instructions. " +
 			"The available skills and when to use each are listed under [Available Skills]; load a " +
-			"matching skill before starting the task, then follow it.",
+			"matching skill before starting the task, then follow it. " +
+			"A skill needs loading only once per conversation: when an earlier load_skill result for it is still in the conversation, follow it instead of loading it again.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

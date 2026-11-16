@@ -17,6 +17,8 @@ const (
 	historyTypeToolResult    = "toolResult"
 	historyTypeFileChange    = "fileChange"
 	historyTypePlanSubmitted = "planSubmitted"
+	// historyTypeSkillCatalog is the skill catalog a run sent to the model; the chat view does not show it.
+	historyTypeSkillCatalog = "skillCatalog"
 )
 
 const persistedToolResultLimit = 64 << 10
@@ -247,6 +249,11 @@ func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
 			carrying = false
 		case historyTypeFileChange, historyTypePlanSubmitted:
 			continue
+		case historyTypeSkillCatalog:
+			if persisted.Content != "" {
+				messages = append(messages, schema.UserMessage(persisted.Content))
+				carrying = false
+			}
 		case historyTypeSummary:
 			// A summary replaces everything before it.
 			if persisted.Summary == "" {

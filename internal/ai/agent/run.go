@@ -396,7 +396,15 @@ func (r *Runner) assembleInput(current *job, rows []store.MessageRow, compaction
 	if catalog, err := r.config.Tools.SkillCatalog(current.ctx); err != nil {
 		return nil, err
 	} else if len(catalog) > 0 {
-		messages = append(messages, schema.UserMessage(skillCatalogPrompt(catalog)))
+		// The catalog is saved with the run that sent it, so later runs see it in the history. It is sent again only
+		// when the skills changed or compaction removed the earlier one.
+		prompt := skillCatalogPrompt(catalog)
+		if latestSkillCatalog(messages) != prompt {
+			if err := r.store.MsgInsert(current.ctx, current.args.ConversationID, historyTypeSkillCatalog, map[string]any{"type": historyTypeSkillCatalog, "content": prompt, "jobId": current.id}, nil, nil); err != nil {
+				return nil, err
+			}
+			messages = append(messages, schema.UserMessage(prompt))
+		}
 	}
 	messages = append(messages, userMessage(current.args))
 	if r.config.Memory != nil {
@@ -1016,10 +1024,26 @@ func min64(value, maximum uint64) uint64 {
 // A message that starts with /<name> asks for that skill explicitly.
 func skillCatalogPrompt(catalog []tools.SkillSummary) string {
 	var prompt strings.Builder
-	prompt.WriteString("[Available Skills]\nThe user wrote these skills. When the task matches a skill's description, " +
-		"or the user's message starts with /<skill name>, call load_skill with that name first and follow it.\n")
+	prompt.WriteString(skillCatalogHeader + "The user wrote these skills. When the task matches a skill's description, " +
+		"or the user's message starts with /<skill name>, call load_skill with that name first and follow it. " +
+		"A skill whose load_skill result is still in this conversation is already loaded: follow it and do not load it again. " +
+		"This list replaces any earlier one.\n")
 	for _, skill := range catalog {
 		fmt.Fprintf(&prompt, "- %s: %s\n", skill.Name, skill.Description)
 	}
 	return prompt.String()
+}
+
+const skillCatalogHeader = "[Available Skills]\n"
+
+// latestSkillCatalog returns the last skill catalog in messages, or "" when
+// none is left (a new conversation, or compaction summarized it away).
+func latestSkillCatalog(messages []*schema.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		message := messages[i]
+		if message.Role == schema.User && strings.HasPrefix(message.Content, skillCatalogHeader) {
+			return message.Content
+		}
+	}
+	return ""
 }
