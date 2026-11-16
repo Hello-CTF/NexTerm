@@ -448,8 +448,14 @@ func (h *steerHandler) BeforeModelRewriteState(ctx context.Context, state *adk.C
 func (r *Runner) deliverSteers(current *job, state *adk.ChatModelAgentState) ([]Event, error) {
 	var pending []Event
 	drained := current.steer.Drain()
+	// The event consumer may still be saving the tool rows of the turn before; the steer names the results it
+	// follows, so rebuilding the history puts it after them whichever row was saved first.
+	after := trailingToolResults(state.Messages)
 	for index, steered := range drained {
 		row := map[string]any{"role": "user", "content": steered.Content, "steered": true, "jobId": current.id}
+		if len(after) > 0 {
+			row["after"] = after
+		}
 		if err := r.store.MsgInsert(current.ctx, current.args.ConversationID, "user", row, nil, nil); err != nil {
 			r.reportDroppedSteers(current, drained[index:])
 			return nil, fmt.Errorf("保存补充指令失败: %w", err)
