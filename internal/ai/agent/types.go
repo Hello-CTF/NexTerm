@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -153,6 +154,9 @@ type ChatArgs struct {
 	// default profile. The AI panel sends it so a model chosen there applies
 	// to its conversation without changing the default.
 	ModelProfileID string `json:"modelProfileId,omitempty"`
+	// Privacy is the conversation's temporary redaction choice ("on", "off");
+	// empty follows the model profile and the owner's switch.
+	Privacy provider.PrivacyOverride `json:"privacy,omitempty"`
 }
 
 type RefArg struct {

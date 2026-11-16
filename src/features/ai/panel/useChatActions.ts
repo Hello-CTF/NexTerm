@@ -1,5 +1,6 @@
 import { aiTabBusyIds, aiRunBlocksStart, isCurrentAiRun, finishAiRunSpawn, bindAiRunJob, settleAiRun } from "../runOwnership";
 import { chatModelChoice } from "../chatModelChoice";
+import { chatPrivacyChoice } from "../chatPrivacyChoice";
 import { createAiChannel, onChannelReopen, disposeChannel } from "../../../ipc/events";
 import { aiApi } from "../../../ipc/commands";
 import { describeError } from "../../../ui/errorText";
@@ -113,6 +114,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
         refs: payloadRefs.length ? payloadRefs : undefined,
         planMode: usePlan || undefined,
         modelProfileId: chatModelChoice(tabKey),
+        privacy: chatPrivacyChoice(tabKey),
         channel,
       });
       const current = activeRunRef.current;

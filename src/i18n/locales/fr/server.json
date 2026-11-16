@@ -1903,6 +1903,7 @@
   "无匹配": "Aucune correspondance",
   "无效的前端性能数据类型": "Type de données de performance du frontend invalide",
   "无效的模型精度": "Précision de modèle invalide",
+  "无效的脱敏选择：%s": "Choix de masquage non valide : %s",
   "无效的隐私模型选择": "Sélection du modèle de confidentialité invalide",
   "无权使用该 SSH 跳板资产": "Vous n'avez pas le droit d'utiliser cette ressource de rebond SSH",
   "无权关闭该远程桌面连接": "Vous n'avez pas le droit de fermer cette connexion de bureau à distance",

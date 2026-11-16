@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
 	"log/slog"
 	"strings"
 	"time"
@@ -341,7 +342,9 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 	if err != nil {
 		return nil, ErrJobNotFound
 	}
-	executionCtx := privacy.WithConversation(conversationExecutionContext(ctx, conversation.OwnerID), row.ConversationID)
+	// A restored run keeps the redaction choice it started with, so a conversation that turned redaction on never
+	// resumes in plaintext.
+	executionCtx := provider.WithRequestPrivacy(privacy.WithConversation(conversationExecutionContext(ctx, conversation.OwnerID), row.ConversationID), provider.PrivacyOverride(row.Privacy))
 	scope, err := scopeFromConversation(conversation.ScopeJSON)
 	if err != nil {
 		return nil, err
@@ -369,7 +372,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 	current := &job{
 		id:          jobID,
 		ownerID:     conversation.OwnerID,
-		args:        ChatArgs{ConversationID: row.ConversationID, PlanMode: row.PlanMode, Scope: scope, Source: row.Source, ModelProfileID: row.ProfileID},
+		args:        ChatArgs{ConversationID: row.ConversationID, PlanMode: row.PlanMode, Scope: scope, Source: row.Source, ModelProfileID: row.ProfileID, Privacy: provider.PrivacyOverride(row.Privacy)},
 		ctx:         jobContext,
 		cancel:      cancel,
 		deliveryCtx: deliveryContext,

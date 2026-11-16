@@ -35,6 +35,7 @@ func newRunRow(db *gorm.DB, opts ...gen.DOOption) runRow {
 	_runRow.PlanMode = field.NewBool(tableName, "plan_mode")
 	_runRow.Source = field.NewString(tableName, "source")
 	_runRow.ProfileID = field.NewString(tableName, "profile_id")
+	_runRow.Privacy = field.NewString(tableName, "privacy")
 	_runRow.Answer = field.NewString(tableName, "answer")
 	_runRow.Turns = field.NewInt(tableName, "turns")
 	_runRow.TokensIn = field.NewInt64(tableName, "tokens_in")
@@ -69,6 +70,7 @@ type runRow struct {
 	PlanMode            field.Bool
 	Source              field.String
 	ProfileID           field.String
+	Privacy             field.String
 	Answer              field.String
 	Turns               field.Int
 	TokensIn            field.Int64
@@ -105,6 +107,7 @@ func (r *runRow) updateTableName(table string) *runRow {
 	r.PlanMode = field.NewBool(table, "plan_mode")
 	r.Source = field.NewString(table, "source")
 	r.ProfileID = field.NewString(table, "profile_id")
+	r.Privacy = field.NewString(table, "privacy")
 	r.Answer = field.NewString(table, "answer")
 	r.Turns = field.NewInt(table, "turns")
 	r.TokensIn = field.NewInt64(table, "tokens_in")
@@ -140,7 +143,7 @@ func (r *runRow) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (r *runRow) fillFieldMap() {
-	r.fieldMap = make(map[string]field.Expr, 20)
+	r.fieldMap = make(map[string]field.Expr, 21)
 	r.fieldMap["id"] = r.ID
 	r.fieldMap["conversation_id"] = r.ConversationID
 	r.fieldMap["status"] = r.Status
@@ -149,6 +152,7 @@ func (r *runRow) fillFieldMap() {
 	r.fieldMap["plan_mode"] = r.PlanMode
 	r.fieldMap["source"] = r.Source
 	r.fieldMap["profile_id"] = r.ProfileID
+	r.fieldMap["privacy"] = r.Privacy
 	r.fieldMap["answer"] = r.Answer
 	r.fieldMap["turns"] = r.Turns
 	r.fieldMap["tokens_in"] = r.TokensIn

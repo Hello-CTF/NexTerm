@@ -582,12 +582,16 @@ func TestPrivacyProfileOverrideWinsOverTheGlobalSwitch(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		options  []Option
+		request  PrivacyOverride
 		redacted bool
 	}{
 		{name: "follow off", options: []Option{globalOff}},
 		{name: "forced on", options: []Option{WithPrivacyOverride(PrivacyOn), globalOff}, redacted: true},
 		{name: "follow on", options: []Option{globalOn}, redacted: true},
 		{name: "forced off", options: []Option{globalOn, WithPrivacyOverride(PrivacyOff)}},
+		{name: "conversation on over profile off", options: []Option{globalOff, WithPrivacyOverride(PrivacyOff)}, request: PrivacyOn, redacted: true},
+		{name: "conversation off over profile on", options: []Option{globalOn, WithPrivacyOverride(PrivacyOn)}, request: PrivacyOff},
+		{name: "conversation follows", options: []Option{globalOn}, request: PrivacyFollow, redacted: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var received atomic.Value
@@ -596,7 +600,7 @@ func TestPrivacyProfileOverrideWinsOverTheGlobalSwitch(t *testing.T) {
 				received.Store(string(data))
 				writePrivacyBlock(w, "ok", nil)
 			}, test.options...)
-			if _, err := client.ChatBlock(t.Context(), ChatRequest{Messages: []ChatMessage{UserMessage("the secret value")}}); err != nil {
+			if _, err := client.ChatBlock(WithRequestPrivacy(t.Context(), test.request), ChatRequest{Messages: []ChatMessage{UserMessage("the secret value")}}); err != nil {
 				t.Fatal(err)
 			}
 			body, _ := received.Load().(string)

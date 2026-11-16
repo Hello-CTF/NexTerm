@@ -39,6 +39,33 @@ func WithPrivacyOverride(override PrivacyOverride) Option {
 	return func(options *clientOptions) { options.privacyOverride = override }
 }
 
+type requestPrivacyKey struct{}
+
+// WithRequestPrivacy carries a conversation's temporary redaction choice for
+// the requests made under ctx; it wins over the profile's override and the
+// owner's switch. PrivacyFollow leaves those in charge.
+func WithRequestPrivacy(ctx context.Context, override PrivacyOverride) context.Context {
+	if override == PrivacyFollow || !override.Valid() {
+		return ctx
+	}
+	return context.WithValue(ctx, requestPrivacyKey{}, override)
+}
+
+// RequestPrivacy returns the choice WithRequestPrivacy attached, or PrivacyFollow.
+func RequestPrivacy(ctx context.Context) PrivacyOverride {
+	override, _ := ctx.Value(requestPrivacyKey{}).(PrivacyOverride)
+	return override
+}
+
+// privacyFor picks the resolver of one request: the request's own choice, else the profile's.
+func (c *Client) privacyFor(ctx context.Context) func(context.Context) (*privacy.Exchange, error) {
+	override := c.privacyOverride
+	if request := RequestPrivacy(ctx); request != PrivacyFollow {
+		override = request
+	}
+	return resolvePrivacy(c.privacy, override)
+}
+
 // resolvePrivacy combines the owner's resolver with the profile's override.
 func resolvePrivacy(resolve func(context.Context) (*privacy.Exchange, error), override PrivacyOverride) func(context.Context) (*privacy.Exchange, error) {
 	switch {
@@ -62,10 +89,11 @@ func privacyFailure(err error) error {
 
 func (c *Client) runNative(ctx context.Context, input []*schema.Message, options []model.Option, preferStream bool, onFrame nativeFrameHandler) (nativeResult, error) {
 	input = ProjectModelMessages(input)
-	if c.privacy == nil {
+	resolve := c.privacyFor(ctx)
+	if resolve == nil {
 		return c.runNativePlain(ctx, input, options, preferStream, onFrame)
 	}
-	exchange, err := c.privacy(ctx)
+	exchange, err := resolve(ctx)
 	if err != nil {
 		return nativeResult{}, privacyFailure(err)
 	}

@@ -1574,6 +1574,8 @@ export const aiApi = {
       planMode?: boolean;
       // modelProfileId runs this message with a profile other than the default one.
       modelProfileId?: string;
+      // privacy is the chat tab's temporary redaction choice; absent follows the profile and the global setting.
+      privacy?: "on" | "off";
       channel: unknown;
     },
   ) => {

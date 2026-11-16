@@ -1903,6 +1903,7 @@
   "无匹配": "Keine Treffer",
   "无效的前端性能数据类型": "Ungültiger Typ der Frontend-Leistungsdaten",
   "无效的模型精度": "Ungültige Modellgenauigkeit",
+  "无效的脱敏选择：%s": "Ungültige Schwärzungsauswahl: %s",
   "无效的隐私模型选择": "Ungültige Auswahl des Datenschutzmodells",
   "无权使用该 SSH 跳板资产": "Keine Berechtigung zur Verwendung dieses SSH-Jump-Host-Assets",
   "无权关闭该远程桌面连接": "Keine Berechtigung zum Schließen dieser Remotedesktop-Verbindung",

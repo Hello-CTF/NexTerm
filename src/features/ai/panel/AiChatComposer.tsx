@@ -9,14 +9,15 @@ import { ModelSelector } from "../ModelSelector";
 import { UsageRing } from "../UsageRing";
 import { modelApi } from "../../../ipc/commands";
 import { ModelPanel } from "../ModelPanel";
-import { PrivacyIndicator, useChatProfilePrivacy, usePrivacyGuard } from "../PrivacyIndicator";
+import { PrivacyIndicator, useChatPrivacy } from "../PrivacyIndicator";
 import { acknowledgePrivacyImageNotice, PRIVACY_IMAGE_NOTICE, usePrivacyImageNoticeSeen } from "../privacyImageNotice";
 import { PLAN_MODE_HINT, statusText, MODE_LABEL } from "./aiSidebarShared";
 import type { AiChatCtx } from "./aiChatCtx";
 import { t } from "../../../i18n";
 
 export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
-  const privacyGuard = usePrivacyGuard(useChatProfilePrivacy(ctx.tabKey));
+  const chatPrivacy = useChatPrivacy(ctx.tabKey);
+  const privacyGuard = chatPrivacy.guard;
   const imageNoticeSeen = usePrivacyImageNoticeSeen();
   const { planMode, editing, editSubmitting, input, submitEditResend, setEditing, activeRun, stop, follow, syncNotice, activeGeneration, activeRunRef, resyncRun, busy, hitlWaiting, conv, aiScopeProduction, refs, setRefs, images, setImages, slashMenuOpen, slashItems, slashEmptyText, slashIndex, setSlashIndex, modelQuery, skillOptions, atOpen, atItems, atIndex, setAtIndex, pickRef, inputRef, sessionId, onInputChange, onPaste, setAtOpen, steer, send, setModelPanelOpen, imageInputRef, onPickImages, conversationRuns, perm, permOpen, permError, permScope, setPermOpen, tabId, bindings, reclaimKeyLabel, runTakeover, modelPanelOpen, setInput } = ctx;
   // A prompt queued elsewhere (the jump palette's "ask AI" row) prefills the visible composer; it is never sent.
@@ -357,7 +358,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
               {permError ? <IconAlert size={13} /> : <IconKey size={13} />}
               <span className="nx-cbar-label">{permError ? t("权限异常") : perm ? MODE_LABEL[perm.mode] : t("权限")}</span>
             </button>
-            <PrivacyIndicator guard={privacyGuard} />
+            <PrivacyIndicator guard={privacyGuard} chat={chatPrivacy} />
             <UsageRing
               usage={conv.usage}
               runs={conversationRuns}

@@ -87,14 +87,15 @@ func WithCircuitBreaker(breaker *CircuitBreaker) Option {
 }
 
 type Client struct {
-	privacy  func(context.Context) (*privacy.Exchange, error)
-	config   Config
-	http     *http.Client
-	timeouts Timeouts
-	retry    RetryPolicy
-	circuit  *CircuitBreaker
-	sleep    func(context.Context, time.Duration) error
-	random   func() float64
+	privacy         func(context.Context) (*privacy.Exchange, error)
+	privacyOverride PrivacyOverride
+	config          Config
+	http            *http.Client
+	timeouts        Timeouts
+	retry           RetryPolicy
+	circuit         *CircuitBreaker
+	sleep           func(context.Context, time.Duration) error
+	random          func() float64
 }
 
 func NewClient(config Config, options ...Option) (*Client, error) {
@@ -129,14 +130,15 @@ func NewClient(config Config, options ...Option) (*Client, error) {
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 	return &Client{
-		privacy:  resolvePrivacy(settings.privacy, settings.privacyOverride),
-		config:   config,
-		http:     &http.Client{Transport: &wireTransport{base: transport, idle: settings.timeouts.Idle}},
-		timeouts: settings.timeouts,
-		retry:    settings.retry,
-		circuit:  settings.circuit,
-		sleep:    settings.sleep,
-		random:   settings.random,
+		privacy:         settings.privacy,
+		privacyOverride: settings.privacyOverride,
+		config:          config,
+		http:            &http.Client{Transport: &wireTransport{base: transport, idle: settings.timeouts.Idle}},
+		timeouts:        settings.timeouts,
+		retry:           settings.retry,
+		circuit:         settings.circuit,
+		sleep:           settings.sleep,
+		random:          settings.random,
 	}, nil
 }
 

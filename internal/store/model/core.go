@@ -236,14 +236,16 @@ type CronJob struct {
 func (CronJob) TableName() string { return "cron_job" }
 
 type RunRow struct {
-	ID                  string          `gorm:"column:id;primaryKey" json:"id"`
-	ConversationID      string          `gorm:"column:conversation_id;not null;size:191;index:idx_ai_run_conv,priority:1" json:"conversationId"`
-	Status              string          `gorm:"column:status;not null;index:idx_ai_run_status" json:"status"`
-	Attempt             int64           `gorm:"column:attempt;not null;default:1" json:"attempt"`
-	Seq                 uint64          `gorm:"column:seq;not null;default:0" json:"seq"`
-	PlanMode            bool            `gorm:"column:plan_mode;not null;default:0" json:"planMode"`
-	Source              string          `gorm:"column:source;not null;default:'chat'" json:"source"`
-	ProfileID           string          `gorm:"column:profile_id;not null;default:'';index:idx_ai_run_profile,priority:1" json:"profileId"`
+	ID             string `gorm:"column:id;primaryKey" json:"id"`
+	ConversationID string `gorm:"column:conversation_id;not null;size:191;index:idx_ai_run_conv,priority:1" json:"conversationId"`
+	Status         string `gorm:"column:status;not null;index:idx_ai_run_status" json:"status"`
+	Attempt        int64  `gorm:"column:attempt;not null;default:1" json:"attempt"`
+	Seq            uint64 `gorm:"column:seq;not null;default:0" json:"seq"`
+	PlanMode       bool   `gorm:"column:plan_mode;not null;default:0" json:"planMode"`
+	Source         string `gorm:"column:source;not null;default:'chat'" json:"source"`
+	ProfileID      string `gorm:"column:profile_id;not null;default:'';index:idx_ai_run_profile,priority:1" json:"profileId"`
+	// Privacy is the run's temporary redaction choice ("on", "off" or empty to follow the profile and the switch).
+	Privacy             string          `gorm:"column:privacy;size:8;not null;default:''" json:"privacy"`
 	Answer              string          `gorm:"column:answer;not null;default:''" json:"answer"`
 	Turns               int             `gorm:"column:turns;not null;default:0" json:"turns"`
 	TokensIn            int64           `gorm:"column:tokens_in;not null;default:0" json:"tokensIn"`
