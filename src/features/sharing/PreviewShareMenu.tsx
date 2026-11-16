@@ -206,7 +206,7 @@ export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChan
         type="button"
         title={t("创建预览链接")}
         aria-label={t("预览链接")}
-        className="flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-xs max-sm:min-h-10 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 @max-[560px]:hidden"
+        className="flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-xs max-sm:min-h-10 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 nx-term-collapsible @max-[560px]:hidden"
         onClick={toggle}
       >
         <IconGlobe className="h-3.5 w-3.5" />
