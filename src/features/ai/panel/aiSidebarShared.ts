@@ -143,6 +143,16 @@ export function aiScopeForWorkspace(
   return scope;
 }
 
+// runScopeForRefs picks the scope a run is sent with. Without an active terminal (its tab closed, or a non-terminal
+// view in front) a message that @-references exactly one terminal targets that terminal, as if it were active;
+// otherwise the run would have no terminal to act on and could only report the closed one.
+export function runScopeForRefs(scope: Record<string, unknown>, refs: readonly RefChip[]): Record<string, unknown> {
+  if (scope.tabId || scope.connId) return scope;
+  const tabs = refs.filter((ref) => ref.kind === "tab" && ref.refId && ref.sessionId);
+  if (tabs.length !== 1) return scope;
+  return { sessionId: tabs[0].sessionId, tabId: tabs[0].refId };
+}
+
 export function aiDatabaseScopeLabel(
   workspace: AiWorkspaceScope,
   asset: { name: string; kind: string } | null,

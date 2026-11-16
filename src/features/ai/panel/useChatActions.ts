@@ -11,7 +11,7 @@ import type { AgentApprovalDecision, AgentRosterEntry, AgentToolCall } from "../
 import { createAgentRosterApi } from "../agentProduction";
 import { useAgentRosterSnapshot, refreshAgentRosterSnapshot } from "../agentRosterSnapshot";
 import { runSummaryFromAttempt, buildAgentToolCall, approvalFromConfirmCard } from "../agentToolData";
-import { type RefChip, splitUserRefs, latestPlanApproved, isStaleInteractionError, PLAN_EXECUTE_MESSAGE, CONFIRM_RESOLUTION, type AiChatBase } from "./aiSidebarShared";
+import { type RefChip, runScopeForRefs, splitUserRefs, latestPlanApproved, isStaleInteractionError, PLAN_EXECUTE_MESSAGE, CONFIRM_RESOLUTION, type AiChatBase } from "./aiSidebarShared";
 import type { UseChatRunSessionOut } from "./useChatRunSession";
 import type { UseChatPanelStateOut } from "./useChatPanelState";
 import type { UseChatRunRecoveryOut } from "./useChatRunRecovery";
@@ -107,7 +107,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
       }));
       const res = await aiApi.chat({
         conversationId,
-        scope: aiScope,
+        scope: runScopeForRefs(aiScope, sentRefs),
         message: composeMessage(message, sentRefs),
         images: sentImages.length ? sentImages : undefined,
         refs: payloadRefs.length ? payloadRefs : undefined,
@@ -162,7 +162,8 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     if (!message) return;
     const run = activeRunRef.current;
     if (!run || run.settled) {
-      pushToast("info", t("任务已结束，请将此内容作为新消息发送"));
+      // The run ended before the instruction was sent: it starts the next turn instead.
+      void send();
       return;
     }
     if (run.spawnPending) {
@@ -189,12 +190,31 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     const itemId = stream.appendSteer(target.generation, text);
     try {
       await aiApi.steer(jobId, text);
-    } catch (e) {
+    } catch {
+      // Usually the run finished in the meantime; once it settles the instruction is sent as a new turn.
       stream.resolveSteer(target.generation, itemId, "dropped");
-      setInput((prev) => (prev ? `${message}\n${prev}` : message));
-      pushToast("error", t("追加的指令未送达：{value}", { value: describeError(e) }));
     }
   };
+
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  // An instruction the run ended without reading starts the next turn when the run completed; after an error or a
+  // stop it goes back to the composer, so nothing the user typed is lost or sent unasked.
+  useEffect(() => {
+    if (busy || busyRef.current || aiTabBusyIds.has(tabKey) || aiRunBlocksStart(activeRunRef.current)) return;
+    for (const attempt of conv.attempts) {
+      if (attempt.outcome === null) continue;
+      if (!conv.items.some((item) => item.attempt === attempt.generation && item.role === "user" && item.steer === "dropped")) continue;
+      const texts = stream.takeDroppedSteers(attempt.generation);
+      if (texts.length === 0) continue;
+      const message = texts.join("\n\n");
+      if (attempt.outcome === "done") {
+        void sendRef.current({ message, images: [], refs: [] });
+        return;
+      }
+      setInput((prev) => (prev.trim() ? `${message}\n${prev}` : message));
+    }
+  }, [busy, conv, tabKey, setInput, stream, busyRef, activeRunRef]);
 
   const approvePlan = () => {
     if (latestPlanApproved(conv.items)) {

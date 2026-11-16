@@ -236,6 +236,17 @@ export function resolveSteerById(
   return replaceItem(state, itemId, { ...item, steer: delivery });
 }
 
+/**
+ * Removes the run's instructions that never reached the model and returns their text, oldest first, so the caller
+ * can send them as a new turn or hand them back to the composer instead of leaving them marked as undelivered.
+ */
+export function takeDroppedSteers(state: ConversationState, generation: number): { state: ConversationState; texts: string[] } {
+  const dropped = (item: ChatItem) => item.attempt === generation && item.role === "user" && item.steer === "dropped";
+  const texts = state.items.filter(dropped).map((item) => (item as Extract<ChatItem, { role: "user" }>).text);
+  if (texts.length === 0) return { state, texts };
+  return { state: { ...state, items: state.items.filter((item) => !dropped(item)) }, texts };
+}
+
 function resolveOldestSteer(
   state: ConversationState,
   generation: number,

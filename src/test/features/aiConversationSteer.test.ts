@@ -209,14 +209,52 @@ describe("AiSidebar mid-run steering", () => {
     await flush();
   });
 
-  it("marks the steer dropped and restores the input when the kernel rejects it", async () => {
+  it("sends an instruction the kernel rejected as a new turn once the run completes", async () => {
     await send(view!, "Run a command");
     mocks.steer.mockRejectedValueOnce(new Error("AI 任务不存在或已结束"));
-    await steer(view!, "Actually, do not run it");
-    expect(mocks.steer).toHaveBeenCalledWith("job-1", "Actually, do not run it");
-    expect(textOf(view!)).toContain("未送达");
-    expect(textareaOf(view!).value).toBe("Actually, do not run it");
-    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("追加的指令未送达"));
+    await steer(view!, "Actually, check the logs first");
+    expect(mocks.steer).toHaveBeenCalledWith("job-1", "Actually, check the logs first");
+    expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
+
+    mocks.chat.mockResolvedValueOnce({ jobId: "job-2", conversationId: "conv-1" });
+    emit({ type: "done", answer: "Command finished" });
+    await flush();
+    await flush();
+    expect(mocks.chat).toHaveBeenCalledTimes(2);
+    expect(mocks.chat.mock.calls[1][0]).toMatchObject({ message: "Actually, check the logs first" });
+    expect(textOf(view!)).not.toContain("未送达");
+  });
+
+  it("sends an instruction the run ended without reading as a new turn", async () => {
+    await send(view!, "Continue");
+    await steer(view!, "Then restart nginx");
+    mocks.chat.mockResolvedValueOnce({ jobId: "job-2", conversationId: "conv-1" });
+    emit({ type: "steerDropped", text: "Then restart nginx" });
+    emit({ type: "done", answer: "Done" });
+    await flush();
+    await flush();
+    expect(mocks.chat).toHaveBeenCalledTimes(2);
+    expect(mocks.chat.mock.calls[1][0]).toMatchObject({ message: "Then restart nginx" });
+  });
+
+  it("hands an undelivered instruction back to the composer when the run fails", async () => {
+    await send(view!, "Run a command");
+    await steer(view!, "Use sudo");
+    emit({ type: "steerDropped", text: "Use sudo" });
+    emit({ type: "error", message: "boom" });
+    await flush();
+    expect(mocks.chat).toHaveBeenCalledTimes(1);
+    expect(textareaOf(view!).value).toBe("Use sudo");
+    expect(textOf(view!)).not.toContain("未送达");
+  });
+
+  it("sends a steer typed after the run ended as a new message", async () => {
+    await send(view!, "Quick question");
+    emit({ type: "done", answer: "Answer" });
+    await flush();
+    mocks.chat.mockResolvedValueOnce({ jobId: "job-2", conversationId: "conv-1" });
+    await steer(view!, "Follow-up");
+    expect(mocks.chat).toHaveBeenCalledTimes(2);
   });
 
   it("settles steer bubbles in FIFO order — dropped first, then delivered", async () => {
@@ -243,18 +281,18 @@ describe("AiSidebar mid-run steering", () => {
     expect(textOf(view!)).toBe(texts);
   });
 
-  it("settles pending steers as dropped when the run ends, and Enter then starts a new run", async () => {
+  it("starts a new run with a steer still pending when the run completes", async () => {
     await send(view!, "Check it");
     await steer(view!, "Wait, check the disk first");
     expect(textOf(view!)).toContain("等待送达");
 
     emit({ type: "done", answer: "Done checking" });
     await flush();
-    expect(textOf(view!)).toContain("未送达");
-
-    await steer(view!, "Next question");
+    await flush();
     expect(mocks.chat).toHaveBeenCalledTimes(2);
+    expect(mocks.chat.mock.calls[1][0]).toMatchObject({ message: "Wait, check the disk first" });
     expect(mocks.steer).toHaveBeenCalledOnce();
+    expect(textOf(view!)).not.toContain("未送达");
   });
 
   it("stop drops pending steers immediately", async () => {

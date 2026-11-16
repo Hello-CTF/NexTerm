@@ -12,6 +12,7 @@ import {
   resetConversation,
   resolveInteraction,
   resolveSteerById,
+  takeDroppedSteers,
   truncateItemsAfter,
   type ApplyResult,
   type ChatItem,
@@ -63,6 +64,7 @@ export interface ConversationStream {
   appendUser(generation: number, text: string, imageCount?: number): void;
   appendSteer(generation: number, text: string): string;
   resolveSteer(generation: number, itemId: string, delivery: SteerDelivery): void;
+  takeDroppedSteers(generation: number): string[];
   bindJob(generation: number, jobId: string): void;
   resumeFromNextEvent(generation: number): void;
   pushEvent(generation: number, ev: Record<string, unknown>): ApplyResult;
@@ -283,6 +285,18 @@ export function createConversationStream(
           publish();
         }
       });
+    },
+    takeDroppedSteers(generation) {
+      let texts: string[] = [];
+      mutate(() => {
+        const taken = takeDroppedSteers(state, generation);
+        texts = taken.texts;
+        if (taken.state !== state) {
+          state = taken.state;
+          publish();
+        }
+      });
+      return texts;
     },
     bindJob(generation, jobId) {
       mutate(() => {
