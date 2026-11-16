@@ -362,6 +362,16 @@ func TestModelProjectionPreservesFreeContentAndRealNames(t *testing.T) {
 			want: "cursor (2, 3), idle 4ms, screen sequence 5, AltScreen\ncommand state: running, sequence 6, last exit code 7\n用户屏幕中文",
 		},
 		{
+			name: "repeat screen read notes",
+			view: modelResultView{Tool: "read_screen", OK: true, Text: "光标 (2, 3)，空闲 4ms，屏幕序号 9\n自上次读取（屏幕序号 5）以来的新输出；需要整屏请传 full=true\n用户输出中文"},
+			want: "cursor (2, 3), idle 4ms, screen sequence 9\noutput since the previous read (screen sequence 5); pass full=true for the whole screen\n用户输出中文",
+		},
+		{
+			name: "unchanged screen read note",
+			view: modelResultView{Tool: "read_screen", OK: true, Text: "光标 (2, 3)，空闲 4ms，屏幕序号 5\n自上次读取（屏幕序号 5）以来没有新输出；需要整屏请传 full=true\n当前行：\n$ 中文"},
+			want: "cursor (2, 3), idle 4ms, screen sequence 5\nno new output since the previous read (screen sequence 5); pass full=true for the whole screen\ncurrent line:\n$ 中文",
+		},
+		{
 			name: "shell history entries stay unchanged",
 			view: modelResultView{Tool: "shell_history", OK: true, Text: "[注意] 当前会话连接的是远端资产；以下是运行 NexTerm 的本机 shell 历史，不是远端机器的历史。\n[本机 zsh shell 历史，最新 1 条]\necho 没有资产"},
 			want: "[note] this session is connected to a remote asset; the following is the shell history of the local machine running NexTerm, not the remote machine.\n[local zsh shell history, newest 1 entries]\necho 没有资产",

@@ -1041,9 +1041,13 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 		Cursor       string `json:"cursor"`
 		HistoryLines int    `json:"history_lines"`
 		Unwrap       bool   `json:"unwrap"`
+		Full         bool   `json:"full"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
+	}
+	if args.Full && (args.SinceSeq > 0 || args.Cursor != "" || args.HistoryLines > 0) {
+		return Fail(invalid("full 只用于读取当前屏幕，不能与 since_seq、cursor 或 history_lines 同时使用"))
 	}
 	if args.HistoryLines > 0 && (args.SinceSeq > 0 || args.Cursor != "" || args.MaxBytes != 0) {
 		return Fail(invalid("history_lines 不能与 since_seq、cursor 或 max_bytes 同时使用；按序号翻页请去掉 history_lines"))
@@ -1134,11 +1138,53 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 		}
 		header += "\n" + line
 	}
-	text := screen.Text
-	if args.Unwrap {
-		text = strings.Join(unwrapLines(strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n"), screen.Cols), "\n")
+	previous, seen := r.state(jobID).swapScreenRead(tabID, screenRead{seq: screen.Seq, cols: screen.Cols, rows: screen.Rows, alt: screen.AltScreen})
+	// A full-screen program redraws its whole screen, so its screen is its state. On a normal screen the lines above
+	// the prompt are earlier commands the model already read: a repeat read in the same buffer and geometry returns
+	// only what was printed since.
+	if !args.Full && !screen.AltScreen && seen && !previous.alt && previous.cols == screen.Cols && previous.rows == screen.Rows && previous.seq <= screen.Seq {
+		if text, ok := r.screenChangesSince(ctx, tabID, previous.seq, screen, args.Unwrap); ok {
+			return OK(header + "\n" + text)
+		}
 	}
-	return OK(header + "\n" + text)
+	lines := strings.Split(strings.ReplaceAll(screen.Text, "\r\n", "\n"), "\n")
+	if !screen.AltScreen {
+		// Rows below the last output of a normal screen are empty; a full-screen layout keeps its rows.
+		for len(lines) > 1 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+			lines = lines[:len(lines)-1]
+		}
+	}
+	if args.Unwrap {
+		lines = unwrapLines(lines, screen.Cols)
+	}
+	return OK(header + "\n" + strings.Join(lines, "\n"))
+}
+
+// screenChangesSince renders a normal screen's output after the previous read's
+// sequence. It reports false (the caller shows the whole screen) when that
+// output is gone from the buffer or too long for one page, so nothing the model
+// has not seen is skipped.
+func (r *Registry) screenChangesSince(ctx context.Context, tabID string, since uint64, screen Screen, unwrap bool) (string, bool) {
+	if since == screen.Seq {
+		note := fmt.Sprintf("自上次读取（屏幕序号 %d）以来没有新输出；需要整屏请传 full=true", since)
+		if lines, row, ok := screenInputLines(screen); ok {
+			note += "\n当前行：\n" + lines[row]
+		}
+		return note, true
+	}
+	data, start, latest, err := r.outputSince(ctx, tabID, since, defaultDiffBytes)
+	if err != nil || start != since || start+uint64(len(data)) < latest {
+		return "", false
+	}
+	lines := renderOutputDiff(data, screen.Cols, screen.Rows)
+	if unwrap {
+		lines = unwrapLines(lines, screen.Cols)
+	}
+	text, _, truncated := capHeadTail(strings.Join(lines, "\n"))
+	if truncated {
+		return "", false
+	}
+	return fmt.Sprintf("自上次读取（屏幕序号 %d）以来的新输出；需要整屏请传 full=true\n%s", since, text), true
 }
 
 // screenIdentityHeader renders the per-tab identity lines (title, kind, cwd,

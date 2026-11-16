@@ -400,7 +400,7 @@ func projectReadScreenText(text string) (string, bool) {
 			header += "\n"
 			rest = rest[len(state[0]):]
 		}
-		return header + rest, true
+		return header + projectScreenChanges(rest), true
 	}
 	if matches := takeoverHeaderPattern.FindStringSubmatch(text); matches != nil {
 		return fmt.Sprintf("cursor (%s, %s), idle %sms\n", matches[1], matches[2], matches[3]) + text[len(matches[0]):], true
@@ -414,6 +414,26 @@ func projectReadScreenText(text string) (string, bool) {
 		return header + notes + "\n" + text[len(matches[0]):], true
 	}
 	return text, false
+}
+
+var (
+	screenUnchangedPattern = regexp.MustCompile(`^自上次读取（屏幕序号 ([0-9]+)）以来没有新输出；需要整屏请传 full=true(\n当前行：\n)?`)
+	screenChangesPattern   = regexp.MustCompile(`^自上次读取（屏幕序号 ([0-9]+)）以来的新输出；需要整屏请传 full=true\n`)
+)
+
+// projectScreenChanges translates the note a repeat read_screen of a normal screen starts with.
+func projectScreenChanges(rest string) string {
+	if matches := screenUnchangedPattern.FindStringSubmatch(rest); matches != nil {
+		note := fmt.Sprintf("no new output since the previous read (screen sequence %s); pass full=true for the whole screen", matches[1])
+		if matches[2] != "" {
+			note += "\ncurrent line:\n"
+		}
+		return note + rest[len(matches[0]):]
+	}
+	if matches := screenChangesPattern.FindStringSubmatch(rest); matches != nil {
+		return fmt.Sprintf("output since the previous read (screen sequence %s); pass full=true for the whole screen\n", matches[1]) + rest[len(matches[0]):]
+	}
+	return rest
 }
 
 func projectTerminalWaitText(text string) (string, bool) {
@@ -592,6 +612,7 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "wait_ms 必须在 0-%d 毫秒之间", target: "wait_ms must be between 0 and %d milliseconds"},
 	{source: "timeout_ms 超出 1-%d 毫秒范围", target: "timeout_ms must be between 1 and %d milliseconds"},
 	{source: "光标 (%d, %d)，空闲 %dms，屏幕序号 %d", target: "cursor (%d, %d), idle %dms, screen sequence %d"},
+	{source: "full 只用于读取当前屏幕，不能与 since_seq、cursor 或 history_lines 同时使用", target: "full only reads the current screen and cannot be combined with since_seq, cursor or history_lines"},
 	{source: "光标 (%d, %d)，空闲 %dms\n%s", target: "cursor (%d, %d), idle %dms\n%s"},
 	{source: "命令状态：%s，序号 %d", target: "command state: %s, sequence %d"},
 	{source: "新输出（序号 %d → %d，最新 %d）", target: "new output (sequence %d -> %d, latest %d)"},
