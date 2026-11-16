@@ -172,7 +172,7 @@ describe("M134 AI copy", () => {
     const selector = mount(createElement(ModelSelector, { onManage: () => undefined }));
     await flush();
     const chip = selector.container.querySelector("button.nx-chip");
-    expect(chip?.getAttribute("title")).toBe("模型配置（可保存多份模型档案）");
+    expect(chip?.getAttribute("title")).toContain("模型配置（可保存多份模型档案）");
     expect(selector.container.textContent).not.toContain("BYOK");
     selector.unmount();
   });

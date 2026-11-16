@@ -198,7 +198,10 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		conversationID = row.ID
 		ownerID = row.OwnerID
 	}
-	executionCtx := privacy.WithConversation(conversationExecutionContext(ctx, ownerID), conversationID)
+	if !args.Privacy.Valid() {
+		return StartResponse{}, fmt.Errorf("无效的脱敏选择：%s", args.Privacy)
+	}
+	executionCtx := provider.WithRequestPrivacy(privacy.WithConversation(conversationExecutionContext(ctx, ownerID), conversationID), args.Privacy)
 	if persisted {
 		resolved, resolveErr := r.resolveScope(executionCtx, conversationID, persistedScope)
 		if resolveErr != nil {
@@ -270,7 +273,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		return StartResponse{}, err
 	}
 	if r.runs != nil {
-		if err := r.runs.RunInsert(executionCtx, store.RunRow{ID: jobID, ConversationID: conversationID, Status: store.RunStatusRunning, PlanMode: args.PlanMode, Source: args.Source, ProfileID: r.profileIDFor(executionCtx, args)}); err != nil {
+		if err := r.runs.RunInsert(executionCtx, store.RunRow{ID: jobID, ConversationID: conversationID, Status: store.RunStatusRunning, PlanMode: args.PlanMode, Source: args.Source, ProfileID: r.profileIDFor(executionCtx, args), Privacy: string(args.Privacy)}); err != nil {
 			r.releaseJobID(jobID)
 			cancel()
 			forceCancel()

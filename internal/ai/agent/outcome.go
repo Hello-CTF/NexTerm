@@ -61,7 +61,11 @@ func (r *Runner) EditResend(ctx context.Context, conversationID, messageID strin
 	if editResendTestHook != nil {
 		editResendTestHook()
 	}
-	return truncater.MsgTruncateAfter(ctx, conversationID, messageID)
+	if err := truncater.MsgTruncateAfter(ctx, conversationID, messageID); err != nil {
+		return err
+	}
+	r.config.Tools.ForgetScreenReads(conversationID)
+	return nil
 }
 
 var editResendTestHook func()

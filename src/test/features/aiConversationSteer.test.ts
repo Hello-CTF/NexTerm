@@ -75,6 +75,7 @@ vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: mocks.promptTex
 
 import { AiSidebar } from "../../features/ai/AiSidebar";
 import { useUi } from "../../app/store";
+import { setChatPrivacyChoice } from "../../features/ai/chatPrivacyChoice";
 
 let rafQueue: { cb: FrameRequestCallback; cancelled: boolean }[] = [];
 
@@ -207,6 +208,17 @@ describe("AiSidebar mid-run steering", () => {
     expect(textOf(view!)).toContain("已送达");
     emit({ type: "done", answer: "Done" });
     await flush();
+  });
+
+  it("sends the chat tab's temporary redaction choice with its messages", async () => {
+    const tabKey = useUi.getState().aiBoards.global.tabs[0].id;
+    act(() => setChatPrivacyChoice(tabKey, "off"));
+    try {
+      await send(view!, "Look at the logs");
+      expect(mocks.chat.mock.calls[0][0]).toMatchObject({ message: "Look at the logs", privacy: "off" });
+    } finally {
+      act(() => setChatPrivacyChoice(tabKey, null));
+    }
   });
 
   it("sends an instruction the kernel rejected as a new turn once the run completes", async () => {

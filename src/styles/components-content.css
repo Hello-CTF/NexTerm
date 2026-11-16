@@ -254,9 +254,16 @@
   .nx-chip-status {
     cursor: default;
   }
-  /* The redaction guard is a lone shield beside the usage ring; its wording is the tooltip. */
+  /* The redaction guard is a lone shield beside the usage ring; its wording is the tooltip. As a button it switches
+     redaction for the chat's next messages. */
   .nx-privacy-icon {
     cursor: default;
+  }
+  button.nx-privacy-icon {
+    cursor: pointer;
+  }
+  .nx-privacy-icon.is-off {
+    color: var(--nx-fg-tertiary);
   }
   .nx-privacy-icon.is-on {
     color: var(--color-green-400);

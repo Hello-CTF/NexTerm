@@ -30,6 +30,10 @@ type Registry struct {
 	// concurrent duplicate of the same call fails fast instead of
 	// establishing a second connection.
 	flights map[string]struct{}
+	// screenReads is the main agent's last plain read_screen per conversation and tab (see screen_memory.go).
+	screenMu    sync.Mutex
+	screenReads map[string]map[string]screenRead
+	screenOrder []string
 }
 
 func NewRegistry(deps Dependencies) *Registry {

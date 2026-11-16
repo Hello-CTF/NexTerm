@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync/atomic"
@@ -320,5 +321,27 @@ func TestRestoreFailureReportsItsCause(t *testing.T) {
 	err := restarted.Confirm(Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"})
 	if err == nil || errors.Is(err, ErrJobNotFound) || !strings.Contains(err.Error(), "模型档案已删除") {
 		t.Fatalf("restore failure = %v, want the real cause", err)
+	}
+}
+
+func TestSteerSavedBeforeItsToolRowsIsRebuiltAfterThem(t *testing.T) {
+	encode := func(row map[string]any) store.MessageRow {
+		encoded, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return store.MessageRow{ConversationID: "conversation", ContentJSON: string(encoded)}
+	}
+	// The agent loop saved the steer while the event consumer was still saving the turn's tool rows.
+	rows := []store.MessageRow{
+		encode(map[string]any{"role": "user", "content": "go", "jobId": "job-1"}),
+		encode(map[string]any{"role": "user", "content": "also check logs", "steered": true, "jobId": "job-1", "after": []string{"probe"}}),
+		encode(map[string]any{"type": historyTypeToolCall, "jobId": "job-1", "id": "probe", "name": "docker_exec", "args": map[string]any{}}),
+		encode(map[string]any{"type": historyTypeToolResult, "jobId": "job-1", "id": "probe", "tool": "docker_exec", "ok": true, "text": "ok"}),
+		encode(map[string]any{"role": "assistant", "content": "done", "jobId": "job-1"}),
+	}
+	want := []string{"user:go", "assistant:probe", "tool:probe", "user:also check logs", "assistant:done"}
+	if got := messageShape(historyMessages(rows, "next")); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("history = %q, want %q", got, want)
 	}
 }

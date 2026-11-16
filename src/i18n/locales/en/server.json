@@ -1903,6 +1903,7 @@
   "无匹配": "No match",
   "无效的前端性能数据类型": "Invalid frontend performance data type",
   "无效的模型精度": "Invalid model precision",
+  "无效的脱敏选择：%s": "Invalid masking choice: %s",
   "无效的隐私模型选择": "Invalid privacy model selection",
   "无权使用该 SSH 跳板资产": "You have no permission to use this SSH jump host asset",
   "无权关闭该远程桌面连接": "You have no permission to close this remote desktop connection",

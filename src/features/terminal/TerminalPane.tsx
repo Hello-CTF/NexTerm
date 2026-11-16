@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
+import { useCollapseOnOverflow } from "./toolbarCollapse";
 import { XtermView, type TerminalHandle, type TerminalLinkMenuRequest, type TerminalSearchApi } from "./XtermView";
 import { SEARCH_HIGHLIGHT_LIMIT, type TerminalSearchFlags, type TerminalSearchResults } from "./xtermAddons";
 import { EARLIER_HISTORY_PANEL_ATTRIBUTE, EarlierHistory } from "./EarlierHistoryPanel";
@@ -2155,6 +2156,14 @@ export function TerminalPane({
       // After the menu closes, so the overlay's keyboard handling starts with the terminal focused.
       onSelect: () => window.setTimeout(() => startTerminalQuickSelect(storeTabId), 0),
     },
+    {
+      kind: "item",
+      label: tr("会话侧栏"),
+      icon: <IconPanelRight size={13} />,
+      hint: sidebarShown ? tr("已打开") : undefined,
+      accel: formatBinding(bindings.sessionSidebar),
+      onSelect: toggleSidebarHere,
+    },
     ...(previewShareEnabled && kernelTabId
       ? ([
           {
@@ -2277,6 +2286,10 @@ export function TerminalPane({
         ] satisfies MenuItem[])
       : []),
   ];
+
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  // A toolbar too narrow for its buttons folds them into the menu button instead of pushing them out of the pane.
+  const toolbarCollapsed = useCollapseOnOverflow(toolbarRef);
 
   const openToolbarOverflow = (e: ReactMouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -2533,7 +2546,7 @@ export function TerminalPane({
 
   return (
     <div ref={paneRef} className={`nx-pane nx-terminal-pane bg-term @container/term${productionClassification?.production ? " nx-pane-production" : ""}`}>
-      <div className="nx-toolbar nx-term-toolbar">
+      <div ref={toolbarRef} className={`nx-toolbar nx-term-toolbar${toolbarCollapsed ? " is-collapsed" : ""}`}>
         <span className="nx-toolbar-title" title={title}>{title}</span>
         <span
           className={`nx-badge ${
@@ -2635,7 +2648,7 @@ export function TerminalPane({
         <div className="nx-spacer" />
 
         <button
-          className={`nx-btn nx-btn-ghost nx-btn-sm @max-[560px]:hidden ${searchOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
+          className={`nx-btn nx-btn-ghost nx-btn-sm nx-term-collapsible @max-[560px]:hidden ${searchOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
           title={tr("搜索终端内容 ({searchBindingLabel})", { searchBindingLabel })}
           aria-label={tr("搜索")}
           aria-pressed={searchOpen}
@@ -2656,9 +2669,9 @@ export function TerminalPane({
 
         {blocksSupported && (
           <>
-            <span className="nx-divider-v @max-[560px]:hidden" />
+            <span className="nx-divider-v nx-term-collapsible @max-[560px]:hidden" />
             <button
-              className="nx-icon-btn nx-icon-btn-sm @max-[560px]:hidden"
+              className="nx-icon-btn nx-icon-btn-sm nx-term-collapsible @max-[560px]:hidden"
               disabled={!blocks.length}
               aria-label={tr("上一条命令")}
               title={tr("上一条命令")}
@@ -2667,7 +2680,7 @@ export function TerminalPane({
               <IconArrowUp size={13} />
             </button>
             <button
-              className="nx-icon-btn nx-icon-btn-sm @max-[560px]:hidden"
+              className="nx-icon-btn nx-icon-btn-sm nx-term-collapsible @max-[560px]:hidden"
               disabled={!blocks.length}
               aria-label={tr("下一条命令")}
               title={tr("下一条命令")}
@@ -2676,7 +2689,7 @@ export function TerminalPane({
               <IconArrowDown size={13} />
             </button>
             <button
-              className={`nx-btn nx-btn-sm @max-[560px]:hidden ${blocksOpen ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
+              className={`nx-btn nx-btn-sm nx-term-collapsible @max-[560px]:hidden ${blocksOpen ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
               title={tr("命令列表：按命令查看、复制或定位输出")}
               aria-label={tr("命令列表")}
               onClick={toggleBlocksPanel}
@@ -2688,7 +2701,7 @@ export function TerminalPane({
           </>
         )}
         <button
-          className={`nx-btn nx-btn-sm @max-[560px]:hidden ${sidebarShown ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
+          className={`nx-btn nx-btn-sm nx-term-collapsible @max-[560px]:hidden ${sidebarShown ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
           aria-pressed={sidebarShown}
           aria-label={tr("侧栏")}
           title={tr("会话侧栏 ({value})", { value: formatBinding(bindings.sessionSidebar) })}
@@ -2718,7 +2731,7 @@ export function TerminalPane({
           ⋯
           {previewActive && (
             <span
-              className="nx-dot ml-0.5 inline-block align-middle @min-[561px]:hidden"
+              className="nx-dot nx-term-more-dot ml-0.5 align-middle"
               role="img"
               aria-label={tr("预览链接分享中")}
               data-testid="preview-active-dot"
@@ -2726,7 +2739,7 @@ export function TerminalPane({
           )}
           {narrowStatusAttention && (
             <span
-              className="nx-dot nx-dot-pulse ml-0.5 inline-block align-middle @min-[561px]:hidden"
+              className="nx-dot nx-dot-pulse nx-term-more-dot ml-0.5 align-middle"
               role="img"
               aria-label={tr("有状态需要查看，点开菜单")}
               data-testid="toolbar-status-dot"

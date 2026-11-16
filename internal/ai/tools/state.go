@@ -30,6 +30,9 @@ type jobState struct {
 	// bound to when granted; they are read-only targets for this job.
 	referencedTabs map[string]string
 	lastInput      map[string]terminalInputState
+	// screenReads is the last plain read_screen of each tab in this job, so a
+	// later read of a normal screen returns only what changed since.
+	screenReads map[string]screenRead
 	// assetOperations maps a call ID to the asset identities it executed
 	// under and the session its explicit connect established: the stable
 	// operation→identity mapping a later retry adjudicates before
@@ -123,6 +126,26 @@ func (s *jobState) createdTab(tabID string) (string, bool) {
 	defer s.mu.Unlock()
 	sessionID, ok := s.createdTabs[tabID]
 	return sessionID, ok
+}
+
+// screenRead is what one plain read_screen showed: the screen sequence it
+// covered and the geometry and buffer it was read in.
+type screenRead struct {
+	seq        uint64
+	cols, rows int
+	alt        bool
+}
+
+// swapScreenRead records the read in this job and returns the one before it.
+func (s *jobState) swapScreenRead(tabID string, read screenRead) (screenRead, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.screenReads == nil {
+		s.screenReads = make(map[string]screenRead)
+	}
+	previous, ok := s.screenReads[tabID]
+	s.screenReads[tabID] = read
+	return previous, ok
 }
 
 func (s *jobState) rememberReferencedTab(tabID, sessionID string) {

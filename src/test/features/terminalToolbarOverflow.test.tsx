@@ -228,6 +228,7 @@ describe("terminal toolbar overflow", () => {
     expect(menuLabels()).toEqual([
       "搜索终端内容",
       "快速选择",
+      "会话侧栏",
       "上一条命令",
       "下一条命令",
       "复制上一条命令的输出",
@@ -403,6 +404,27 @@ describe("terminal toolbar overflow", () => {
       const narrow = "term (max-width: 560px)";
       expect(declared(rules, ".nx-toolbar.nx-term-toolbar", "flex-wrap", narrow)).toBe("nowrap");
       expect(declared(rules, ".nx-term-toolbar > .nx-toolbar-extra", "display", narrow)).toBe("none");
+    } finally {
+      installed.remove();
+    }
+  });
+
+  it("folds the buttons into the menu at any width once the toolbar is collapsed", async () => {
+    const toolbar = mounted!.container.querySelector(".nx-term-toolbar")!;
+    for (const el of [
+      toolbar.querySelector('button[title^="搜索终端内容"]'),
+      toolbar.querySelector('button[title="上一条命令"]'),
+      [...toolbar.querySelectorAll("button")].find((b) => b.textContent?.includes("命令列表")),
+      toolbar.querySelector('button[title^="会话侧栏"]'),
+    ]) {
+      expect(el?.classList.contains("nx-term-collapsible")).toBe(true);
+    }
+    const installed = await installCompiledCSS("src/styles.css");
+    try {
+      const rules = styleRules(installed);
+      expect(declared(rules, ".nx-term-toolbar.is-collapsed .nx-term-collapsible", "display")).toBe("none");
+      expect(declared(rules, ".nx-term-toolbar.is-collapsed > .nx-toolbar-extra", "display")).toBe("none");
+      expect(declared(rules, ".nx-term-toolbar.is-collapsed .nx-term-more-dot", "display")).toBe("inline-block");
     } finally {
       installed.remove();
     }

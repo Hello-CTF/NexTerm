@@ -1903,6 +1903,7 @@
   "无匹配": "Sin coincidencias",
   "无效的前端性能数据类型": "El tipo de datos de rendimiento del frontend no es válido",
   "无效的模型精度": "La precisión del modelo no es válida",
+  "无效的脱敏选择：%s": "Opción de anonimización no válida: %s",
   "无效的隐私模型选择": "La selección del modelo de privacidad no es válida",
   "无权使用该 SSH 跳板资产": "No tiene permiso para usar este recurso de host de salto SSH",
   "无权关闭该远程桌面连接": "No tiene permiso para cerrar esta conexión de escritorio remoto",

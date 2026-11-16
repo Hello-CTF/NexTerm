@@ -173,5 +173,9 @@ func (r *Runner) DeleteConversation(ctx context.Context, conversationID string, 
 	if busy {
 		return ErrConversationDeleteBusy
 	}
-	return remove(ctx)
+	if err := remove(ctx); err != nil {
+		return err
+	}
+	r.config.Tools.ForgetScreenReads(conversationID)
+	return nil
 }

@@ -27,6 +27,44 @@
   min-width: 4em;
 }
 
+/* The menu button's dots flag an active preview or a status only while the toolbar is collapsed, since the wide
+   toolbar shows both itself. */
+.nx-term-toolbar .nx-term-more-dot {
+  display: none;
+}
+
+/* A toolbar whose content does not fit (measured, see useCollapseOnOverflow) takes the narrow layout below at any
+   width: the buttons and second-row badges move into the menu button instead of leaving the pane. */
+.nx-toolbar.nx-term-toolbar.is-collapsed {
+  padding-top: 3px;
+  padding-bottom: 3px;
+  position: relative;
+}
+
+.nx-term-toolbar.is-collapsed > .relative {
+  position: static;
+}
+
+.nx-term-toolbar.is-collapsed > .nx-toolbar-title {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.nx-term-toolbar.is-collapsed > .nx-spacer,
+.nx-term-toolbar.is-collapsed > .nx-toolbar-extra,
+.nx-term-toolbar.is-collapsed .nx-term-collapsible,
+.nx-term-toolbar.is-collapsed .nx-term-status-text {
+  display: none;
+}
+
+.nx-term-toolbar.is-collapsed > .nx-term-more {
+  order: 2;
+}
+
+.nx-term-toolbar.is-collapsed .nx-term-more-dot {
+  display: inline-block;
+}
+
 /* Narrow panes show the toolbar buttons as icons; their names stay in the title and the accessible label. */
 @container term (max-width: 860px) {
   .nx-term-toolbar .nx-term-btn-label {
@@ -71,6 +109,10 @@
 
   .nx-term-toolbar .nx-term-status-text {
     display: none;
+  }
+
+  .nx-term-toolbar .nx-term-more-dot {
+    display: inline-block;
   }
 
 }

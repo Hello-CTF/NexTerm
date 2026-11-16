@@ -79,6 +79,7 @@ func (r *Runner) CompactConversation(ctx context.Context, conversationID string)
 	if err := r.store.MsgInsert(executionCtx, conversationID, historyTypeSummary, summaryRow, nil, nil); err != nil {
 		return CompactResult{}, err
 	}
+	r.config.Tools.ForgetScreenReads(conversationID)
 	return CompactResult{Messages: len(history)}, nil
 }
 

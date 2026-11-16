@@ -145,6 +145,9 @@ type parsedHistoryRow struct {
 	Interim     bool   `json:"interim"`
 	Partial     bool   `json:"partial"`
 	BeforeJobID string `json:"beforeJobId"`
+	Steered     bool   `json:"steered"`
+	// After names the tool results a steer followed when the model received it.
+	After []string `json:"after"`
 }
 
 // partialAnswerNote follows a partial answer in the model input so the model
@@ -192,9 +195,47 @@ func orderHistoryRows(rows []store.MessageRow) []parsedHistoryRow {
 	}
 	ordered := make([]parsedHistoryRow, 0, len(rows))
 	for _, current := range blocks {
-		ordered = append(ordered, current.rows...)
+		ordered = append(ordered, placeSteersAfterTheirToolResults(current.rows)...)
 	}
 	return ordered
+}
+
+// placeSteersAfterTheirToolResults moves each steer that names the tool
+// results it followed to just after the last of them. The agent loop saves a
+// steer before its next model call while the event consumer may still be
+// saving the previous turn's tool rows, so a steer row can be stored before
+// the tool call and results the model saw first.
+func placeSteersAfterTheirToolResults(rows []parsedHistoryRow) []parsedHistoryRow {
+	moved := false
+	for _, row := range rows {
+		if row.Steered && len(row.After) > 0 {
+			moved = true
+			break
+		}
+	}
+	if !moved {
+		return rows
+	}
+	result := append([]parsedHistoryRow(nil), rows...)
+	for index := 0; index < len(result); index++ {
+		row := result[index]
+		if !row.Steered || len(row.After) == 0 {
+			continue
+		}
+		target := -1
+		for later := index + 1; later < len(result); later++ {
+			if result[later].Type == historyTypeToolResult && slices.Contains(row.After, result[later].ID) {
+				target = later
+			}
+		}
+		if target < 0 {
+			continue
+		}
+		copy(result[index:target], result[index+1:target+1])
+		result[target] = row
+		index--
+	}
+	return result
 }
 
 func rebuildHistory(rows []store.MessageRow, jobID string) []*schema.Message {
