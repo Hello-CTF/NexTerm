@@ -29,6 +29,8 @@ export interface ConversationFollow {
   newOutput: boolean;
   following: boolean;
   jumpToLatest: () => void;
+  // acknowledgeGrowth takes the current height as seen, for content added above the viewport.
+  acknowledgeGrowth: () => void;
 }
 
 export function useConversationFollow(revision: unknown): ConversationFollow {
@@ -92,5 +94,10 @@ export function useConversationFollow(revision: unknown): ConversationFollow {
     lastHeightRef.current = el.scrollHeight;
   }, [el, revision]);
 
-  return { scrollRef, newOutput, following, jumpToLatest: () => jumpRef.current() };
+  const acknowledgeGrowth = useCallback(() => {
+    const node = elRef.current;
+    if (node) lastHeightRef.current = node.scrollHeight;
+  }, []);
+
+  return { scrollRef, newOutput, following, jumpToLatest: () => jumpRef.current(), acknowledgeGrowth };
 }

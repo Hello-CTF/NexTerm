@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { modelApi } from "../../../ipc/commands";
 import { IconAlert, IconRefresh, IconBot, IconShield, IconInfo, IconList } from "../../../ui/icons";
 import { useUi } from "../../../app/store";
 import { PLAN_EXECUTE_MESSAGE, confirmTitle, toolLabel, CONFIRM_HELP, permanentScopeText, interceptionRuleFromCard } from "./aiSidebarShared";
 import { CONFIRM_ACTION_LABELS, CONFIRM_ALWAYS_BLOCK_LABEL } from "./aiConfirmLabels";
-import { ChatBubble, ConfirmBody, ProductionEnvironmentChallenge } from "./AiMessageBubbles";
+import { ChatBubble, ConfirmBody, ProductionEnvironmentChallenge, ToolGroupSummary } from "./AiMessageBubbles";
+import { type ToolGroup, groupToolRuns, pendingConfirmCallIds, toolNeedsAttention } from "../toolGroups";
 import type { AiChatCtx } from "./aiChatCtx";
 import { continuableOutcomeId, useContinueRun } from "./continueRun";
 import { t as tr } from "../../../i18n";
@@ -41,6 +42,22 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
   const { setScrollEl, messageWindowStart, loadOlderMessages, conv, conversationError, conversationIdRef, restoreConversation, virtual, activeMatchIndex, busy, handleApprovePlan, handleRetryRun, handleEditResend, agentToolCallFor, submitAgentApproval, submittingCardId, confirmCard, confirmCardRef, confirm, productionNames, handleProductionState, productionBlocked, questionCard, answer, questionInput, setQuestionInput, follow, setModelPanelOpen } = ctx;
   const continueRun = useContinueRun(ctx);
   const continuableId = useMemo(() => continuableOutcomeId(conv.items), [conv.items]);
+  const groupAt = useMemo(() => {
+    const out = new Map<number, ToolGroup>();
+    for (const group of groupToolRuns(conv.items)) {
+      for (let index = group.start; index < group.end; index++) out.set(index, group);
+    }
+    return out;
+  }, [conv.items]);
+  const pendingConfirms = useMemo(() => pendingConfirmCallIds(conv.items), [conv.items]);
+  const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleGroup = useCallback((key: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  }, []);
   return (
     <>
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -92,6 +109,39 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
             const planApproved =
               item.role === "plan" &&
               conv.items.some((candidate, candidateIndex) => candidateIndex > index && candidate.role === "user" && candidate.text.trim() === PLAN_EXECUTE_MESSAGE);
+            // A folded run hides its finished calls; a call the user must see or act on, and the current search
+            // match, stay in place below the summary.
+            const group = groupAt.get(index);
+            const expanded = group ? expandedGroups.has(group.key) : true;
+            const showSummary = group !== undefined && index === group.start;
+            const showItem =
+              expanded ||
+              index === activeMatchIndex ||
+              (item.role === "tool" && toolNeedsAttention(item, pendingConfirms));
+            if (!showItem && !showSummary) {
+              return (
+                <div
+                  key={item.id}
+                  data-conversation-index={index}
+                  data-index={index}
+                  ref={virtual.measureRef}
+                />
+              );
+            }
+            const bubble = showItem ? (
+              <ChatBubble
+                item={item}
+                streaming={busy && index === conv.items.length - 1}
+                planApproved={planApproved}
+                onApprovePlan={handleApprovePlan}
+                onRetry={handleRetryRun}
+                onContinue={!busy && item.id === continuableId ? continueRun : undefined}
+                onEdit={handleEditResend}
+                agentToolCall={item.role === "tool" ? agentToolCallFor(item) : null}
+                onAgentApproval={submitAgentApproval}
+                agentApprovalBusy={submittingCardId !== null}
+              />
+            ) : null;
             return (
               <div
                 key={item.id}
@@ -107,18 +157,14 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                     .join(" ") || undefined
                 }
               >
-                <ChatBubble
-                  item={item}
-                  streaming={busy && index === conv.items.length - 1}
-                  planApproved={planApproved}
-                  onApprovePlan={handleApprovePlan}
-                  onRetry={handleRetryRun}
-                  onContinue={!busy && item.id === continuableId ? continueRun : undefined}
-                  onEdit={handleEditResend}
-                  agentToolCall={item.role === "tool" ? agentToolCallFor(item) : null}
-                  onAgentApproval={submitAgentApproval}
-                  agentApprovalBusy={submittingCardId !== null}
-                />
+                {showSummary && group ? (
+                  <>
+                    <ToolGroupSummary group={group} expanded={expanded} onToggle={toggleGroup} />
+                    {bubble ? <div className="mt-2.5">{bubble}</div> : null}
+                  </>
+                ) : (
+                  bubble
+                )}
               </div>
             );
           })}

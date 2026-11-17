@@ -1,13 +1,14 @@
 import { memo, useState, useMemo, useEffect } from "react";
 import { type ChatItem, type ConfirmItem, type QuestionItem, type SubagentTimeline } from "../conversation";
 import type { AgentToolCall, AgentApprovalDecision } from "../agentTypes";
-import { IconEdit, IconImage, IconAlert, IconRefresh, IconShield, IconLoader, IconCheck, IconXCircle, IconChevronRight, IconBot, IconList, IconPlay } from "../../../ui/icons";
+import { IconEdit, IconImage, IconAlert, IconRefresh, IconShield, IconLoader, IconCheck, IconXCircle, IconChevronRight, IconBot, IconList, IconPlay, IconLayers } from "../../../ui/icons";
 import { Markdown } from "../Markdown";
 import { AgentToolCard } from "../AgentToolCard";
 import { type EnvironmentConfirmationChallenge, evaluateEnvironmentConfirmation, isManagedDeviceEnvironment, MANAGED_DEVICE_ENVIRONMENT_HINT, targetKey, environmentDisplayLabel } from "../../production/environmentConfirmation";
 import { simpleDiff, hasVisibleChange, diffLineText } from "../diff";
 import { toolLabel, extractUrls, splitUserRefs } from "./aiSidebarShared";
 import { resolutionLabel, TOOL_USER_DENIED } from "./aiConfirmLabels";
+import { type ToolGroup, toolGroupSummary, toolGroupFailedText } from "../toolGroups";
 import { t } from "../../../i18n";
 
 
@@ -185,6 +186,35 @@ export const ChatBubble = memo(function ChatBubble({
   }
   return null;
 });
+
+// The folded row of a run of tool calls. Calls that are running, failed or waiting for the user render below it even
+// while it is closed; opening it shows every call of the run.
+export function ToolGroupSummary({
+  group,
+  expanded,
+  onToggle,
+}: {
+  group: ToolGroup;
+  expanded: boolean;
+  onToggle: (key: string) => void;
+}) {
+  const failed = toolGroupFailedText(group);
+  return (
+    <button
+      type="button"
+      data-tool-group={group.key}
+      className="flex w-full min-w-0 items-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-900/40 px-2.5 py-1.5 text-left text-[11px] text-neutral-400 hover:text-neutral-200"
+      aria-expanded={expanded}
+      title={expanded ? t("收起工具调用") : t("展开工具调用")}
+      onClick={() => onToggle(group.key)}
+    >
+      <IconChevronRight size={10} className={`shrink-0 text-neutral-500 ${expanded ? "rotate-90" : ""}`} />
+      <IconLayers size={11} className="shrink-0 text-neutral-500" />
+      <span className="min-w-0 flex-1 truncate">{toolGroupSummary(group)}</span>
+      {failed ? <span className="nx-badge nx-badge-red shrink-0">{failed}</span> : null}
+    </button>
+  );
+}
 
 // Reasoning stays collapsed: while it streams, only its newest lines show
 // under the summary, and opening it shows all of it.

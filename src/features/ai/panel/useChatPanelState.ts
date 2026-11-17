@@ -6,6 +6,7 @@ import { historyJobIdOf, historyToItems } from "../conversation";
 import { type AiPermissionConfig, aiApi, modelApi } from "../../../ipc/commands";
 import { useConversationFollow } from "../conversationFollow";
 import { useVirtualWindow } from "../conversationVirtual";
+import { useHistoryAutoload } from "../historyAutoload";
 import { findItemMatches, stepMatch } from "../conversationSearch";
 import { describeError } from "../../../ui/errorText";
 import { productionSkillsApi } from "../../settings/skillsApi";
@@ -77,17 +78,18 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
     }
     return out;
   }, []);
-  const loadOlderMessages = () => {
+  const loadOlderPage = (): boolean => {
     const history = messageHistoryRef.current;
-    if (!isLifecycleActive() || !history || history.id !== conversationIdRef.current) return;
+    if (!isLifecycleActive() || !history || history.id !== conversationIdRef.current) return false;
     const next = earlierMessageHistoryStart(messageWindowStartRef.current, MESSAGE_HISTORY_PAGE_SIZE);
-    if (next === messageWindowStartRef.current) return;
+    if (next === messageWindowStartRef.current) return false;
     messageWindowStartRef.current = next;
     setMessageWindowStart(next);
     stream.replaceHistory(
       historyToItems(stream.getState(), history.messages.slice(next), history.skipJobIds),
       leadingReplayJobIds(history.id),
     );
+    return true;
   };
   const deletedConversationIdsRef = useRef<Set<string>>(new Set());
   const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
@@ -112,12 +114,22 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
   const virtual = useVirtualWindow(conv.items.length);
   const { scrollRef: followScrollRef } = follow;
   const { scrollRef: virtualScrollRef, revealIndex: virtualRevealIndex, clearReveal: virtualClearReveal } = virtual;
+  const historyAutoload = useHistoryAutoload({
+    windowStart: messageWindowStart,
+    itemCount: conv.items.length,
+    loadOlder: loadOlderPage,
+    holdPosition: virtual.holdPosition,
+    anchorIndex: virtual.anchorIndex,
+    acknowledgeGrowth: follow.acknowledgeGrowth,
+  });
+  const { scrollRef: autoloadScrollRef, loadOlder: loadOlderMessages } = historyAutoload;
   const setScrollEl = useCallback(
     (el: HTMLElement | null) => {
       followScrollRef(el);
       virtualScrollRef(el);
+      autoloadScrollRef(el);
     },
-    [followScrollRef, virtualScrollRef],
+    [followScrollRef, virtualScrollRef, autoloadScrollRef],
   );
   const [conversationRuns, setConversationRuns] = useState<AiRunDto[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);

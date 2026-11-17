@@ -293,6 +293,11 @@ describe("AiSidebar restored run placement", () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
     await flush();
+    // The two calls fold into one summary; the running call stays visible and opening the summary shows the rest.
+    expect(text()).toContain("等待了 1 次输出");
+    expect(text()).not.toContain("等待就绪");
+    expectInOrder(["等服务就绪", "检查端口", "工具执行中"]);
+    click(view!.container.querySelector<HTMLButtonElement>("button[data-tool-group]")!);
     expectInOrder(["等服务就绪", "等待就绪", "工具执行成功", "检查端口", "工具执行中"]);
 
     log["job-a"].push(

@@ -67,6 +67,10 @@ export interface VirtualWindow {
   measureRef: (el: HTMLElement | null) => void;
   revealIndex: (index: number) => void;
   clearReveal: () => void;
+  // holdPosition stops keeping the end in view, so prepended items do not pull the view to the bottom.
+  holdPosition: () => void;
+  // anchorIndex scrolls so the item at index starts offset pixels below the top of the viewport.
+  anchorIndex: (index: number, offset: number) => void;
   range: VirtualRange;
 }
 
@@ -194,6 +198,20 @@ export function useVirtualWindow(count: number): VirtualWindow {
     [count, el, virtualizer, settleReveal],
   );
 
+  const holdPosition = useCallback(() => {
+    followEndRef.current = false;
+  }, []);
+
+  const anchorIndex = useCallback(
+    (index: number, offset: number) => {
+      followEndRef.current = false;
+      if (!el || count <= VIRTUAL_THRESHOLD || index < 0 || index >= count) return;
+      const target = virtualizer.getOffsetForIndex(index, "start");
+      if (target) virtualizer.scrollToOffset(Math.max(0, target[0] - offset), { align: "start", behavior: "auto" });
+    },
+    [count, el, virtualizer],
+  );
+
   useEffect(() => {
     const index = revealTargetRef.current;
     if (index === null || !el) return;
@@ -223,6 +241,8 @@ export function useVirtualWindow(count: number): VirtualWindow {
     measureRef: virtualizer.measureElement,
     revealIndex,
     clearReveal,
+    holdPosition,
+    anchorIndex,
     range,
   };
 }

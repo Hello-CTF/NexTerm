@@ -362,6 +362,51 @@ describe("AiSidebar board lifecycle", () => {
     expect(mocks.messages).toHaveBeenCalledTimes(1);
   });
 
+  it("loads the previous page once when the message list is scrolled to the top", async () => {
+    bindConversation("conv-page");
+    mocks.messages.mockResolvedValue(Array.from({ length: 250 }, (_, index) => messageOf(index)));
+    mountSidebar();
+    await flushUntil(() => (view!.container.textContent ?? "").includes("消息 150"));
+
+    const log = view!.container.querySelector<HTMLElement>('[role="log"]')!;
+    let scrollTop = 2000;
+    Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => 4000 });
+    Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(log, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+    const scrollTo = (top: number) => {
+      scrollTop = top;
+      log.dispatchEvent(new Event("scroll"));
+    };
+
+    act(() => scrollTo(1000));
+    expect(view!.container.textContent).not.toContain("消息 149");
+
+    // Two scroll events before the page renders load one page, not two.
+    act(() => {
+      scrollTo(10);
+      scrollTo(0);
+    });
+    await flush();
+    expect(view!.container.textContent).toContain("消息 50");
+    expect(view!.container.textContent).not.toContain("消息 49");
+
+    act(() => scrollTo(0));
+    await flush();
+    expect(view!.container.textContent).toContain("消息 0");
+    expect([...view!.container.querySelectorAll("button")].some((button) => button.textContent === "加载更早消息")).toBe(false);
+
+    act(() => scrollTo(0));
+    await flush();
+    expect(view!.container.textContent).toContain("消息 0");
+    expect(mocks.messages).toHaveBeenCalledTimes(1);
+  });
+
   it("invalidates the next restored page when a live run starts after the initial history reset", async () => {
     bindConversation("conv-old");
     const pendingEvents = deferred<AiRunEventDto[]>();
