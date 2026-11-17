@@ -10,6 +10,7 @@ import { runWails } from "./build-wails.mjs";
 import { validateBinaryForPackaging } from "./build-evidence.mjs";
 import { copyPrivacyRuntime, privacyRuntimeDirectory } from "./build-privacy.mjs";
 import { inspectBinary } from "./build-inspect.mjs";
+import { runRetryingBusy, sleepSync } from "./retry-busy.mjs";
 
 export function packageDesktop(binary, goos, goarch) {
   if (goos !== HOST_OS) die(`native ${goos} packaging cannot run on ${HOST_OS}`);
@@ -149,10 +150,27 @@ function packageDarwin(binary, goarch) {
   const dmg = path.join(assets, `nexterm-desktop_macos_${goarch}_${VERSION}.dmg`);
   fs.rmSync(dmg, { force: true });
   // ULMO is LZMA (macOS 10.15+, below the app's 12.0 floor), markedly smaller than zlib UDZO.
-  run("hdiutil", ["create", "-volname", "NexTerm", "-srcfolder", work, "-ov", "-format", "ULMO", dmg]);
+  createDmg(["create", "-volname", "NexTerm", "-srcfolder", work, "-ov", "-format", "ULMO", dmg], dmg);
   run("hdiutil", ["verify", dmg]);
   notarizeDmg(dmg);
   return dmg;
+}
+
+// createDmg runs hdiutil create, retrying the transient "Resource busy" failure of macOS hosted runners; the output is
+// captured to recognise it and printed as usual.
+function createDmg(args, dmg) {
+  const result = runRetryingBusy(
+    () => {
+      fs.rmSync(dmg, { force: true });
+      log(`\n$ hdiutil ${args.join(" ")}`);
+      const attempt = run("hdiutil", args, { quiet: true, allowFailure: true });
+      const output = `${attempt.stdout || ""}${attempt.stderr || ""}`;
+      if (output) process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
+      return { ok: attempt.status === 0 && !attempt.signal && !attempt.error, output: output || attempt.error?.message || "" };
+    },
+    { sleep: sleepSync, onRetry: (tryNumber, wait) => log(`hdiutil: resource busy (try ${tryNumber}); retrying in ${wait / 1000}s`) },
+  );
+  if (!result.ok) die(`hdiutil create failed after ${result.tries} ${result.tries === 1 ? "try" : "tries"}`);
 }
 
 // Notarization is an optional enhancement: submit only when App Store Connect
