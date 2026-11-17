@@ -215,6 +215,8 @@ describe("FileTree follows changes on the host", () => {
     expect(badge.title).toContain("helper 版本较旧");
     expect(badge.textContent).toBe("");
     expect(badge.getAttribute("aria-label")).toContain("定时检查文件变化");
+    // The badge reads as part of the bar title, right after "文件".
+    expect(badge.previousElementSibling?.textContent).toBe("文件");
 
     const listsBefore = mocks.list.mock.calls.length;
     mocks.list.mockImplementation(() =>

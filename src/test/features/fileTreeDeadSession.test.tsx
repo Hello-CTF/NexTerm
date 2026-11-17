@@ -236,6 +236,16 @@ function button(label: string): HTMLButtonElement | undefined {
   );
 }
 
+// barMenuItem opens the file bar's ⋯ menu and returns its item for label.
+function barMenuItem(label: string): HTMLButtonElement | undefined {
+  const more = mounted?.container.querySelector<HTMLButtonElement>('button[aria-label="更多文件操作"]');
+  if (!more) return undefined;
+  click(more);
+  return [...(mounted?.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])].find((item) =>
+    item.textContent?.startsWith(label),
+  );
+}
+
 function toolbarButton(ariaLabel: string): HTMLButtonElement | undefined {
   return (
     mounted?.container.querySelector<HTMLButtonElement>(`button[aria-label="${ariaLabel}"]`) ??
@@ -295,12 +305,17 @@ describe("FileTree deleted session", () => {
     expect(mounted.container.textContent).not.toContain("请刷新后重试");
     expect(button("重新连接该主机")).toBeDefined();
     expect(button("重试")).toBeUndefined();
-    for (const ariaLabel of ["新建文件", "新建目录", "刷新文件列表", "上传到当前目录"]) {
+    for (const ariaLabel of ["刷新文件列表", "上传到当前目录"]) {
       const btn = toolbarButton(ariaLabel);
       expect(btn?.disabled, ariaLabel).toBe(true);
       expect(btn?.title, ariaLabel).toBe(GONE_HINT);
     }
-    expect(toolbarButton("折叠全部目录")?.disabled).toBe(false);
+    for (const label of ["新建文件", "新建目录", "上传文件…"]) {
+      const item = barMenuItem(label);
+      expect(item?.disabled, label).toBe(true);
+      expect(item?.textContent, label).toContain(GONE_HINT);
+    }
+    expect(barMenuItem("折叠全部目录")?.disabled).toBe(false);
     await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
     expect(mocks.connect).toHaveBeenCalledWith("asset-1");
     await flush();
@@ -496,8 +511,11 @@ describe("FileTree transient file errors", () => {
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("连接被对端重置"));
     expect(button("重试")).toBeDefined();
     expect(button("重新连接该主机")).toBeUndefined();
-    for (const ariaLabel of ["新建文件", "新建目录", "刷新文件列表", "上传到当前目录"]) {
+    for (const ariaLabel of ["刷新文件列表", "上传到当前目录"]) {
       expect(toolbarButton(ariaLabel)?.disabled, ariaLabel).toBe(false);
+    }
+    for (const label of ["新建文件", "新建目录"]) {
+      expect(barMenuItem(label)?.disabled, label).toBe(false);
     }
 
     clickButton(mounted.container, "重试");
@@ -561,8 +579,9 @@ describe("FileTree Windows roots and navigation", () => {
     expect(treeItem("D:/")).toBeDefined();
 
     mocks.list.mockClear();
-    for (const label of ["新建文件", "新建目录", "上传到当前目录"]) {
-      expect(toolbarButton(label)?.disabled, label).toBe(true);
+    expect(toolbarButton("上传到当前目录")?.disabled).toBe(true);
+    for (const label of ["新建文件", "新建目录", "上传文件…", "上传文件夹…"]) {
+      expect(barMenuItem(label)?.disabled, label).toBe(true);
     }
     openBlankMenu();
     const labels = menuLabels();

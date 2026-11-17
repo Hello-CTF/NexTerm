@@ -761,8 +761,12 @@ describe("folder upload (FileTree)", () => {
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  it("provides a folder upload entry in the toolbar", () => {
-    expect(buttonByTitle(mounted!.container, "上传文件夹到当前目录")).toBeTruthy();
+  it("provides a folder upload entry in the file bar menu", () => {
+    click(mounted!.container.querySelector('button[aria-label="更多文件操作"]')!);
+    const item = [...mounted!.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) =>
+      b.textContent?.startsWith("上传文件夹…"),
+    );
+    expect(item?.disabled).toBe(false);
   });
 
   it("per-file upload (default): traverses the folder and queues relative paths with matching WEB staging paths", async () => {

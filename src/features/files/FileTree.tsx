@@ -71,6 +71,7 @@ import {
   IconHome,
   IconLocate,
   IconLock,
+  IconMore,
   IconRefresh,
   IconShieldCheck,
   IconTerminal,
@@ -1785,68 +1786,70 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const up = parent ?? (upToComputer ? t("此电脑") : null);
   const loading = !environmentSettled || dirs.some((_, i) => results[i]?.isLoading);
 
+  // barMenuItems are the file bar actions kept out of its row; a narrow bar also folds upload and follow in here.
+  const barMenuItems = (): MenuItem[] => {
+    const needsDir = sessionGone ? goneHint : computer ? t("请选择实际目录") : undefined;
+    const items: MenuItem[] = [
+      { kind: "item", label: t("新建文件"), icon: <IconFilePlus size={13} />, hint: needsDir, disabled: sessionGone || computer, onSelect: () => void newFileIn(targetDir()) },
+      { kind: "item", label: t("新建目录"), icon: <IconFolderPlus size={13} />, hint: needsDir, disabled: sessionGone || computer, onSelect: () => void newDirIn(targetDir()) },
+      { kind: "separator" },
+      { kind: "item", label: t("上传文件…"), icon: <IconUpload size={13} />, hint: needsDir, disabled: sessionGone || computer, onSelect: () => void uploadTo(targetDir()) },
+      { kind: "item", label: t("上传文件夹…"), icon: <IconUpload size={13} />, hint: needsDir, disabled: sessionGone || computer, onSelect: () => void uploadFolderTo(targetDir()) },
+      { kind: "separator" },
+      {
+        kind: "item",
+        label: t("显示隐藏文件"),
+        icon: showHidden ? <IconEye size={13} /> : <IconEyeOff size={13} />,
+        hint: showHidden ? t("开") : t("关"),
+        onSelect: () => setShowHidden((value) => !value),
+      },
+    ];
+    if (follow.supported) {
+      items.push({
+        kind: "item",
+        label: t("跟随终端目录"),
+        icon: <IconLocate size={13} />,
+        hint: follow.enabled ? t("开") : t("关"),
+        onSelect: follow.toggle,
+      });
+    }
+    items.push({
+      kind: "item",
+      label: t("折叠全部目录"),
+      icon: <IconFoldAll size={13} />,
+      onSelect: () => {
+        setExpanded([]);
+        setSelected(null);
+      },
+    });
+    return items;
+  };
+
   return (
     <aside
-      className={`nx-files-pane flex h-full flex-col bg-neutral-950 ${
+      className={`nx-files-pane @container/files flex h-full flex-col bg-neutral-950 ${
         embedded ? "min-h-0 w-full min-w-0" : "shrink-0 border-r border-neutral-800/60"
       }`}
       style={embedded ? undefined : { width: leftWidth }}
     >
-      <div className="nx-files-bar flex h-[34px] shrink-0 items-center gap-0.5 overflow-x-auto px-2">
-        <span className="mr-1 shrink-0 text-xs font-semibold tracking-wide text-neutral-200">
+      <div className="nx-files-bar flex h-[34px] shrink-0 items-center gap-0.5 px-2">
+        <span className="shrink-0 text-xs font-semibold tracking-wide text-neutral-200">
           {t("文件")}
         </span>
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : computer ? t("请选择实际目录") : t("新建文件")}
-          aria-label={t("新建文件")}
-          disabled={sessionGone || computer}
-          onClick={() => void newFileIn(targetDir())}
-        >
-          <IconFilePlus size={14} />
-        </button>
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : computer ? t("请选择实际目录") : t("新建目录")}
-          aria-label={t("新建目录")}
-          disabled={sessionGone || computer}
-          onClick={() => void newDirIn(targetDir())}
-        >
-          <IconFolderPlus size={14} />
-        </button>
         {watchStatus && !sessionGone && <FsWatchBadge status={watchStatus} />}
+        <div className="nx-spacer" />
         <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : t("刷新")}
-          aria-label={t("刷新文件列表")}
-          disabled={sessionGone}
-          onClick={refresh}
+          className="nx-icon-btn nx-icon-btn-sm hidden @min-[15rem]/files:inline-flex"
+          title={sessionGone ? goneHint : computer ? t("请选择实际目录") : t("上传到当前目录")}
+          aria-label={t("上传到当前目录")}
+          disabled={sessionGone || computer}
+          onClick={() => void uploadTo(targetDir())}
         >
-          <IconRefresh size={14} />
-        </button>
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title={t("折叠全部")}
-          aria-label={t("折叠全部目录")}
-          onClick={() => {
-            setExpanded([]);
-            setSelected(null);
-          }}
-        >
-          <IconFoldAll size={14} />
-        </button>
-        <button
-          className={`nx-icon-btn nx-icon-btn-sm${showHidden ? " is-active" : ""}`}
-          title={showHidden ? t("显示隐藏文件：开") : t("显示隐藏文件：关")}
-          aria-label={t("显示隐藏文件")}
-          aria-pressed={showHidden}
-          onClick={() => setShowHidden((value) => !value)}
-        >
-          {showHidden ? <IconEye size={14} /> : <IconEyeOff size={14} />}
+          <IconUpload size={14} />
         </button>
         {follow.supported && (
           <button
-            className={`nx-icon-btn nx-icon-btn-sm${follow.enabled ? " is-active" : ""}`}
+            className={`nx-icon-btn nx-icon-btn-sm hidden @min-[15rem]/files:inline-flex${follow.enabled ? " is-active" : ""}`}
             title={
               follow.enabled
                 ? t("跟随终端目录：开。终端切换目录时，文件树自动跟随")
@@ -1859,24 +1862,26 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
             <IconLocate size={14} />
           </button>
         )}
-        <div className="nx-spacer" />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : computer ? t("请选择实际目录") : t("上传到当前目录")}
-          aria-label={t("上传到当前目录")}
-          disabled={sessionGone || computer}
-          onClick={() => void uploadTo(targetDir())}
+          title={sessionGone ? goneHint : t("刷新")}
+          aria-label={t("刷新文件列表")}
+          disabled={sessionGone}
+          onClick={refresh}
         >
-          <IconUpload size={14} />
+          <IconRefresh size={14} />
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : computer ? t("请选择实际目录") : t("上传文件夹到当前目录")}
-          aria-label={t("上传文件夹到当前目录")}
-          disabled={sessionGone || computer}
-          onClick={() => void uploadFolderTo(targetDir())}
+          title={t("更多文件操作")}
+          aria-label={t("更多文件操作")}
+          aria-haspopup="menu"
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setMenu({ x: rect.left, y: rect.bottom + 2, title: t("文件"), items: barMenuItems() });
+          }}
         >
-          <IconFolderPlus size={14} />
+          <IconMore size={14} />
         </button>
       </div>
 

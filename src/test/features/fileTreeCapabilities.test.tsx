@@ -175,11 +175,17 @@ describe("FileTree hidden entries", () => {
   it("hides hidden entries by default and keeps the choice when the tree mounts again", async () => {
     await mountWith(POSIX_CAPS);
     expect(rows().some((r) => r.dataset.rowPath === "~/.secret")).toBe(false);
-    const toggle = mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="显示隐藏文件"]')!;
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    const hiddenItem = async (): Promise<HTMLElement> => {
+      click(mounted!.container.querySelector('button[aria-label="更多文件操作"]')!);
+      await waitForRendered(() => expect(mounted!.container.querySelector('[role="menu"]')).not.toBeNull());
+      return [...mounted!.container.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.includes("显示隐藏文件"))!;
+    };
+    const toggle = await hiddenItem();
+    expect(toggle.textContent).toContain("关");
     click(toggle);
     await waitForRendered(() => expect(row(".secret")).toBeTruthy());
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect((await hiddenItem()).textContent).toContain("开");
+    keyDown(document.activeElement as HTMLElement, "Escape");
 
     mounted!.unmount();
     mounted = mountTree();

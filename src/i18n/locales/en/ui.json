@@ -335,6 +335,7 @@
   "{blocked}，才能填入命令": "{blocked} before you can insert the command",
   "{count} 个匹配": "{count} matches",
   "{count} 个可恢复": "{count} recoverable",
+  "{count} 个失败": "{count} failed",
   "{count} 个字符无法发送到远程桌面，已跳过": {
     "one": "{count} character could not be sent to the remote desktop and was skipped",
     "other": "{count} characters could not be sent to the remote desktop and were skipped"
@@ -759,8 +760,10 @@
   "上传失败：{value}": "Upload failed: {value}",
   "上传打包文件失败：{value}": "Failed to upload the packed file: {value}",
   "上传持久终端组件": "Upload persistent terminal component",
+  "上传文件…": "Upload files…",
   "上传文件大小无效": "Invalid upload file size",
   "上传文件夹": "Upload folder",
+  "上传文件夹…": "Upload folder…",
   "上传文件夹「{folderName}」：共 {length} 个文件，合计 {value}": "Upload folder \"{folderName}\": {length} files, {value} in total",
   "上传文件夹到当前目录": "Upload folder to current directory",
   "上传覆盖确认": "Confirm upload overwrite",
@@ -1236,6 +1239,10 @@
   "信任离线组件文件": "Trust offline component file",
   "信息": "Info",
   "修复失败：": "Repair failed:",
+  "修改了 {count} 个文件": {
+    "one": "changed {count} file",
+    "other": "changed {count} files"
+  },
   "修改只读属性失败：{value}": "Failed to change the read-only attribute: {value}",
   "修改密码": "Change password",
   "修改密码后，数据将改用新密码保护，服务端已保存的内容不受影响。修改成功后将生成新的恢复密钥（旧密钥立即作废），并退出其他设备上的登录。": "After you change the password, data is protected with the new password and content already saved on the server is unaffected. A new recovery key is generated once the change succeeds (the old key is invalidated immediately), and you are signed out on other devices.",
@@ -1345,6 +1352,7 @@
   "共享终端连接已断开": "The shared terminal connection was lost",
   "共有 {length} 个资产的主机为 {host}，已打开第一个：{name}": "{length} assets have the host {host}; the first one was opened: {name}",
   "共用同一份登录凭据": "Share the same sign-in credentials",
+  "关": "Off",
   "关于": "About",
   "关键词": "keyword",
   "关键词高亮": "Keyword highlighting",
@@ -1815,6 +1823,10 @@
   "发送": "Send",
   "发送 (Enter)": "Send (Enter)",
   "发送中": "Sending",
+  "发送了 {count} 次按键": {
+    "one": "sent keys {count} time",
+    "other": "sent keys {count} times"
+  },
   "发送但不回车": "Send without Enter",
   "发送内容": "Content to send",
   "发送后自动回车": "Press Enter automatically after sending",
@@ -2592,6 +2604,7 @@
   "屏幕末尾": "End of screen",
   "展开": "Expand",
   "展开全部": "Expand all",
+  "展开工具调用": "Expand tool calls",
   "展开左侧栏": "Expand left sidebar",
   "展开左侧栏 ({value})": "Expand left sidebar ({value})",
   "展开正文": "Expand body",
@@ -3037,6 +3050,7 @@
   "建立本地转发失败：{describeError}": "Failed to create local forward: {describeError}",
   "建立转发失败：{value}": "Failed to create forward: {value}",
   "建议下载到本机后用合适的程序打开": "Download it and open it with a suitable program instead.",
+  "开": "On",
   "开启": "Turn on",
   "开启下次启动的调试模式": "Turn on debug mode for the next launch",
   "开启两步验证": "Turn on two-factor authentication",
@@ -3331,6 +3345,10 @@
   "执行 Redis {command}？\n\n{warning}": "Run Redis {command}?\n\n{warning}",
   "执行 SQL": "Run SQL",
   "执行中": "Running",
+  "执行了 {count} 次命令": {
+    "one": "ran {count} command",
+    "other": "ran {count} commands"
+  },
   "执行任意 Redis 命令；FLUSHALL / DEL 等危险命令会先要求确认": "Run any Redis command; dangerous commands such as FLUSHALL / DEL ask for confirmation first",
   "执行到第 {reachedStep} / {stepCount} 步": "Reached step {reachedStep} / {stepCount}",
   "执行前确认": "Confirm before running",
@@ -3397,7 +3415,6 @@
   "把远端某个固定端口映射到服务端（适用于连接 MySQL / Redis）": "Map a fixed remote port to the server (for connecting to MySQL / Redis)",
   "抓包": "Packet capture",
   "折叠": "Collapse",
-  "折叠全部": "Collapse all",
   "折叠全部目录": "Collapse all directories",
   "折叠输出 / 复制 / 定位": "Fold output / Copy / Locate",
   "拆分当前窗格": "Split current pane",
@@ -3573,6 +3590,10 @@
   "插入：只写入不回车；执行：写入并回车。含换行或控制字符的片段会先确认。": "Insert: writes without pressing Enter. Run: writes and presses Enter. Snippets with line breaks or control characters ask for confirmation first.",
   "搜索": "Search",
   "搜索主机 / 指纹": "Search hosts / fingerprints",
+  "搜索了 {count} 次": {
+    "one": "searched {count} time",
+    "other": "searched {count} times"
+  },
   "搜索仅过滤当前已加载分块": "Search filters only the chunks loaded so far",
   "搜索会话、主机或命令": "Search sessions, hosts or commands",
   "搜索会话、主机或命令，或输入 user@host:port": "Search sessions, hosts or commands, or enter user@host:port",
@@ -3663,6 +3684,7 @@
   "收起 AI 侧栏{value}": "Collapse AI sidebar{value}",
   "收起会话侧栏": "Collapse session sidebar",
   "收起侧栏": "Collapse sidebar",
+  "收起工具调用": "Collapse tool calls",
   "收起左侧栏": "Collapse left sidebar",
   "收起左侧栏 ({value})": "Collapse left sidebar ({value})",
   "收起已隐藏的资产": "Collapse hidden assets",
@@ -4020,8 +4042,6 @@
   "显示本机全部记录": "Showing all records on this device",
   "显示桌面": "Show desktop",
   "显示隐藏文件": "Show hidden files",
-  "显示隐藏文件：关": "Show hidden files: off",
-  "显示隐藏文件：开": "Show hidden files: on",
   "显示隐藏资产（{hiddenDatabaseCount}）": "Show hidden assets ({hiddenDatabaseCount})",
   "普通修改直接执行，高危和无法判断的操作仍需要你确认": "Ordinary changes run directly. High-risk operations and ones whose impact cannot be determined still require your confirmation.",
   "普通用户": "Regular user",
@@ -4101,6 +4121,7 @@
   "更多 Compose 操作": "More Compose actions",
   "更多操作": "More actions",
   "更多操作 {name}": "More actions for {name}",
+  "更多文件操作": "More file actions",
   "更多终端操作": "More terminal actions",
   "更多终端操作（搜索 / 编码 / 命令列表）": "More terminal actions (search / encoding / command list)",
   "更多选项": "More options",
@@ -4590,6 +4611,10 @@
   "查看": "View",
   "查看 {t} 的字段": "View fields of {t}",
   "查看主机上转入后台的终端进程": "View terminal processes moved to the background on a host",
+  "查看了 {count} 个目录": {
+    "one": "listed {count} directory",
+    "other": "listed {count} directories"
+  },
   "查看任务": "View tasks",
   "查看全部端口转发": "View all port forwarding",
   "查看原始参数": "View raw parameters",
@@ -4617,6 +4642,10 @@
   "查看问题": "View issue",
   "查询": "Query",
   "查询 MySQL / PostgreSQL / Redis 资产": "Query MySQL / PostgreSQL / Redis assets",
+  "查询了 {count} 次数据库": {
+    "one": "ran {count} database query",
+    "other": "ran {count} database queries"
+  },
   "查询未返回数据（{length} 列，0 行），耗时 {durationMs}ms": "The query returned no data ({length} columns, 0 rows), took {durationMs}ms",
   "查询类型": "Query type",
   "标准": "Standard",
@@ -5478,6 +5507,10 @@
   "等待上一步输出（可选），如 password:": "Wait for output of the previous step (optional), e.g. password:",
   "等待中": "Waiting",
   "等待主机重新连接": "Waiting for the host to reconnect",
+  "等待了 {count} 次输出": {
+    "one": "waited for output {count} time",
+    "other": "waited for output {count} times"
+  },
   "等待你回答后继续…": "Waiting for your answer to continue…",
   "等待你确认": "Waiting for your confirmation",
   "等待你确认后继续…": "Waiting for your confirmation to continue…",
@@ -6177,6 +6210,14 @@
   "读取 shell 历史": "Read shell history",
   "读取 {name} 时文件变短了": "{name} became shorter while it was being read",
   "读取上传块 {index} 时返回了 {length} 字节，预期 {length2} 字节": "Reading upload chunk {index} returned {length} bytes, expected {length2} bytes",
+  "读取了 {count} 个文件": {
+    "one": "read {count} file",
+    "other": "read {count} files"
+  },
+  "读取了 {count} 次屏幕": {
+    "one": "read the screen {count} time",
+    "other": "read the screen {count} times"
+  },
   "读取于 {toLocaleTimeString}": "Read at {toLocaleTimeString}",
   "读取图片失败": "Failed to read the image",
   "读取失败的主机": "Hosts that failed to load",
@@ -6199,6 +6240,10 @@
   "调整左侧栏宽度": "Resize left sidebar",
   "调整左右分屏比例": "Resize left and right panes",
   "调整顺序失败": "Failed to reorder",
+  "调用了 {count} 个工具": {
+    "one": "called {count} tool",
+    "other": "called {count} tools"
+  },
   "调用失败：{fatal}": "Call failed: {fatal}",
   "调试": "Debug",
   "调试日志与抓包文件": "Debug logs and capture files",
@@ -6956,6 +7001,7 @@
   "（非键值内容已脱敏）": "(non key-value content is masked)",
   "（默认）": "(default)",
   "）。请重新安装，或在设备上运行 nexterm-agent update（1.2.x 需使用安装脚本重新安装一次）。": "). Reinstall, or run nexterm-agent update on the device (1.2.x must be reinstalled once with the install script).",
+  "，": ", ",
   "，{failedSources} 个失败": ", {failedSources} failed",
   "，{operation}写入将需要逐次输入实际环境名确认": ", {operation} writes will require typing the actual environment name each time",
   "，{skippedCount} 个已跳过": ", {skippedCount} skipped",

@@ -421,6 +421,11 @@ function clickMenuItem(container: ParentNode, label: string): void {
   click(menuItem(container, label));
 }
 
+function clickBarAction(container: HTMLElement, label: string): void {
+  click(container.querySelector('button[aria-label="更多文件操作"]')!);
+  clickMenuItem(container, label);
+}
+
 let mounted: MountedView | undefined;
 
 beforeEach(() => {
@@ -1621,12 +1626,9 @@ describe("name preflight checks for new files and folders", () => {
     it(`FileTree ${label} rejects dangerous names before joinPath`, async () => {
       mounted = mountTree();
       await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
-      const button = mounted.container.querySelector<HTMLButtonElement>(
-        `button[aria-label="${ariaLabel}"]`,
-      )!;
       for (const name of invalidNames) {
         mocks.promptText.mockResolvedValueOnce(name);
-        click(button);
+        clickBarAction(mounted.container, ariaLabel);
         await flush();
       }
       expect(mocks[rpc]).not.toHaveBeenCalled();
@@ -1638,7 +1640,7 @@ describe("name preflight checks for new files and folders", () => {
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     mocks.promptText.mockResolvedValue("ok.txt");
-    click(mounted.container.querySelector('button[aria-label="新建文件"]')!);
+    clickBarAction(mounted.container, "新建文件");
     await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(SID, "~/ok.txt"));
   });
 });
@@ -1652,7 +1654,7 @@ describe("existing names for new files and folders", () => {
       mounted = mountTree();
       await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
       mocks.promptText.mockResolvedValue("a.txt");
-      click(mounted.container.querySelector(`button[aria-label="${ariaLabel}"]`)!);
+      clickBarAction(mounted.container, ariaLabel);
       await flush();
       expect(mocks[rpc]).not.toHaveBeenCalled();
       expect(mocks.write).not.toHaveBeenCalled();
@@ -1670,7 +1672,7 @@ describe("existing names for new files and folders", () => {
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     mocks.promptText.mockResolvedValue("A.TXT");
-    click(mounted.container.querySelector('button[aria-label="新建文件"]')!);
+    clickBarAction(mounted.container, "新建文件");
     await flush();
     expect(mocks.create).not.toHaveBeenCalled();
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("「a.txt」已存在"));
@@ -1681,7 +1683,7 @@ describe("existing names for new files and folders", () => {
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     mocks.create.mockRejectedValueOnce({ code: "conflict", message: "同名文件或目录已存在，未创建也未修改" });
     mocks.promptText.mockResolvedValue("nginx.conf");
-    click(mounted.container.querySelector('button[aria-label="新建文件"]')!);
+    clickBarAction(mounted.container, "新建文件");
     await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(SID, "~/nginx.conf"));
     await waitFor(() =>
       expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("「nginx.conf」已存在，原有内容未被修改")),
@@ -1736,7 +1738,7 @@ describe("selection and expansion state after FileTree navigation", () => {
 
     expect(mounted.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
     mocks.promptText.mockResolvedValue("fresh.txt");
-    click(mounted.container.querySelector('button[aria-label="新建文件"]')!);
+    clickBarAction(mounted.container, "新建文件");
     await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(SID, "/fresh.txt"));
 
     click(mounted.container.querySelector('button[aria-label="回到家目录 (~)"]')!);
@@ -1754,7 +1756,7 @@ describe("selection and expansion state after FileTree navigation", () => {
 
     expect(mounted.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
     mocks.promptText.mockResolvedValue("fresh.txt");
-    click(mounted.container.querySelector('button[aria-label="新建文件"]')!);
+    clickBarAction(mounted.container, "新建文件");
     await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(SID, "~/fresh.txt"));
   });
 
@@ -1768,7 +1770,7 @@ describe("selection and expansion state after FileTree navigation", () => {
 
     expect(mounted.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
     mocks.promptText.mockResolvedValue("fresh-dir");
-    click(mounted.container.querySelector('button[aria-label="新建目录"]')!);
+    clickBarAction(mounted.container, "新建目录");
     await waitFor(() => expect(mocks.mkdir).toHaveBeenCalledWith(SID, "~/fresh-dir"));
   });
 });
