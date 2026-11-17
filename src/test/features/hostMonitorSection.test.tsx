@@ -75,6 +75,40 @@ describe("HostMonitorSection", () => {
     expect(container.querySelector("[role='meter']")?.getAttribute("aria-valuenow")).toBe("50");
   });
 
+  it("samples WinRM and local sessions and leaves out the load a Windows host does not have", async () => {
+    for (const kind of ["winrm", "local"]) {
+      setTerminalHostMonitor("on");
+      setSession(kind);
+      mocks.sample.mockReset();
+      mocks.sample.mockResolvedValue({
+        ...snapshot,
+        platform: "Windows",
+        load: undefined,
+        memory: { ...snapshot.memory, swapTotalBytes: 2 * 1024 ** 3, swapUsedBytes: 512 * 1024 ** 2 },
+        network: [{ name: "Intel[R] Ethernet Connection I219-V", rxBytes: 10, txBytes: 10, rxRate: 2048, txRate: 1024 }],
+        disks: [{ mount: "C:", filesystem: "NTFS", totalBytes: 100 * 1024 ** 3, usedBytes: 25 * 1024 ** 3, availableBytes: 75 * 1024 ** 3, usedPercent: 25 }],
+      });
+      const container = render(workspace("a1"));
+      await waitForRendered(() => expect(container.querySelector("[data-testid='host-monitor-metrics']")).not.toBeNull());
+      expect(mocks.sample).toHaveBeenCalledWith("s1");
+      const text = container.textContent ?? "";
+      expect(text).not.toContain("负载");
+      expect(text).toContain("交换 512 MiB / 2.0 GiB");
+      expect(container.querySelector("[role='meter']")?.getAttribute("aria-label")).toContain("C:");
+      mounted?.unmount();
+      mounted = undefined;
+    }
+  });
+
+  it("does not sample a session kind the backend cannot run commands on", async () => {
+    setTerminalHostMonitor("on");
+    setSession("telnet");
+    const container = render(workspace("a1"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(container.textContent).toContain("主机监控只支持 SSH、WinRM、本地会话和受管设备。");
+    expect(mocks.sample).not.toHaveBeenCalled();
+  });
+
   it("says when disks are no longer read", async () => {
     setTerminalHostMonitor("on");
     mocks.sample.mockResolvedValue({ ...snapshot, disks: [], disksUnavailable: true });
@@ -85,7 +119,7 @@ describe("HostMonitorSection", () => {
 
   it("shows an unsupported host instead of an error", async () => {
     setTerminalHostMonitor("on");
-    mocks.sample.mockResolvedValue({ status: "unsupported", reason: "主机监控目前只支持 Linux 主机", platform: "Darwin", sampledAt: 0, intervalMs: 0, network: [], disks: [] });
+    mocks.sample.mockResolvedValue({ status: "unsupported", reason: "主机监控目前只支持 Linux 和 Windows 主机", platform: "Darwin", sampledAt: 0, intervalMs: 0, network: [], disks: [] });
     const container = render(workspace("a1"));
     await waitForRendered(() => expect(container.querySelector("[data-testid='host-monitor-unsupported']")).not.toBeNull());
     expect(container.textContent).toContain("Linux");

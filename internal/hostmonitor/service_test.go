@@ -19,10 +19,15 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
+// fakeRunner answers the POSIX sample script with reply and the PowerShell one with windows; calls counts the
+// POSIX commands and windowsCalls the PowerShell ones. Without windows the host has no PowerShell either.
 type fakeRunner struct {
-	calls     atomic.Int32
-	withDisks atomic.Int32
-	reply     func(ctx context.Context, call int32) (base.ExecResult, error)
+	calls            atomic.Int32
+	withDisks        atomic.Int32
+	windowsCalls     atomic.Int32
+	windowsWithDisks atomic.Int32
+	reply            func(ctx context.Context, call int32) (base.ExecResult, error)
+	windows          func(ctx context.Context, call int32) (base.ExecResult, error)
 }
 
 func (f *fakeRunner) Exec(ctx context.Context, command string, _ base.ExecOptions) (base.ExecResult, error) {
@@ -30,6 +35,16 @@ func (f *fakeRunner) Exec(ctx context.Context, command string, _ base.ExecOption
 	case SampleCommand(true):
 		f.withDisks.Add(1)
 	case SampleCommand(false):
+	case WindowsSampleCommand(true), WindowsSampleCommand(false):
+		if command == WindowsSampleCommand(true) {
+			f.windowsWithDisks.Add(1)
+		}
+		call := f.windowsCalls.Add(1)
+		if f.windows == nil {
+			code := 1
+			return base.ExecResult{Stderr: "'powershell' is not recognized as an internal or external command", ExitCode: &code}, nil
+		}
+		return f.windows(ctx, call)
 	default:
 		return base.ExecResult{}, errors.New("unexpected command")
 	}
@@ -286,9 +301,14 @@ func TestSampleTimeoutCountsAsFailure(t *testing.T) {
 }
 
 func TestSampleReportsUnsupportedHostsOnce(t *testing.T) {
-	for _, file := range []string{"darwin.txt", "windows_cmd.txt"} {
-		t.Run(file, func(t *testing.T) {
-			runner := &fakeRunner{reply: sampleReplies(t, file)}
+	// darwin.txt has sh but is neither Linux nor Windows; windows_cmd.txt has no sh, and this host has no
+	// PowerShell either, so the fallback runs once and finds nothing.
+	for _, test := range []struct {
+		file        string
+		windowsRuns int32
+	}{{"darwin.txt", 0}, {"windows_cmd.txt", 1}} {
+		t.Run(test.file, func(t *testing.T) {
+			runner := &fakeRunner{reply: sampleReplies(t, test.file)}
 			service, clock := newTestService(t, runner)
 			for range 3 {
 				snapshot, err := service.Sample(t.Context(), "s1")
@@ -300,8 +320,8 @@ func TestSampleReportsUnsupportedHostsOnce(t *testing.T) {
 				}
 				clock.Advance(time.Minute)
 			}
-			if runner.calls.Load() != 1 {
-				t.Fatalf("an unsupported host was sampled %d times", runner.calls.Load())
+			if runner.calls.Load() != 1 || runner.windowsCalls.Load() != test.windowsRuns {
+				t.Fatalf("an unsupported host was sampled %d+%d times", runner.calls.Load(), runner.windowsCalls.Load())
 			}
 			// A new session on the same id (after a reconnect) is probed again.
 			service.Forget("s1")

@@ -6,13 +6,15 @@ type Status string
 const (
 	// StatusOK carries metrics. Rates and CPU usage need two samples, so the first one leaves them unset.
 	StatusOK Status = "ok"
-	// StatusUnsupported means the host cannot be sampled (not Linux, or no POSIX sh); it is not retried.
+	// StatusUnsupported means the host cannot be sampled (neither Linux nor Windows, or no shell to run the
+	// sample script); it is not retried.
 	StatusUnsupported Status = "unsupported"
 	// StatusError means the last sample failed; RetryAfterMs says when the next one may run.
 	StatusError Status = "error"
 )
 
 // Memory is physical memory and swap in bytes. Used memory is total minus what the kernel reports available.
+// On Windows swap is the paging files.
 type Memory struct {
 	TotalBytes     uint64 `json:"totalBytes"`
 	UsedBytes      uint64 `json:"usedBytes"`
@@ -21,7 +23,7 @@ type Memory struct {
 	SwapUsedBytes  uint64 `json:"swapUsedBytes"`
 }
 
-// Load is the 1, 5 and 15 minute load average.
+// Load is the 1, 5 and 15 minute load average. Windows has no equivalent, so its snapshots leave it unset.
 type Load struct {
 	One     float64 `json:"one"`
 	Five    float64 `json:"five"`
@@ -52,7 +54,7 @@ type Snapshot struct {
 	Status Status `json:"status"`
 	// Reason explains an unsupported host or a failed sample.
 	Reason string `json:"reason,omitempty"`
-	// Platform is the host's uname -s when it was learned.
+	// Platform is the host's uname -s when it was learned, or "Windows" for a host sampled through PowerShell.
 	Platform string `json:"platform,omitempty"`
 	// SampledAt is the Unix time in milliseconds the metrics were read; zero without metrics.
 	SampledAt int64 `json:"sampledAt"`
@@ -67,7 +69,7 @@ type Snapshot struct {
 	Load       *Load          `json:"load,omitempty"`
 	Network    []NetInterface `json:"network"`
 	Disks      []Disk         `json:"disks"`
-	// DisksUnavailable is set once df ran too long on the host; disks are then no longer read for the session.
+	// DisksUnavailable is set once df ran too long on a POSIX host; disks are then no longer read for the session.
 	DisksUnavailable bool     `json:"disksUnavailable,omitempty"`
 	UptimeSeconds    *float64 `json:"uptimeSeconds,omitempty"`
 }

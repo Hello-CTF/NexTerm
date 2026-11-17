@@ -152,6 +152,9 @@ function SessionMonitor({ sessionId, active }: { sessionId: string; active: bool
   );
 }
 
+// Session kinds whose host the backend samples over the exec channel: Linux through sh, Windows through PowerShell.
+const SAMPLED_KINDS: ReadonlySet<string> = new Set(["ssh", "winrm", "local"]);
+
 // HostMonitorSection shows live host metrics in the session sidebar. Live sampling runs one read-only command over the
 // session's own connection per interval, only while the monitor is on, the sidebar is shown and the session is connected.
 // A fleet device reports its metrics itself, so its session shows the device metrics instead of probing.
@@ -161,7 +164,7 @@ export function HostMonitorSection({ workspace, visible }: { workspace: Workspac
   const session = useSessionById(sessionId);
   const connected = Boolean(sessionId) && !workspace?.restorePending && session?.status === "connected";
   const deviceId = workspace?.assetId ? deviceIdOfHost(workspace.assetId) : null;
-  const ssh = session?.kind === "ssh";
+  const sampled = session?.kind !== undefined && SAMPLED_KINDS.has(session.kind);
 
   let body: ReactNode;
   if (!enabled) {
@@ -170,8 +173,8 @@ export function HostMonitorSection({ workspace, visible }: { workspace: Workspac
     body = visible ? <MetricsPanel deviceId={deviceId} online={connected} /> : null;
   } else if (!sessionId || !connected) {
     body = <p className="nx-hint m-0 text-[11.5px]">{t("会话连接后显示主机指标。")}</p>;
-  } else if (!ssh) {
-    body = <p className="nx-hint m-0 text-[11.5px]">{t("主机监控只支持 SSH 会话和受管设备。")}</p>;
+  } else if (!sampled) {
+    body = <p className="nx-hint m-0 text-[11.5px]">{t("主机监控只支持 SSH、WinRM、本地会话和受管设备。")}</p>;
   } else {
     body = <SessionMonitor sessionId={sessionId} active={visible} />;
   }

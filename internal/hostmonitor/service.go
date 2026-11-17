@@ -30,10 +30,23 @@ type Runner interface {
 	Exec(context.Context, string, base.ExecOptions) (base.ExecResult, error)
 }
 
+// Platform is the command language a host is sampled with.
+type Platform string
+
+const (
+	// PlatformUnknown is a host whose platform is learned from the first sample: the POSIX script runs, and a host
+	// that turns out to have no sh, such as Windows OpenSSH with cmd, is sampled through PowerShell instead.
+	PlatformUnknown Platform = ""
+	PlatformPOSIX   Platform = "posix"
+	PlatformWindows Platform = "windows"
+)
+
 // Target is what the service needs to know about the session it samples.
 type Target struct {
 	Runner Runner
-	// Unsupported, when set, is why the host cannot be sampled without running anything (a PowerShell host).
+	// Platform is what is known about the host before anything runs on it.
+	Platform Platform
+	// Unsupported, when set, is why the host cannot be sampled without running anything (a managed device).
 	Unsupported string
 }
 
@@ -56,6 +69,8 @@ type sessionState struct {
 	// noDisks is set once df ran too long on the host (or the whole sample timed out while it was part of it);
 	// df is then left out for the rest of the session so a hung mount cannot pin a remote process per sample.
 	noDisks bool
+	// platform is what the first sample that ran its script found out about a host the target left unknown.
+	platform Platform
 }
 
 type Service struct {
@@ -146,16 +161,24 @@ func (s *Service) Sample(ctx context.Context, sessionID string) (Snapshot, error
 		state.running = done
 		prev, prevAt := state.raw, state.rawAt
 		withDisks := !state.noDisks
+		platform := target.Platform
+		if platform == PlatformUnknown {
+			platform = state.platform
+		}
 		s.mu.Unlock()
 
-		snapshot, raw, outcome, timedOut := s.run(ctx, target, prev, prevAt, withDisks)
+		result := s.run(ctx, target.Runner, platform, prev, prevAt, withDisks)
+		snapshot, raw, outcome := result.snapshot, result.raw, result.outcome
 
 		s.mu.Lock()
 		state.running = nil
 		close(done)
 		finished := s.now()
-		if withDisks && (timedOut || raw.DisksTimedOut) {
+		if withDisks && (result.dfTimedOut || raw.DisksTimedOut) {
 			state.noDisks = true
+		}
+		if result.platform != PlatformUnknown {
+			state.platform = result.platform
 		}
 		switch outcome {
 		case outcomeCanceled:
@@ -191,35 +214,106 @@ const (
 	outcomeCanceled
 )
 
-// run executes one sample. timedOut reports that the command ran out of time, which is how a host without a
-// usable timeout command shows a hung df.
-func (s *Service) run(ctx context.Context, target Target, prev *Raw, prevAt time.Time, withDisks bool) (Snapshot, Raw, outcome, bool) {
-	ctx, cancel := context.WithTimeout(ctx, sampleTimeout)
-	defer cancel()
-	res, err := target.Runner.Exec(ctx, SampleCommand(withDisks), base.ExecOptions{Timeout: sampleTimeout, Limits: base.OutputLimits{Stdout: maxOutput}})
-	if err != nil {
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return Snapshot{}, Raw{}, outcomeCanceled, false
+type runResult struct {
+	snapshot Snapshot
+	raw      Raw
+	outcome  outcome
+	// platform is the script that produced the sample.
+	platform Platform
+	// dfTimedOut reports that the POSIX script ran out of time, which is how a host without a usable timeout
+	// command shows a hung df.
+	dfTimedOut bool
+}
+
+const (
+	reasonNoShell      = "主机上既没有可用的 POSIX sh，也没有可用的 PowerShell，无法采集指标"
+	reasonNoPOSIXSh    = "主机没有可用的 POSIX sh，无法采集指标"
+	reasonNoPowerShell = "主机上没有可用的 PowerShell，无法采集指标"
+)
+
+// run executes one sample with the script for platform. An unknown platform runs the POSIX script first and falls
+// back to PowerShell when the host has no sh or its sh is a POSIX layer on Windows.
+func (s *Service) run(ctx context.Context, runner Runner, platform Platform, prev *Raw, prevAt time.Time, withDisks bool) runResult {
+	if platform != PlatformWindows {
+		result, fallback := s.runPOSIX(ctx, runner, platform, prev, prevAt, withDisks)
+		if !fallback {
+			return result
 		}
-		timedOut := errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded)
-		return failedSnapshot(fmt.Sprintf("采样失败：%v", err)), Raw{}, outcomeFailed, timedOut
 	}
-	raw, err := ParseOutput(dropCutLine(res.Stdout, res.Truncated))
+	return s.runWindows(ctx, runner, platform == PlatformWindows, prev, prevAt, withDisks)
+}
+
+// runPOSIX reports fallback when the host may still be sampled through PowerShell.
+func (s *Service) runPOSIX(ctx context.Context, runner Runner, platform Platform, prev *Raw, prevAt time.Time, withDisks bool) (runResult, bool) {
+	res, failed := s.exec(ctx, runner, SampleCommand(withDisks))
+	if failed != nil {
+		return *failed, false
+	}
+	raw, err := ParseOutput(res)
 	switch {
 	case errors.Is(err, ErrNoSentinel):
-		return withInterval(unsupportedSnapshot("主机没有可用的 POSIX sh（例如 Windows OpenSSH），无法采集指标", ""), 0), Raw{}, outcomeUnsupported, false
+		if platform == PlatformPOSIX {
+			return unsupportedResult(reasonNoPOSIXSh, ""), false
+		}
+		return runResult{}, true
+	case err == nil && windowsOSName(raw.OS) && platform != PlatformPOSIX:
+		return runResult{}, true
 	case err == nil && raw.OS != "Linux":
-		return withInterval(unsupportedSnapshot("主机监控目前只支持 Linux 主机", raw.OS), 0), Raw{}, outcomeUnsupported, false
+		return unsupportedResult("主机监控目前只支持 Linux 和 Windows 主机", raw.OS), false
 	case err != nil:
-		return failedSnapshot("无法读取主机指标：/proc 不可读"), raw, outcomeFailed, false
+		return runResult{snapshot: failedSnapshot("无法读取主机指标：/proc 不可读"), raw: raw, outcome: outcomeFailed, platform: PlatformPOSIX}, false
 	}
+	return runResult{snapshot: s.compute(prev, prevAt, raw), raw: raw, outcome: outcomeOK, platform: PlatformPOSIX}, false
+}
+
+// runWindows samples through PowerShell; known says the target named the host as Windows rather than the POSIX
+// script finding no sh. A sample that times out does not drop the drives, which never block like a hung mount.
+func (s *Service) runWindows(ctx context.Context, runner Runner, known bool, prev *Raw, prevAt time.Time, withDisks bool) runResult {
+	res, failed := s.exec(ctx, runner, WindowsSampleCommand(withDisks))
+	if failed != nil {
+		failed.dfTimedOut = false
+		return *failed
+	}
+	raw, err := ParseWindowsOutput(res)
+	switch {
+	case errors.Is(err, ErrNoSentinel):
+		if known {
+			return unsupportedResult(reasonNoPowerShell, windowsOS)
+		}
+		return unsupportedResult(reasonNoShell, "")
+	case err != nil:
+		return runResult{snapshot: failedSnapshot(windowsFailure(err)), outcome: outcomeFailed, platform: PlatformWindows}
+	}
+	return runResult{snapshot: s.compute(prev, prevAt, raw), raw: raw, outcome: outcomeOK, platform: PlatformWindows}
+}
+
+// exec runs command and returns its output, or the result of a command that did not complete.
+func (s *Service) exec(ctx context.Context, runner Runner, command string) (string, *runResult) {
+	ctx, cancel := context.WithTimeout(ctx, sampleTimeout)
+	defer cancel()
+	res, err := runner.Exec(ctx, command, base.ExecOptions{Timeout: sampleTimeout, Limits: base.OutputLimits{Stdout: maxOutput}})
+	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return "", &runResult{outcome: outcomeCanceled}
+		}
+		timedOut := errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded)
+		return "", &runResult{snapshot: failedSnapshot(fmt.Sprintf("采样失败：%v", err)), outcome: outcomeFailed, dfTimedOut: timedOut}
+	}
+	return dropCutLine(res.Stdout, res.Truncated), nil
+}
+
+func unsupportedResult(reason, platform string) runResult {
+	return runResult{snapshot: withInterval(unsupportedSnapshot(reason, platform), 0), outcome: outcomeUnsupported}
+}
+
+func (s *Service) compute(prev *Raw, prevAt time.Time, raw Raw) Snapshot {
 	var wall time.Duration
 	if prev != nil {
 		wall = s.now().Sub(prevAt)
 	}
 	snapshot := Compute(prev, raw, wall)
 	snapshot.SampledAt = s.now().UnixMilli()
-	return withInterval(snapshot, DefaultInterval), raw, outcomeOK, false
+	return withInterval(snapshot, DefaultInterval)
 }
 
 func failedSnapshot(reason string) Snapshot {

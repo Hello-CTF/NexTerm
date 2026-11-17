@@ -1,0 +1,2 @@
+@@nexterm-monitor windows
+{"errors":["os: Access denied ","uptime: Access denied ","cpu: Access denied ","net: Access denied ","disks: Access denied "]}
