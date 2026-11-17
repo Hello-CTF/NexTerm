@@ -81,7 +81,7 @@ func TestTakeoverControlsRejectCrossOwnerIncludingSuperadmin(t *testing.T) {
 	if _, err := h.manager.Resume(bob, ResumeArgs{TabID: "tab", Token: token, JobID: run.JobID}, agent.StaticStream(&agent.SliceStream{})); !errors.Is(err, ErrStaleOwnership) {
 		t.Fatalf("cross-owner resume error = %v", err)
 	}
-	if err := h.manager.PauseFor(bob, "tab", token); !errors.Is(err, ErrStaleOwnership) {
+	if _, err := h.manager.PauseFor(bob, "tab", token); !errors.Is(err, ErrStaleOwnership) {
 		t.Fatalf("cross-owner pause error = %v", err)
 	}
 	if err := h.manager.CancelContext(bob, run.JobID); !errors.Is(err, ErrStaleOwnership) {
@@ -221,7 +221,7 @@ func TestAccountContextAndSequenceSurviveRestartRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = waitEvent(t, initial, "toolResult")
-	if err := h.manager.PauseFor(alice, "tab", token); err != nil {
+	if _, err := h.manager.PauseFor(alice, "tab", token); err != nil {
 		t.Fatal(err)
 	}
 	close(release)

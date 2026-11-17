@@ -20,7 +20,6 @@ type harness struct {
 	mu       sync.Mutex
 	screen   tools.Screen
 	aiWrites [][]byte
-	banners  []string
 	audits   []tools.AuditEntry
 	writeAI  func([]byte) error
 	snapshot func(context.Context, string) (tools.Screen, error)
@@ -56,12 +55,6 @@ func newHarnessWith(t *testing.T, chat model.BaseChatModel, configure func(*Depe
 		if custom != nil {
 			return custom(data)
 		}
-		return nil
-	}
-	deps.Inject = func(_ context.Context, _ string, data []byte) error {
-		h.mu.Lock()
-		h.banners = append(h.banners, string(data))
-		h.mu.Unlock()
 		return nil
 	}
 	deps.Audit = func(_ context.Context, entry tools.AuditEntry) error {
@@ -142,14 +135,9 @@ func TestDoneAndProviderFailureHaveSingleTerminal(t *testing.T) {
 		h.run(t, stream, RunArgs{})
 		events := waitClosed(t, stream)
 		done, failed := counts(events)
-		if done != 1 || failed != 0 || events[len(events)-1].Answer != "finished" {
+		last := events[len(events)-1]
+		if done != 1 || failed != 0 || last.Answer != "finished" || last.Status != EndCompleted || last.Reason != "任务完成" {
 			t.Fatalf("events=%+v", events)
-		}
-		h.mu.Lock()
-		banners := strings.Join(h.banners, "\n")
-		h.mu.Unlock()
-		if !strings.Contains(banners, "AI 正在操作") || !strings.Contains(banners, "接管结束: 任务完成") {
-			t.Fatalf("banners=%q", banners)
 		}
 	})
 

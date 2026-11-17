@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
@@ -285,17 +284,13 @@ func (f *aiDualAccountFixture) screenText(t *testing.T, ctx context.Context, tab
 	return text
 }
 
-func (f *aiDualAccountFixture) requireScreenText(t *testing.T, ctx context.Context, tabID, want string) {
+// requireTakeoverStatus reads ai_takeover_status for session's token.
+func (f *aiDualAccountFixture) requireTakeoverStatus(t *testing.T, session *aiDualAccountSession, tabID, token string, active bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if text := f.screenText(t, ctx, tabID); strings.Contains(text, want) {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("screen does not contain %q: %q", want, f.screenText(t, ctx, tabID))
-		}
-		time.Sleep(10 * time.Millisecond)
+	status := f.rpc(t, session, "ai_takeover_status", map[string]any{"tabId": tabID, "token": token})
+	requireAIDualOK(t, status, "ai_takeover_status")
+	if got, _ := status.dataMap()["active"].(bool); got != active {
+		t.Fatalf("ai_takeover_status active = %v, want %v: %s", got, active, status.raw)
 	}
 }
 
@@ -749,33 +744,31 @@ func TestAIDualAccountTakeoverOverRPC(t *testing.T) {
 		requireAIDualFailed(t, call, "bob "+test.command)
 	}
 
+	fixture.requireTakeoverStatus(t, fixture.alice, tab.ID, token, true)
+	fixture.requireTakeoverStatus(t, fixture.bob, tab.ID, token, false)
 	exit := fixture.rpc(t, fixture.alice, "ai_takeover_exit", map[string]any{"tabId": tab.ID, "token": token, "reason": "alice leaves"})
 	requireAIDualOK(t, exit, "alice ai_takeover_exit")
+	fixture.requireTakeoverStatus(t, fixture.alice, tab.ID, token, false)
 
 	// The gateway-only caller is fail closed by the takeover owner gate: no
-	// token, no banner injection, no empty-owner ownership that would lock the
-	// legitimate owner out, and no secret on the wire. The screen already
-	// carries one banner from the owner's own enter; the gateway must not add
-	// another.
-	baseline := strings.Count(fixture.screenText(t, aliceCtx, tab.ID), "AI 正在操作此终端")
+	// token, no empty-owner ownership that would lock the legitimate owner
+	// out, and no secret on the wire.
 	gatewayEnter := fixture.gatewayRPC(t, "ai_takeover_enter", map[string]any{"tabId": tab.ID})
 	requireAIDualFailed(t, gatewayEnter, "gateway ai_takeover_enter")
 	requireAIDualForbiddenCode(t, gatewayEnter, "gateway ai_takeover_enter")
-	if got := strings.Count(fixture.screenText(t, aliceCtx, tab.ID), "AI 正在操作此终端"); got != baseline {
-		t.Fatalf("gateway enter injected a takeover banner: screen count = %d, baseline = %d", got, baseline)
-	}
 
 	// The failed attempt left no empty-owner ownership: the owner enters
-	// normally and a fresh banner lands on her terminal.
+	// normally and holds the tab.
 	aliceEnter := fixture.rpc(t, fixture.alice, "ai_takeover_enter", map[string]any{"tabId": tab.ID})
 	requireAIDualOK(t, aliceEnter, "alice ai_takeover_enter after the gateway attempt")
 	aliceToken, _ := aliceEnter.dataMap()["token"].(string)
 	if aliceToken == "" {
 		t.Fatalf("alice ai_takeover_enter returned no token after the gateway attempt: %s", aliceEnter.raw)
 	}
-	fixture.requireScreenText(t, aliceCtx, tab.ID, "AI 正在操作此终端")
-	if got := strings.Count(fixture.screenText(t, aliceCtx, tab.ID), "AI 正在操作此终端"); got <= baseline {
-		t.Fatalf("owner enter did not inject a fresh banner: screen count = %d, baseline = %d", got, baseline)
+	fixture.requireTakeoverStatus(t, fixture.alice, tab.ID, aliceToken, true)
+	// Takeover state lives in the UI; nothing is written into the terminal.
+	if screen := fixture.screenText(t, aliceCtx, tab.ID); strings.Contains(screen, "接管") || strings.Contains(screen, "AI 正在操作") {
+		t.Fatalf("takeover wrote into the terminal: %q", screen)
 	}
 
 	for _, test := range []struct {
@@ -783,6 +776,7 @@ func TestAIDualAccountTakeoverOverRPC(t *testing.T) {
 		args    map[string]any
 	}{
 		{command: "ai_takeover_pause", args: map[string]any{"tabId": tab.ID, "token": aliceToken}},
+		{command: "ai_takeover_status", args: map[string]any{"tabId": tab.ID, "token": aliceToken}},
 		{command: "ai_takeover_exit", args: map[string]any{"tabId": tab.ID, "token": aliceToken, "reason": "gateway leaves"}},
 		{command: "ai_takeover_run", args: map[string]any{"tabId": tab.ID, "token": aliceToken, "instruction": "list files"}},
 	} {

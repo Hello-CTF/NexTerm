@@ -1569,6 +1569,15 @@ export interface TakeoverRunResult {
   token: string;
 }
 
+/** Where a takeover stands: "pausing" until the AI reaches a safe point, "confirm" while it waits for the user. */
+export type TakeoverPhase = "idle" | "running" | "pausing" | "paused" | "confirm" | "inactive";
+
+export interface TakeoverStatus {
+  active: boolean;
+  jobId?: string;
+  phase: TakeoverPhase;
+}
+
 export const aiApi = {
   // compactConversation folds the conversation's history into one saved summary.
   compactConversation: (conversationId: string) =>
@@ -1649,7 +1658,9 @@ export const aiApi = {
   takeoverConfirm: (input: AiConfirmationInput) => call<void>("ai_takeover_confirm", { ...input }),
   takeoverCancel: (jobId: string) => call<void>("ai_takeover_cancel", { jobId }),
   takeoverPause: (tabId: string, token: string) =>
-    call<void>("ai_takeover_pause", { tabId, token }),
+    call<{ phase: TakeoverPhase }>("ai_takeover_pause", { tabId, token }),
+  takeoverStatus: (tabId: string, token: string) =>
+    call<TakeoverStatus>("ai_takeover_status", { tabId, token }),
   takeoverResume: (args: {
     tabId: string;
     token: string;

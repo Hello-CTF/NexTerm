@@ -219,11 +219,15 @@ func TestResumeAssetMismatchPrecedenceDuringPause(t *testing.T) {
 		t.Fatalf("paused asset mismatch resume error = %v", err)
 	}
 	asset.set("asset-a")
-	if _, err := h.manager.Resume(context.Background(), resumeArgs, factory); !errors.Is(err, ErrOwnershipActive) {
+	resumeErr := make(chan error, 1)
+	go func() {
+		_, err := h.manager.Resume(context.Background(), resumeArgs, factory)
+		resumeErr <- err
+	}()
+	releasePause()
+	if err := <-resumeErr; err != nil {
 		t.Fatalf("same-asset resume during pause finalization error = %v", err)
 	}
-	releasePause()
-	waitTakeoverPauseReady(t, h.manager, response.JobID)
 }
 
 func TestGuardModesStillGateWithAssetBinding(t *testing.T) {

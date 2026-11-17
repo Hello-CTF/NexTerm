@@ -107,8 +107,8 @@ describe("takeover accessibility and overlay priority", () => {
     reclaimKey({ repeat: true });
     expect(mocks.takeoverExit).not.toHaveBeenCalled();
     reclaimKey();
-    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith("job-1");
     await flush();
+    expect(mocks.cancel).not.toHaveBeenCalled();
     expect(mocks.takeoverExit).toHaveBeenCalledExactlyOnceWith(
       "terminal-1",
       "ownership-token",

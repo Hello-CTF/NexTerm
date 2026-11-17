@@ -461,12 +461,22 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
         updateTakeoverPaused(activeRunRef.current?.jobId ?? run.jobId, true);
       } else if (result.accepted && type === "resumed") {
         updateTakeoverPaused(activeRunRef.current?.jobId ?? run.jobId, false);
+      } else if (result.accepted && type === "confirmRequired") {
+        // A pending pause settles on the confirmation the run now waits for.
+        const banner = useUi.getState().takeover;
+        if (banner && banner.jobId === (activeRunRef.current?.jobId ?? run.jobId) && banner.control === "pausing") {
+          useUi.getState().setTakeover({ ...banner, control: undefined });
+        }
       }
       if (!result.terminal) return;
       takeoverPausedRef.current = false;
       onTerminal();
       settleRestoredRun(run.generation);
       if (type === "error" && result.accepted) pushToast("error", t("终端接管出错：{value}", { value: ev.message as string }));
+      // A reclaim already reported itself; an AI-ended takeover surfaces its outcome even with the AI panel hidden.
+      if (type === "done" && result.accepted && ev.status !== "stopped") {
+        pushToast("info", t("接管结束：{answer}", { answer: (ev.answer as string) || t("（无回答）") }));
+      }
       dispose();
     };
     const channel = createAiChannel(emit);
@@ -489,8 +499,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       current.jobId !== jobId ||
       current.settled ||
       !banner ||
-      banner.jobId !== jobId ||
-      banner.tabId !== tabId
+      banner.jobId !== jobId
     ) {
       throw new Error(t("接管任务已不在当前会话，请重新打开对应终端后重试"));
     }
@@ -512,7 +521,6 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       runChannelRef.current = { channel: next.channel, dispose: next.dispose, generation };
       previous?.dispose();
       stream.bindJob(generation, jobId);
-      if (takeoverPausedRef.current) next.emit({ type: "resumed" });
       const latestBanner = useUi.getState().takeover;
       if (latestBanner?.jobId === jobId) {
         useUi.getState().setTakeover(

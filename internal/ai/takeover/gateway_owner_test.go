@@ -3,7 +3,6 @@ package takeover
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 
@@ -46,12 +45,6 @@ func takeoverOwnerships(h *harness) map[string]string {
 	return ids
 }
 
-func (h *harness) bannerCount() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return len(h.banners)
-}
-
 func registerTakeoverDispatcher(t *testing.T, h *harness) *ipc.Dispatcher {
 	t.Helper()
 	dispatcher := ipc.NewDispatcher()
@@ -61,7 +54,7 @@ func registerTakeoverDispatcher(t *testing.T, h *harness) *ipc.Dispatcher {
 	return dispatcher
 }
 
-func TestIdentityLessEnterFailsClosedWithoutOwnershipOrBanner(t *testing.T) {
+func TestIdentityLessEnterFailsClosedWithoutOwnership(t *testing.T) {
 	h := newServerHarness(t, nil)
 	dispatcher := registerTakeoverDispatcher(t, h)
 
@@ -73,9 +66,6 @@ func TestIdentityLessEnterFailsClosedWithoutOwnershipOrBanner(t *testing.T) {
 	requireIdentityLessForbidden(t, dispatchTakeover(t, dispatcher, context.Background(), "ai_takeover_enter", map[string]any{"tabId": "tab"}, ipc.Environment{}), "ai_takeover_enter")
 	if owners := takeoverOwnerships(h); len(owners) != 0 {
 		t.Fatalf("identity-less enter recorded ownership: %+v", owners)
-	}
-	if banners := h.bannerCount(); banners != 0 {
-		t.Fatalf("identity-less enter injected %d banners", banners)
 	}
 
 	alice := ipc.WithUserID(context.Background(), "account-a")
@@ -163,11 +153,8 @@ func TestSharedDeploymentAllowsOwnerlessEnter(t *testing.T) {
 	if len(owners) != 1 || owners["tab"] != "" {
 		t.Fatalf("shared-mode ownership = %+v, want single empty owner", owners)
 	}
-	h.mu.Lock()
-	banners := strings.Join(h.banners, "\n")
-	h.mu.Unlock()
-	if !strings.Contains(banners, "AI 正在操作") {
-		t.Fatalf("shared-mode enter did not inject the banner: %q", banners)
+	if status, err := h.manager.Status(context.Background(), "tab", token); err != nil || !status.Active || status.Phase != PhaseIdle {
+		t.Fatalf("shared-mode status = %+v, %v", status, err)
 	}
 }
 

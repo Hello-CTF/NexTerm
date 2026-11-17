@@ -916,7 +916,9 @@ function finishDone(
     next = appendItems({ ...next, seq }, [
       { id, attempt: generation, role: "assistant", text: t("接管结束：{answer}", { answer }) },
     ]);
-    return appendOutcome(next, generation, "done", t("接管已完成"));
+    // Only a takeover the AI reported as done is "completed"; a reclaim, a failure or a step limit just ended.
+    const completed = ev.status === undefined || ev.status === "completed";
+    return appendOutcome(next, generation, "done", completed ? t("接管已完成") : t("接管已结束"));
   }
 
   const segment = finalStreamedSegment(next.items, generation);

@@ -77,7 +77,9 @@ func TestGoleakNormalCompletion(t *testing.T) {
 // 取消: a user pause cancels the in-flight model iteration; the escalation
 // watchdog and cancel-outcome goroutines it spawns must not outlive the run.
 func TestGoleakCancellation(t *testing.T) {
+	inFlight := make(chan struct{}, 1)
 	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		inFlight <- struct{}{}
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}}
@@ -86,6 +88,7 @@ func TestGoleakCancellation(t *testing.T) {
 	})
 	stream := &agent.SliceStream{}
 	h.run(t, stream, RunArgs{})
+	<-inFlight
 	h.manager.Pause("tab")
 	waitClosed(t, stream)
 	if err := h.manager.Close(); err != nil {

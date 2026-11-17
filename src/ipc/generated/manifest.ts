@@ -399,6 +399,11 @@ export const ipcContractManifest = {
       channel: true,
       stream: "json",
     },
+    "ai_takeover_status": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
     "ai_test_provider": {
       nested: false,
       channel: false,
@@ -3294,6 +3299,7 @@ export const ipcContractManifest = {
     "ai_takeover_pause",
     "ai_takeover_resume",
     "ai_takeover_run",
+    "ai_takeover_status",
     "ai_test_provider",
     "ai_usage_summary",
     "app_info",

@@ -33,7 +33,7 @@ describe("takeover steal-back truthfulness", () => {
     useUi.getState().setTakeover(current);
     mocks.exit.mockRejectedValue(new Error("offline"));
     await stealBack();
-    expect(useUi.getState().takeover).toBe(current);
+    expect(useUi.getState().takeover).toEqual(current);
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringMatching(/可能仍在操作/));
   });
 
@@ -41,6 +41,8 @@ describe("takeover steal-back truthfulness", () => {
     useUi.getState().setTakeover(takeover());
     await stealBack();
     expect(mocks.exit).toHaveBeenCalledWith("tab", "token", "用户收回控制权");
+    // Exit carries the user's reason to the run; a prior cancel would replace it with a generic one.
+    expect(mocks.cancel).not.toHaveBeenCalled();
     expect(useUi.getState().takeover).toBeNull();
   });
 
@@ -63,9 +65,8 @@ describe("takeover steal-back truthfulness", () => {
     expect(useUi.getState().takeover).toBe(newer);
   });
 
-  it("deduplicates concurrent Esc/click requests and still exits after cancel failure", async () => {
+  it("deduplicates concurrent shortcut/click requests", async () => {
     let release!: () => void;
-    mocks.cancel.mockRejectedValue(new Error("cancel failed"));
     mocks.exit.mockImplementation(
       () =>
         new Promise<void>((resolve) => {

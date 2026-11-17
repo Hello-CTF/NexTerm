@@ -7,7 +7,7 @@ import { flush, mount, type MountedView } from "./reactTestUtils";
 const mocks = vi.hoisted(() => ({
   cancel: vi.fn(),
   exit: vi.fn(),
-  snapshot: vi.fn(),
+  status: vi.fn(),
   toast: vi.fn(),
   seeded: {
     tabId: "tab-a",
@@ -24,14 +24,14 @@ vi.hoisted(() => {
 });
 
 vi.mock("../../ipc/commands", () => ({
-  aiApi: { takeoverCancel: mocks.cancel, takeoverExit: mocks.exit },
+  aiApi: { takeoverCancel: mocks.cancel, takeoverExit: mocks.exit, takeoverStatus: mocks.status },
   dbApi: {},
   sessionApi: {},
   vaultApi: {},
-  terminalApi: { snapshot: mocks.snapshot },
+  terminalApi: {},
 }));
 
-import { TakeoverBanner, restoredTakeoverAlive, stealBack, takeoverEndedIn } from "../../app/TakeoverBanner";
+import { TakeoverBanner, restoredTakeoverStatus, stealBack } from "../../app/TakeoverBanner";
 import { useUi, type TakeoverState } from "../../app/store";
 
 async function flushProbe() {
@@ -42,53 +42,21 @@ function takeover(overrides: Partial<TakeoverState> = {}): TakeoverState {
   return { ...mocks.seeded, startedAt: Date.now(), ...overrides };
 }
 
-describe("takeoverEndedIn", () => {
-  it("reports no end for a fresh terminal without markers", () => {
-    expect(takeoverEndedIn("deploy@web-01:~$ ")).toBe(false);
+describe("restoredTakeoverStatus", () => {
+  it("asks the backend with the restored ownership token", async () => {
+    const status = vi.fn().mockResolvedValue({ active: true, jobId: "job-a", phase: "running" });
+    await expect(restoredTakeoverStatus(takeover(), status)).resolves.toEqual({ active: true, jobId: "job-a", phase: "running" });
+    expect(status).toHaveBeenCalledWith("tab-a", "token-a");
   });
 
-  it("treats only a previous takeover end marker as ended", () => {
-    expect(takeoverEndedIn("$ \r\n[接管结束: 任务完成]\r\ndeploy@web-01:~$ ")).toBe(true);
-  });
-
-  it("keeps the current takeover alive when a previous end marker and the current EnterBanner share the snapshot", () => {
-    const text =
-      "[接管结束: 任务完成]\r\n[AI 正在操作此终端 - 按 Esc 或任意键暂停]\r\ndeploy@web-01:~$ ";
-    expect(takeoverEndedIn(text)).toBe(false);
-  });
-
-  it("reports ended only when an end marker appears after EnterBanner", () => {
-    const text =
-      "[AI 正在操作此终端 - 按 Esc 或任意键暂停]\r\n$ \r\n[接管结束: 用户退出]\r\n$ ";
-    expect(takeoverEndedIn(text)).toBe(true);
-  });
-
-  it("reports ended for multiple historical end markers without EnterBanner", () => {
-    const text = "[接管结束: 任务完成]\r\n[接管结束: 用户退出]\r\n$ ";
-    expect(takeoverEndedIn(text)).toBe(true);
-  });
-});
-
-describe("restoredTakeoverAlive", () => {
-  it("keeps a restored takeover alive when the snapshot has no end marker", async () => {
-    const snap = vi.fn().mockResolvedValue({ text: "deploy@web-01:~$ " });
-    await expect(restoredTakeoverAlive(takeover(), snap)).resolves.toBe(true);
-    expect(snap).toHaveBeenCalledWith("tab-a");
-  });
-
-  it("treats a restored takeover as ended when the snapshot contains an end marker", async () => {
-    const snap = vi.fn().mockResolvedValue({ text: "[接管结束: 用户退出]\r\ndeploy@web-01:~$ " });
-    await expect(restoredTakeoverAlive(takeover(), snap)).resolves.toBe(false);
-  });
-
-  it("treats a takeover as alive during persistent snapshot failures instead of clearing the banner incorrectly", async () => {
+  it("keeps the banner (no verdict) during persistent status failures instead of clearing it incorrectly", async () => {
     vi.useFakeTimers();
     try {
-      const snap = vi.fn().mockRejectedValue(new Error("offline"));
-      const pending = restoredTakeoverAlive(takeover(), snap);
+      const status = vi.fn().mockRejectedValue(new Error("offline"));
+      const pending = restoredTakeoverStatus(takeover(), status);
       await vi.advanceTimersByTimeAsync(3_000);
-      await expect(pending).resolves.toBe(true);
-      expect(snap).toHaveBeenCalledTimes(3);
+      await expect(pending).resolves.toBeNull();
+      expect(status).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }
@@ -102,7 +70,7 @@ describe("TakeoverBanner takeover restoration", () => {
     vi.clearAllMocks();
     mocks.cancel.mockResolvedValue(undefined);
     mocks.exit.mockResolvedValue(undefined);
-    mocks.snapshot.mockResolvedValue({ text: "deploy@web-01:~$ " });
+    mocks.status.mockResolvedValue({ active: true, jobId: "job-a", phase: "running" });
     useUi.setState({ pushToast: mocks.toast });
   });
 
@@ -111,29 +79,44 @@ describe("TakeoverBanner takeover restoration", () => {
     view = null;
   });
 
-  it("restores the banner after reload, then clears it and notifies when the snapshot shows the takeover ended", async () => {
+  it("restores the banner after reload, then clears it and notifies when the backend reports the takeover ended", async () => {
     vi.resetModules();
     localStorage.setItem("nexterm.takeover.v1", JSON.stringify(mocks.seeded));
     const { TakeoverBanner: ReloadedTakeoverBanner } = await import("../../app/TakeoverBanner");
     const { useUi: reloadedUi } = await import("../../app/store");
     reloadedUi.setState({ pushToast: mocks.toast });
-    mocks.snapshot.mockResolvedValue({ text: "[接管结束: 用户退出]\r\n$ " });
+    mocks.status.mockResolvedValue({ active: false, phase: "inactive" });
     view = mount(createElement(ReloadedTakeoverBanner));
     expect(view.container.textContent).toContain("AI 正在操作此终端");
 
     await flushProbe();
-    expect(mocks.snapshot).toHaveBeenCalledWith("tab-a");
+    expect(mocks.status).toHaveBeenCalledWith("tab-a", "token-a");
     expect(view.container.textContent).not.toContain("AI 正在操作此终端");
     expect(reloadedUi.getState().takeover).toBeNull();
     expect(mocks.toast).toHaveBeenCalledWith("info", "接管已结束");
     expect(localStorage.getItem("nexterm.takeover.v1")).toBeNull();
   });
 
+  it("shows a restored takeover the backend reports paused as paused", async () => {
+    vi.resetModules();
+    localStorage.setItem("nexterm.takeover.v1", JSON.stringify(mocks.seeded));
+    const { TakeoverBanner: ReloadedTakeoverBanner } = await import("../../app/TakeoverBanner");
+    const { useUi: reloadedUi } = await import("../../app/store");
+    reloadedUi.setState({ pushToast: mocks.toast });
+    mocks.status.mockResolvedValue({ active: true, jobId: "job-a", phase: "paused" });
+    view = mount(createElement(ReloadedTakeoverBanner));
+
+    await flushProbe();
+    expect(reloadedUi.getState().takeover?.paused).toBe(true);
+    expect(view.container.textContent).toContain("AI 接管已暂停");
+    act(() => reloadedUi.getState().setTakeover(null));
+  });
+
   it("does not probe liveness for a new takeover, avoiding clearing an active banner", async () => {
     useUi.getState().setTakeover(takeover({ tabId: "tab-b", token: "token-b" }));
     view = mount(createElement(TakeoverBanner));
     await flushProbe();
-    expect(mocks.snapshot).not.toHaveBeenCalled();
+    expect(mocks.status).not.toHaveBeenCalled();
     expect(view.container.textContent).toContain("AI 正在操作此终端");
     act(() => useUi.getState().setTakeover(null));
   });
@@ -151,6 +134,7 @@ describe("stealBack reports ended takeovers truthfully", () => {
     mocks.exit.mockRejectedValue(new Error("接管令牌已过期"));
     await stealBack();
     expect(useUi.getState().takeover).toBeNull();
+    expect(mocks.cancel).toHaveBeenCalledWith("job-a");
     expect(mocks.toast).toHaveBeenCalledWith("info", "接管已结束，终端控制权已恢复。");
   });
 
@@ -167,7 +151,8 @@ describe("stealBack reports ended takeovers truthfully", () => {
     useUi.getState().setTakeover(current);
     mocks.exit.mockRejectedValue(new Error("offline"));
     await stealBack();
-    expect(useUi.getState().takeover).toBe(current);
+    expect(useUi.getState().takeover).toEqual(current);
+    expect(useUi.getState().takeover?.control).toBeUndefined();
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringMatching(/可能仍在操作/));
   });
 });

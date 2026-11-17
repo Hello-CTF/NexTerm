@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
-  snapshot: vi.fn(),
+  status: vi.fn(),
   toast: vi.fn(),
   seeded: {
     tabId: "tab-a",
@@ -28,11 +28,12 @@ vi.mock("../../ipc/commands", () => ({
     takeoverPause: vi.fn(),
     takeoverResume: vi.fn(),
     takeoverExit: vi.fn(),
+    takeoverStatus: mocks.status,
   },
   dbApi: {},
   sessionApi: {},
   vaultApi: {},
-  terminalApi: { snapshot: mocks.snapshot },
+  terminalApi: {},
 }));
 
 import { TakeoverBanner } from "../../app/TakeoverBanner";
@@ -43,7 +44,7 @@ describe("TakeoverBanner paused localStorage restoration", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.snapshot.mockResolvedValue({ text: "deploy@web-01:~$ " });
+    mocks.status.mockResolvedValue({ active: true, jobId: "job-a", phase: "paused" });
     useUi.setState({ pushToast: mocks.toast });
   });
 
@@ -59,7 +60,7 @@ describe("TakeoverBanner paused localStorage restoration", () => {
     await flushUntil(() => (view!.container.textContent ?? "").includes("AI 接管已暂停"));
     expect([...view.container.querySelectorAll("button")].some((button) => button.textContent === "继续")).toBe(true);
     expect(JSON.parse(localStorage.getItem("nexterm.takeover.v1")!).paused).toBe(true);
-    expect(mocks.snapshot).toHaveBeenCalledWith("tab-a");
+    expect(mocks.status).toHaveBeenCalledWith("tab-a", "token-a");
     expect(useUi.getState().takeover).not.toBeNull();
   });
 });

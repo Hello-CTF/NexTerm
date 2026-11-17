@@ -24,6 +24,7 @@ import (
 type runResult struct {
 	answer string
 	reason string
+	status string
 	steps  int
 	err    error
 }
@@ -36,6 +37,7 @@ type takeoverRuntime struct {
 	allowWrite bool
 	answer     string
 	reason     string
+	status     string
 	steps      int
 }
 
@@ -77,12 +79,14 @@ func (m *Manager) runJob(state *runState) {
 					go m.runJob(state)
 				} else {
 					state.running = false
+					state.notifyLocked()
 					state.pendingMu.Unlock()
 				}
 				state.finalizeMu.Unlock()
 				return
 			}
 			state.running = false
+			state.notifyLocked()
 			state.pendingMu.Unlock()
 			state.finalizeMu.Unlock()
 		}()
@@ -95,6 +99,16 @@ func (m *Manager) runJob(state *runState) {
 			result = controlledResult(state, result.steps)
 		}
 		if paused {
+			// The run stopped for a confirmation: that is the safe point a
+			// pending pause asked for, and confirming is the user's explicit
+			// go-ahead, so the pause is settled here instead of timing out.
+			state.pendingMu.Lock()
+			if state.userPaused {
+				state.userPaused = false
+				state.pauseReady = false
+				state.notifyLocked()
+			}
+			state.pendingMu.Unlock()
 			return
 		}
 		if pauseEscalated {
@@ -118,11 +132,11 @@ func (m *Manager) runJob(state *runState) {
 				m.complete(state, runResult{err: errors.New("暂停超时：模型未在安全点内响应，任务已停止")})
 				return
 			}
-			if !m.checkpointExists(state) && state.eino != nil && state.eino.steps == 0 && state.eino.answer == "" {
-				m.complete(state, runResult{answer: "用户暂停", reason: "用户暂停"})
-				return
-			}
-			if !m.awaitCheckpoint(state) {
+			// Paused before the first step completed: nothing ran, so there
+			// is no checkpoint to resume from and a resume starts the
+			// instruction afresh instead of ending the takeover.
+			fresh := !m.checkpointExists(state) && state.eino != nil && state.eino.steps == 0 && state.eino.answer == ""
+			if !fresh && !m.awaitCheckpoint(state) {
 				result.err = errors.New("接管 checkpoint 未能持久化，暂停不可恢复")
 				m.complete(state, result)
 				return
@@ -132,13 +146,22 @@ func (m *Manager) runJob(state *runState) {
 			if state.completed {
 				return
 			}
-			m.persistRecovery(state)
+			if fresh {
+				state.pendingMu.Lock()
+				state.started = false
+				state.pendingMu.Unlock()
+			} else {
+				m.persistRecovery(state)
+			}
 			emitCtx, cancel := context.WithTimeout(context.WithoutCancel(state.ctx), time.Second)
 			defer cancel()
 			_ = state.emit(emitCtx, agent.Event{Type: "paused", Reason: "用户暂停", TabID: state.args.TabID})
-			m.persistRecovery(state)
+			if !fresh {
+				m.persistRecovery(state)
+			}
 			state.pendingMu.Lock()
 			state.pauseReady = true
+			state.notifyLocked()
 			state.pendingMu.Unlock()
 			return
 		}
@@ -264,7 +287,7 @@ func (m *Manager) initializeEino(state *runState) error {
 	}
 	runtime := &takeoverRuntime{
 		input: []*schema.Message{
-			schema.SystemMessage("You are the terminal takeover assistant of NexTerm. Complete the user's instruction step by step based on the current screen. You may only use read_screen, send_keys, wait_for, and done. Commands are really written into the terminal; when the task is complete or cannot continue, you must call done and report success truthfully. Answer in Chinese."),
+			schema.SystemMessage("You are the terminal takeover assistant of NexTerm. Complete the user's instruction step by step based on the current screen. You may only use read_screen, send_keys, wait_for, and done. Commands are really written into the terminal; when the task is complete or cannot continue, you must call done and report success truthfully. The user can pause you or take the terminal back at any time; after a resume, act on the fresh screen. Answer in Chinese."),
 			schema.UserMessage(state.args.Instruction),
 		},
 		permission: permission, allowWrite: state.args.AllowWrite == nil || *state.args.AllowWrite,
@@ -296,6 +319,10 @@ func (m *Manager) initializeEino(state *runState) error {
 
 const screenMarker = "[Current Terminal]"
 
+// resumeNote reaches the model through the screen message, never the
+// terminal, on the first call after the user resumes a paused takeover.
+const resumeNote = "Note: the user paused this takeover and has now resumed it. They may have typed in the terminal meanwhile, so check this screen before continuing."
+
 // screenHandler puts the fresh terminal screen in front of each model call.
 // It replaces the previous screen message so checkpointed state keeps exactly
 // one, the latest.
@@ -322,7 +349,15 @@ func (h *screenHandler) BeforeModelRewriteState(ctx context.Context, agentState 
 		}
 		next.Messages = append(next.Messages, message)
 	}
-	next.Messages = append(next.Messages, schema.UserMessage(fmt.Sprintf(screenMarker+"\nCursor (%d,%d), idle %dms\n%s", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Text)))
+	h.state.pendingMu.Lock()
+	resumed := h.state.resumeNote
+	h.state.resumeNote = false
+	h.state.pendingMu.Unlock()
+	note := ""
+	if resumed {
+		note = resumeNote + "\n"
+	}
+	next.Messages = append(next.Messages, schema.UserMessage(fmt.Sprintf(screenMarker+"\n%sCursor (%d,%d), idle %dms\n%s", note, screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Text)))
 	return ctx, &next, nil
 }
 
@@ -331,15 +366,15 @@ func (m *Manager) consume(iterCtx context.Context, state *runState, iterator *ad
 	for {
 		event, ok := iterator.Next()
 		if !ok {
-			reason := runtime.reason
+			reason, status := runtime.reason, runtime.status
 			if reason == "" {
-				reason = "模型停止"
+				reason, status = "模型停止", EndIncomplete
 			}
-			return runResult{answer: runtime.answer, reason: reason, steps: runtime.steps}
+			return runResult{answer: runtime.answer, reason: reason, status: status, steps: runtime.steps}
 		}
 		if event.Err != nil {
 			if errors.Is(event.Err, adk.ErrExceedMaxIterations) {
-				return runResult{answer: fmt.Sprintf("已达到 %d 步接管上限", state.args.MaxSteps), reason: "达到最大步骤", steps: state.args.MaxSteps}
+				return runResult{answer: fmt.Sprintf("已达到 %d 步接管上限", state.args.MaxSteps), reason: "达到最大步骤", status: EndIncomplete, steps: state.args.MaxSteps}
 			}
 			return runResult{err: event.Err}
 		}
@@ -388,7 +423,7 @@ func controlledResult(state *runState, steps int) runResult {
 	if reason == "" {
 		reason = "用户取消"
 	}
-	return runResult{answer: reason, reason: reason, steps: steps}
+	return runResult{answer: reason, reason: reason, status: EndStopped, steps: steps}
 }
 
 func (m *Manager) waitIdle(ctx context.Context, tabID string) {
@@ -492,9 +527,9 @@ func (m *Manager) emitToolResult(iterCtx context.Context, state *runState, messa
 	if message.ToolName == "done" {
 		state.eino.answer = result.Text
 		if result.OK {
-			state.eino.reason = "任务完成"
+			state.eino.reason, state.eino.status = "任务完成", EndCompleted
 		} else {
-			state.eino.reason = "任务失败"
+			state.eino.reason, state.eino.status = "任务失败", EndFailed
 		}
 	}
 	text, cut := takeoverPrefix(result.Text, 64<<10)

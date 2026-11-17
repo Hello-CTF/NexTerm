@@ -612,6 +612,28 @@ describe("conversation terminal reconciliation", () => {
     expect(texts(items, "assistant")).toEqual(["Observe", "接管结束：Installation complete"]);
     expect(items.at(-1)).toMatchObject({ role: "outcome", outcome: "done" });
   });
+
+  it("records a reclaimed takeover's reason once and does not call it completed", () => {
+    const { s } = stream();
+    s.beginRun(7, "takeover");
+    s.pushEvent(7, { type: "delta", text: "Working", seq: 1 });
+    const end = { type: "done", answer: "用户收回控制权", reason: "用户收回控制权", status: "stopped", seq: 2 };
+    expect(s.pushEvent(7, end).accepted).toBe(true);
+    expect(s.pushEvent(7, end).accepted).toBe(false);
+    expect(s.pushEvent(7, { ...end, seq: 3 }).accepted).toBe(false);
+    const items = s.getState().items;
+    expect(texts(items, "assistant")).toEqual(["Working", "接管结束：用户收回控制权"]);
+    expect(items.filter((i) => i.role === "outcome")).toEqual([
+      expect.objectContaining({ outcome: "done", text: "接管已结束" }),
+    ]);
+  });
+
+  it("calls only an AI-reported success a completed takeover", () => {
+    const { s } = stream();
+    s.beginRun(7, "takeover");
+    s.pushEvent(7, { type: "done", answer: "nginx 已启动", reason: "任务完成", status: "completed", seq: 1 });
+    expect(s.getState().items.at(-1)).toMatchObject({ role: "outcome", text: "接管已完成" });
+  });
 });
 
 describe("HITL interaction lifecycle", () => {

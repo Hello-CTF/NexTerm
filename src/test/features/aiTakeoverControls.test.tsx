@@ -124,7 +124,7 @@ describe("AiSidebar takeover controls", () => {
     mocks.takeoverRun.mockResolvedValue({ jobId: "job-t", token: "tok-2" });
     mocks.takeoverConfirm.mockResolvedValue(undefined);
     mocks.takeoverCancel.mockResolvedValue(undefined);
-    mocks.takeoverPause.mockResolvedValue(undefined);
+    mocks.takeoverPause.mockResolvedValue({ phase: "pausing" });
     mocks.takeoverResume.mockResolvedValue({ jobId: "job-t", token: "tok-2" });
     mocks.takeoverExit.mockResolvedValue(undefined);
     localStorage.clear();
@@ -296,6 +296,47 @@ describe("AiSidebar takeover controls", () => {
     expect(useUi.getState().takeover).toBeNull();
     expect(localStorage.getItem("nexterm.takeover.v1")).toBeNull();
     expect(mocks.runEvents).not.toHaveBeenCalled();
+  });
+
+  it("resumes the paused takeover after the user switched to another terminal tab", async () => {
+    const original = await startTakeover();
+    clickButton(view!.container, "暂停");
+    await flush();
+    emit(original, { type: "paused", reason: "用户暂停", seq: 1 });
+    await flush();
+    act(() =>
+      view!.root.render(
+        createElement(
+          Fragment,
+          null,
+          createElement(TakeoverBanner),
+          createElement(AiSidebar, { sessionId: "s1", tabId: "t2" }),
+        ),
+      ),
+    );
+    await flush();
+
+    clickButton(view!.container, "继续");
+    await flush();
+    expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
+    expect(mocks.takeoverResume).toHaveBeenCalledWith({
+      tabId: "t1",
+      token: "tok-2",
+      jobId: "job-t",
+      channel: mocks.channels[1],
+    });
+    expect(takeoverPaused(useUi.getState().takeover!)).toBe(false);
+  });
+
+  it("reports an AI-finished takeover once and removes the banner", async () => {
+    const original = await startTakeover();
+    mocks.toast.mockClear();
+    emit(original, { type: "done", answer: "nginx 已启动", reason: "任务完成", status: "completed", seq: 1 });
+    emit(original, { type: "done", answer: "nginx 已启动", reason: "任务完成", status: "completed", seq: 1 });
+    await flush();
+    expect(useUi.getState().takeover).toBeNull();
+    expect(mocks.toast.mock.calls.filter(([, text]) => text === "接管结束：nginx 已启动")).toHaveLength(1);
+    expect(view!.container.textContent?.match(/接管结束：nginx 已启动/g)).toHaveLength(1);
   });
 
   it("keeps a failed resume paused and retries with the same job and a fresh channel", async () => {

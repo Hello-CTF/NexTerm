@@ -310,6 +310,10 @@ export interface TakeoverState {
   task: string;
   allowWrite: boolean;
   startedAt: number;
+  /** The backend reported the run paused at a safe point; resume continues the same job. */
+  paused?: boolean;
+  /** A pause, resume or reclaim request the backend has not settled yet. */
+  control?: "pausing" | "resuming" | "reclaiming";
 }
 
 // AI board groups by workspace: each workspace gets one tab group, each tab bound to an independent conversation.

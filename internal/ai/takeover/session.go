@@ -11,7 +11,6 @@ func WithSession(deps Dependencies, manager *session.Manager) Dependencies {
 	terminal := tools.SessionTerminal(manager)
 	deps.Snapshot = terminal.Snapshot
 	deps.WriteAI = manager.WriteInternal
-	deps.Inject = manager.InjectInternal
 	deps.TabSession = func(tabID string) string {
 		tab, err := manager.Tab(tabID)
 		if err != nil {

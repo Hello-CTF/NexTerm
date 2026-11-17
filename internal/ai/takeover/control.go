@@ -124,13 +124,38 @@ func (m *Manager) CancelContext(ctx context.Context, jobID string) error {
 	return nil
 }
 
-func (m *Manager) PauseFor(ctx context.Context, tabID, token string) error {
+func (m *Manager) PauseFor(ctx context.Context, tabID, token string) (PauseResponse, error) {
 	owner, err := m.authorizeOwnership(ctx, tabID, token)
 	if err != nil {
-		return err
+		return PauseResponse{}, err
 	}
-	for _, state := range m.statesForOwner(owner) {
-		m.pauseState(state)
+	return PauseResponse{Phase: m.pauseOwner(owner)}, nil
+}
+
+// Status reports whether token still owns tabID and the phase of its job. A
+// stale or foreign token reads as inactive; it never reveals another owner.
+func (m *Manager) Status(ctx context.Context, tabID, token string) (StatusResponse, error) {
+	if _, err := m.resolveOwner(ctx); err != nil {
+		return StatusResponse{}, err
 	}
-	return nil
+	inactive := StatusResponse{Phase: PhaseInactive}
+	if tabID == "" || token == "" {
+		return inactive, nil
+	}
+	m.mu.Lock()
+	owner := m.owners[tabID]
+	if m.closed || owner == nil || owner.token != token || owner.ownerID != requestOwnerID(ctx) || owner.ctx.Err() != nil {
+		m.mu.Unlock()
+		return inactive, nil
+	}
+	m.mu.Unlock()
+	states := m.statesForOwner(owner)
+	if len(states) == 0 {
+		return StatusResponse{Active: true, Phase: PhaseIdle}, nil
+	}
+	state := states[0]
+	state.pendingMu.Lock()
+	phase := state.phaseLocked()
+	state.pendingMu.Unlock()
+	return StatusResponse{Active: true, JobID: state.id, Phase: phase}, nil
 }

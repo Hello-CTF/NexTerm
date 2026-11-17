@@ -2,95 +2,71 @@ package takeover
 
 import (
 	"context"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 )
 
+// Preempt and Enter serialize on the tab's operation lock: however they
+// interleave, at most one entered token still owns the tab afterwards, and
+// neither writes to the terminal.
 func TestR4PreemptAndEnterAreAtomic(t *testing.T) {
-	var mu sync.Mutex
-	var events []string
-	aiWrites := 0
-	enterStarted := make(chan struct{}, 2)
-	exitStarted := make(chan struct{})
-	releaseExit := make(chan struct{})
-	var exitOnce sync.Once
-	deps := Dependencies{
+	var aiWrites atomic.Int32
+	manager := NewManager(Dependencies{
 		Shared: true,
 		Snapshot: func(context.Context, string) (tools.Screen, error) {
-			enterStarted <- struct{}{}
 			return tools.Screen{Text: "$ ", IdleMS: 301}, nil
 		},
 		WriteAI: func(context.Context, string, []byte) error {
-			mu.Lock()
-			aiWrites++
-			mu.Unlock()
+			aiWrites.Add(1)
 			return nil
 		},
-		Inject: func(_ context.Context, _ string, data []byte) error {
-			if strings.Contains(string(data), "接管结束") {
-				exitOnce.Do(func() { close(exitStarted) })
-				<-releaseExit
-			}
-			mu.Lock()
-			if strings.Contains(string(data), "接管结束") {
-				events = append(events, "exit")
-			} else {
-				events = append(events, "enter")
-			}
-			mu.Unlock()
-			return nil
-		},
-	}
-	manager := NewManager(deps)
+	})
 	defer manager.Close()
-	if _, err := manager.Enter(context.Background(), "tab"); err != nil {
-		t.Fatal(err)
-	}
-	<-enterStarted
-	mu.Lock()
-	events = nil
-	mu.Unlock()
-	preemptDone := make(chan struct{})
-	go func() {
-		manager.Preempt("tab")
-		close(preemptDone)
-	}()
-	<-exitStarted
-	enterDone := make(chan error, 1)
-	go func() {
-		_, err := manager.Enter(context.Background(), "tab")
-		enterDone <- err
-	}()
-	<-enterStarted
-	select {
-	case err := <-enterDone:
-		t.Fatalf("Enter completed before the preempt exit injection: %v", err)
-	default:
-	}
-	mu.Lock()
-	for _, event := range events {
-		if event == "enter" {
-			t.Fatalf("new ownership/banner appeared before preempt finished: %v", events)
-		}
-	}
-	mu.Unlock()
-	close(releaseExit)
-	select {
-	case err := <-enterDone:
+	for round := 0; round < 50; round++ {
+		first, err := manager.Enter(context.Background(), "tab")
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("concurrent Enter/Preempt deadlocked")
+		var wg sync.WaitGroup
+		tokens := make(chan string, 1)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			manager.Preempt("tab")
+		}()
+		go func() {
+			defer wg.Done()
+			token, err := manager.Enter(context.Background(), "tab")
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			tokens <- token
+		}()
+		wg.Wait()
+		close(tokens)
+		active := 0
+		for _, token := range []string{first, <-tokens} {
+			status, err := manager.Status(context.Background(), "tab", token)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status.Active {
+				active++
+			}
+		}
+		if active > 1 {
+			t.Fatalf("round %d: %d tokens own the tab", round, active)
+		}
+		if active == 1 && !manager.Active("tab") {
+			t.Fatalf("round %d: a token is active but the tab is not", round)
+		}
+		manager.Preempt("tab")
 	}
-	<-preemptDone
-	mu.Lock()
-	defer mu.Unlock()
-	if len(events) != 2 || events[0] != "exit" || events[1] != "enter" || aiWrites != 0 {
-		t.Fatalf("ownership operation ordering = %v, AI writes = %d", events, aiWrites)
+	if aiWrites.Load() != 0 {
+		t.Fatalf("ownership operations wrote %d times to the terminal", aiWrites.Load())
 	}
 }

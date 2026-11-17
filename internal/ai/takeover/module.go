@@ -53,8 +53,16 @@ func (m *Manager) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 	if err := ipc.Register(dispatcher, "ai_takeover_pause", func(ctx context.Context, _ *ipc.Call, args struct {
 		TabID string `json:"tabId"`
 		Token string `json:"token"`
-	}) (any, error) {
-		return nil, m.PauseFor(ctx, args.TabID, args.Token)
+	}) (PauseResponse, error) {
+		return m.PauseFor(ctx, args.TabID, args.Token)
+	}); err != nil {
+		return err
+	}
+	if err := ipc.Register(dispatcher, "ai_takeover_status", func(ctx context.Context, _ *ipc.Call, args struct {
+		TabID string `json:"tabId"`
+		Token string `json:"token"`
+	}) (StatusResponse, error) {
+		return m.Status(ctx, args.TabID, args.Token)
 	}); err != nil {
 		return err
 	}

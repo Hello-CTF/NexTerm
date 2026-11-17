@@ -19,12 +19,30 @@ var (
 	ErrOwnershipActive = errors.New("当前接管已有活动任务")
 	ErrWriteDisabled   = errors.New("本次接管禁止终端写入")
 	ErrResumeMismatch  = errors.New("接管恢复范围与终端当前资产不一致")
+	ErrPauseInProgress = errors.New("接管仍在暂停中，AI 完成当前步骤后才能继续")
 	errRunPaused       = errors.New("接管等待用户确认")
 	errRunUserPaused   = errors.New("接管已被用户暂停")
 	errPauseEscalated  = errors.New("接管暂停超时升级")
 )
 
-const EnterBanner = "\r\n\x1b[41;37m[AI 正在操作此终端 - 按任意键暂停]\x1b[0m\r\n"
+// Takeover phases reported to the frontend by pause and status.
+const (
+	PhaseIdle     = "idle"
+	PhaseRunning  = "running"
+	PhasePausing  = "pausing"
+	PhasePaused   = "paused"
+	PhaseConfirm  = "confirm"
+	PhaseInactive = "inactive"
+)
+
+// Done statuses tell the frontend how a takeover ended without parsing the
+// human-readable reason.
+const (
+	EndCompleted  = "completed"
+	EndFailed     = "failed"
+	EndIncomplete = "incomplete"
+	EndStopped    = "stopped"
+)
 
 type Dependencies struct {
 	Model       agent.ModelFactory
@@ -38,7 +56,6 @@ type Dependencies struct {
 	TabAsset               func(context.Context, string) (string, error)
 	Snapshot               func(context.Context, string) (tools.Screen, error)
 	WriteAI                func(context.Context, string, []byte) error
-	Inject                 func(context.Context, string, []byte) error
 	TabSession             func(string) string
 	Audit                  func(context.Context, tools.AuditEntry) error
 	NewID                  func() string
@@ -63,6 +80,21 @@ type RunArgs struct {
 type RunResponse struct {
 	JobID string `json:"jobId"`
 	Token string `json:"token"`
+}
+
+// PauseResponse reports where a pause request left the takeover: pausing
+// until the run reaches a safe point, already paused, waiting for a
+// confirmation (nothing to pause), or idle (no job).
+type PauseResponse struct {
+	Phase string `json:"phase"`
+}
+
+// StatusResponse reports whether the ownership token still holds the tab and
+// the phase of its job.
+type StatusResponse struct {
+	Active bool   `json:"active"`
+	JobID  string `json:"jobId,omitempty"`
+	Phase  string `json:"phase"`
 }
 
 type ownership struct {
@@ -109,6 +141,38 @@ type runState struct {
 	cancelOutcome chan error
 	reasonMu      sync.Mutex
 	reason        string
+	// changed is closed and cleared whenever running, userPaused or
+	// pauseReady changes, so a resume can wait for a pause to settle.
+	changed chan struct{}
+	// resumeNote tells the next model call that the user paused and resumed.
+	resumeNote bool
+}
+
+func (s *runState) changedLocked() chan struct{} {
+	if s.changed == nil {
+		s.changed = make(chan struct{})
+	}
+	return s.changed
+}
+
+func (s *runState) notifyLocked() {
+	if s.changed != nil {
+		close(s.changed)
+		s.changed = nil
+	}
+}
+
+func (s *runState) phaseLocked() string {
+	switch {
+	case s.userPaused && s.pauseReady && !s.running:
+		return PhasePaused
+	case s.userPaused:
+		return PhasePausing
+	case s.running:
+		return PhaseRunning
+	default:
+		return PhaseConfirm
+	}
 }
 
 func (s *runState) setReason(reason string) {
@@ -135,8 +199,16 @@ func (s *runState) emit(ctx context.Context, event agent.Event) error {
 	if s.finished {
 		return errors.New("takeover already finished")
 	}
-	event.Seq = atomic.AddUint64(&s.seq, 1)
-	return s.stream.Send(ctx, event)
+	// A sequence number is spent only on a delivered event: the frontend
+	// buffers everything after a gap, so a send that failed (a canceled
+	// iteration during pause) must not leave one.
+	next := atomic.LoadUint64(&s.seq) + 1
+	event.Seq = next
+	if err := s.stream.Send(ctx, event); err != nil {
+		return err
+	}
+	atomic.StoreUint64(&s.seq, next)
+	return nil
 }
 
 func (s *runState) finish(event agent.Event) {

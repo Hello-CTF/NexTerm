@@ -15,12 +15,19 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+// A pause that lands before the first step stops the model before it runs
+// and keeps the takeover paused; resuming starts the instruction afresh
+// instead of the pause having ended the takeover.
 func TestPauseBeforeIteratorStartupIsHonored(t *testing.T) {
 	previous := runtime.GOMAXPROCS(1)
 	defer runtime.GOMAXPROCS(previous)
 	var calls atomic.Int32
+	var resumed atomic.Bool
 	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 		calls.Add(1)
+		if resumed.Load() {
+			return schema.StreamReaderFromArray([]*schema.Message{toolCallMessage(doneCall("finished"))}), nil
+		}
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}}
@@ -29,9 +36,10 @@ func TestPauseBeforeIteratorStartupIsHonored(t *testing.T) {
 		deps.Checkpoints = store
 	})
 	stream := &agent.SliceStream{}
-	h.run(t, stream, RunArgs{})
+	response := h.run(t, stream, RunArgs{})
 	h.manager.Pause("tab")
-	events := waitClosed(t, stream)
+	waitEvent(t, stream, "paused")
+	waitTakeoverPauseReady(t, h.manager, response.JobID)
 	h.mu.Lock()
 	writes := len(h.aiWrites)
 	h.mu.Unlock()
@@ -41,9 +49,17 @@ func TestPauseBeforeIteratorStartupIsHonored(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatalf("model ran after pre-startup pause: %d calls", calls.Load())
 	}
-	done, failed := counts(events)
-	if done != 1 || failed != 0 || events[len(events)-1].Answer != "用户暂停" {
-		t.Fatalf("pre-startup pause did not stop cleanly: %+v", events)
+	if events, closed := stream.Snapshot(); closed {
+		t.Fatalf("pre-startup pause ended the takeover: %+v", events)
+	}
+	resumed.Store(true)
+	next := &agent.SliceStream{}
+	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(next)); err != nil {
+		t.Fatal(err)
+	}
+	final := waitClosed(t, next)
+	if done, failed := counts(final); done != 1 || failed != 0 || final[len(final)-1].Answer != "finished" {
+		t.Fatalf("resumed fresh run = %+v", final)
 	}
 }
 
@@ -293,14 +309,19 @@ func TestResumeWaitsForPausedFinalization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(stream.release) }) }
+	defer release()
 	_ = waitEvent(t, stream.SliceStream, "toolResult")
 	h.manager.Pause("tab")
 	close(modelRelease)
 	<-stream.paused
-	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(&agent.SliceStream{})); !errors.Is(err, ErrOwnershipActive) {
+	// While finalization stays blocked, a resume waits a bounded time and then
+	// reports the pause as still in progress instead of racing it.
+	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(&agent.SliceStream{})); !errors.Is(err, ErrPauseInProgress) {
 		t.Fatalf("resume during paused finalization error = %v", err)
 	}
-	close(stream.release)
+	release()
 	resumed := &agent.SliceStream{}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -308,7 +329,7 @@ func TestResumeWaitsForPausedFinalization(t *testing.T) {
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, ErrOwnershipActive) || time.Now().After(deadline) {
+		if !errors.Is(err, ErrPauseInProgress) || time.Now().After(deadline) {
 			t.Fatalf("resume after finalization: %v", err)
 		}
 		time.Sleep(time.Millisecond)
@@ -400,17 +421,20 @@ func TestPauseWaitsForCheckpointPersistence(t *testing.T) {
 			t.Fatal("paused published before checkpoint persisted")
 		}
 	}
-	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(&agent.SliceStream{})); !errors.Is(err, ErrOwnershipActive) {
-		t.Fatalf("resume before checkpoint persisted error = %v", err)
-	}
+	// A resume requested before the checkpoint persisted waits for the pause
+	// to settle and then continues, rather than failing the user's click.
+	resumed := &agent.SliceStream{}
+	resumeErr := make(chan error, 1)
+	go func() {
+		_, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(resumed))
+		resumeErr <- err
+	}()
 	close(store.gate)
 	close(modelRelease)
-	waitEvent(t, stream, "paused")
-	waitTakeoverPauseReady(t, h.manager, response.JobID)
-	resumed := &agent.SliceStream{}
-	if _, err := h.manager.Resume(context.Background(), ResumeArgs{TabID: "tab", Token: response.Token, JobID: response.JobID}, agent.StaticStream(resumed)); err != nil {
-		t.Fatalf("resume after checkpoint persisted: %v", err)
+	if err := <-resumeErr; err != nil {
+		t.Fatalf("resume across checkpoint persistence: %v", err)
 	}
+	waitEvent(t, stream, "paused")
 	final := waitClosed(t, resumed)
 	if done, failed := counts(final); done != 1 || failed != 0 {
 		t.Fatalf("resumed events = %+v", final)

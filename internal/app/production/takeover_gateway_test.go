@@ -225,6 +225,21 @@ func (f *takeoverGatewayFixture) enterTakeover(t *testing.T, session *takeoverGa
 	return entered.Token
 }
 
+func (f *takeoverGatewayFixture) requireStatus(t *testing.T, session *takeoverGatewaySession, tabID, token string, active bool) {
+	t.Helper()
+	response := f.rpc(t, session, "ai_takeover_status", map[string]any{"tabId": tabID, "token": token})
+	if !response.OK {
+		t.Fatalf("owner ai_takeover_status = %+v", response.Error)
+	}
+	var status takeover.StatusResponse
+	if err := json.Unmarshal(response.Data, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Active != active {
+		t.Fatalf("ai_takeover_status = %+v, want active %v", status, active)
+	}
+}
+
 func (f *takeoverGatewayFixture) exitTakeover(t *testing.T, session *takeoverGatewaySession, tabID, token, reason string) {
 	t.Helper()
 	response := f.rpc(t, session, "ai_takeover_exit", map[string]any{"tabId": tabID, "token": token, "reason": reason})
@@ -242,14 +257,13 @@ func TestProductionTakeoverGatewayIdentityLessFailsClosed(t *testing.T) {
 	// legitimate owner out until restart. The gate must reject the caller
 	// before any of those side effects.
 	requireTakeoverGatewayForbidden(t, fixture.gatewayRPC(t, "ai_takeover_enter", map[string]any{"tabId": tab.ID}), "gateway ai_takeover_enter")
-	if fixture.screenContains(t, tab.ID, "AI 正在操作") {
-		t.Fatal("identity-less gateway enter injected the takeover banner")
-	}
 
-	// The legitimate owner enters normally and the banner lands.
+	// The legitimate owner enters normally and holds the tab; the takeover
+	// writes nothing into the terminal.
 	token := fixture.enterTakeover(t, fixture.alice, tab.ID)
-	if !fixture.screenContains(t, tab.ID, "AI 正在操作") {
-		t.Fatal("legitimate owner enter did not inject the takeover banner")
+	fixture.requireStatus(t, fixture.alice, tab.ID, token, true)
+	if fixture.screenContains(t, tab.ID, "AI 正在操作") {
+		t.Fatal("takeover enter wrote a banner into the terminal")
 	}
 
 	// Every takeover command fails closed for the identity-less caller, even
@@ -260,6 +274,7 @@ func TestProductionTakeoverGatewayIdentityLessFailsClosed(t *testing.T) {
 	}{
 		{command: "ai_takeover_enter", args: map[string]any{"tabId": tab.ID}},
 		{command: "ai_takeover_pause", args: map[string]any{"tabId": tab.ID, "token": token}},
+		{command: "ai_takeover_status", args: map[string]any{"tabId": tab.ID, "token": token}},
 		{command: "ai_takeover_exit", args: map[string]any{"tabId": tab.ID, "token": token, "reason": "seize"}},
 	} {
 		requireTakeoverGatewayForbidden(t, fixture.gatewayRPC(t, call.command, call.args), "gateway "+call.command)
@@ -272,7 +287,12 @@ func TestProductionTakeoverGatewayIdentityLessFailsClosed(t *testing.T) {
 
 	// The owner still holds the tab: exit succeeds, no empty-owner ownership
 	// survives to block re-entry, and the gateway caller stays rejected.
+	fixture.requireStatus(t, fixture.alice, tab.ID, token, true)
 	fixture.exitTakeover(t, fixture.alice, tab.ID, token, "alice leaves")
+	fixture.requireStatus(t, fixture.alice, tab.ID, token, false)
+	if fixture.screenContains(t, tab.ID, "接管") {
+		t.Fatal("takeover exit wrote into the terminal")
+	}
 	requireTakeoverGatewayForbidden(t, fixture.gatewayRPC(t, "ai_takeover_enter", map[string]any{"tabId": tab.ID}), "gateway re-enter after owner exit")
 	token = fixture.enterTakeover(t, fixture.alice, tab.ID)
 	fixture.exitTakeover(t, fixture.alice, tab.ID, token, "done")

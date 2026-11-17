@@ -3,7 +3,6 @@ package takeover
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -138,17 +137,6 @@ func (m *Manager) enterOwned(ctx context.Context, tabID string) (*ownership, err
 		}
 		previous.cancel()
 	}
-	if m.deps.Inject != nil {
-		if err := m.deps.Inject(ownerContext, tabID, []byte(EnterBanner)); err != nil {
-			m.mu.Lock()
-			if m.owners[tabID] == owner {
-				delete(m.owners, tabID)
-			}
-			m.mu.Unlock()
-			cancel()
-			return nil, err
-		}
-	}
 	return owner, nil
 }
 
@@ -278,6 +266,8 @@ func (m *Manager) Cancel(jobID string) error {
 	return nil
 }
 
+// Pause is the user-input hook: typing into a taken-over terminal pauses the
+// AI at its next safe point. Repeated keystrokes keep the one pause.
 func (m *Manager) Pause(tabID string) {
 	m.mu.Lock()
 	owner := m.owners[tabID]
@@ -285,25 +275,37 @@ func (m *Manager) Pause(tabID string) {
 	if owner == nil {
 		return
 	}
-	for _, state := range m.statesForOwner(owner) {
-		m.pauseState(state)
-	}
+	m.pauseOwner(owner)
 }
 
-func (m *Manager) pauseState(state *runState) {
+func (m *Manager) pauseOwner(owner *ownership) string {
+	phase := PhaseIdle
+	for _, state := range m.statesForOwner(owner) {
+		phase = m.pauseState(state)
+	}
+	return phase
+}
+
+// pauseState asks a running job to stop at its next safe point and reports
+// the resulting phase. A job already pausing or paused is left alone, and a
+// job waiting for a confirmation has nothing in flight to pause.
+func (m *Manager) pauseState(state *runState) string {
 	state.pendingMu.Lock()
-	if !state.running {
+	if state.userPaused || !state.running {
+		phase := state.phaseLocked()
 		state.pendingMu.Unlock()
-		return
+		return phase
 	}
 	state.userPaused = true
 	state.pauseReady = false
+	state.notifyLocked()
 	cancelFn := state.cancelFn
 	state.pendingMu.Unlock()
 	go m.pauseWatchdog(state)
 	if cancelFn != nil {
 		m.cancelIteration(cancelFn, state, false)
 	}
+	return PhasePausing
 }
 
 func (m *Manager) pauseWatchdog(state *runState) {
@@ -390,11 +392,8 @@ func (m *Manager) resumePaused(ctx context.Context, owner *ownership, state *run
 	if state.owner != owner {
 		return RunResponse{}, ErrStaleOwnership
 	}
-	state.pendingMu.Lock()
-	userPaused := state.userPaused
-	state.pendingMu.Unlock()
-	if !userPaused {
-		return RunResponse{}, ErrOwnershipActive
+	if err := m.awaitPauseSettled(ctx, state); err != nil {
+		return RunResponse{}, err
 	}
 	if err := m.verifyJobAsset(ctx, state); err != nil {
 		return RunResponse{}, err
@@ -429,7 +428,9 @@ func (m *Manager) resumePaused(ctx context.Context, owner *ownership, state *run
 	}
 	state.userPaused = false
 	state.running = true
+	state.resumeNote = true
 	state.installIterationLocked()
+	state.notifyLocked()
 	state.pendingMu.Unlock()
 	state.eventMu.Lock()
 	previous := state.stream
@@ -438,8 +439,45 @@ func (m *Manager) resumePaused(ctx context.Context, owner *ownership, state *run
 	if previous != stream {
 		_ = previous.Close()
 	}
+	emitCtx, cancel := context.WithTimeout(context.WithoutCancel(state.ctx), time.Second)
+	_ = state.emit(emitCtx, agent.Event{Type: "resumed", TabID: state.args.TabID})
+	cancel()
 	go m.runJob(state)
 	return RunResponse{JobID: state.id, Token: owner.token}, nil
+}
+
+// resumeSettleTimeout bounds how long a resume waits for a pause to reach its
+// safe point; a model still mid-step past it is reported as still pausing.
+const resumeSettleTimeout = 2 * time.Second
+
+// awaitPauseSettled waits until a pause the user asked for has reached its
+// safe point, so a resume clicked as the run finishes pausing continues the
+// run instead of failing.
+func (m *Manager) awaitPauseSettled(ctx context.Context, state *runState) error {
+	timeout := time.NewTimer(resumeSettleTimeout)
+	defer timeout.Stop()
+	for {
+		state.pendingMu.Lock()
+		if !state.userPaused {
+			state.pendingMu.Unlock()
+			return ErrOwnershipActive
+		}
+		if state.pauseReady && !state.running {
+			state.pendingMu.Unlock()
+			return nil
+		}
+		changed := state.changedLocked()
+		state.pendingMu.Unlock()
+		select {
+		case <-changed:
+		case <-state.ctx.Done():
+			return ErrNotFound
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timeout.C:
+			return ErrPauseInProgress
+		}
+	}
 }
 
 func (m *Manager) recoverJob(ctx context.Context, owner *ownership, args ResumeArgs, factory agent.StreamFactory) (RunResponse, error) {
@@ -485,7 +523,7 @@ func (m *Manager) recoverJob(ctx context.Context, owner *ownership, args ResumeA
 	jobIterCtx, jobIterCancel := context.WithCancel(jobContext)
 	state := &runState{
 		id: args.JobID, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel,
-		owner: owner, stream: stream, memory: guard.NewMemory(), running: true, started: true, assetID: assetID, seq: record.Seq,
+		owner: owner, stream: stream, memory: guard.NewMemory(), running: true, started: true, resumeNote: true, assetID: assetID, seq: record.Seq,
 		iterCtx: jobIterCtx, iterCancel: jobIterCancel,
 		args: RunArgs{TabID: args.TabID, Token: args.Token, ChannelID: args.ChannelID, Instruction: record.Instruction, AllowWrite: record.AllowWrite, MaxSteps: record.MaxSteps},
 	}
@@ -518,7 +556,7 @@ func (m *Manager) cancelState(state *runState, reason string) {
 		_, _ = cancelFn(adk.WithAgentCancelMode(adk.CancelImmediate))
 	}
 	if !running {
-		m.complete(state, runResult{answer: reason, reason: reason})
+		m.complete(state, runResult{answer: reason, reason: reason, status: EndStopped})
 	}
 }
 
@@ -596,7 +634,7 @@ func (m *Manager) Exit(ctx context.Context, tabID, token, reason string) error {
 		m.cancelState(state, reason)
 	}
 	owner.cancel()
-	return m.injectExit(ctx, tabID, reason)
+	return nil
 }
 
 func (m *Manager) statesForOwner(owner *ownership) []*runState {
@@ -635,15 +673,7 @@ func (m *Manager) preemptOwnershipLocked(tabID, reason string) {
 	for _, state := range m.statesForOwner(owner) {
 		m.cancelState(state, reason)
 	}
-	_ = m.injectExit(context.WithoutCancel(owner.ctx), tabID, reason)
 	owner.cancel()
-}
-
-func (m *Manager) injectExit(ctx context.Context, tabID, reason string) error {
-	if m.deps.Inject == nil {
-		return nil
-	}
-	return m.deps.Inject(ctx, tabID, []byte(fmt.Sprintf("\r\n\x1b[43;30m[接管结束: %s]\x1b[0m\r\n", reason)))
 }
 
 func (m *Manager) complete(state *runState, result runResult) {
@@ -657,11 +687,18 @@ func (m *Manager) completeLocked(state *runState, result runResult) {
 		return
 	}
 	state.completed = true
-	m.cleanupRecords(state, result.reason)
+	m.cleanupRecords(state)
 	if result.err != nil {
 		state.finish(agent.Event{Type: "error", Message: result.err.Error(), Retryable: !errors.Is(result.err, context.Canceled)})
 	} else {
-		state.finish(agent.Event{Type: "done", Answer: result.answer, Turns: result.steps})
+		status := result.status
+		if status == "" {
+			status = EndCompleted
+			if state.stopReason() != "" {
+				status = EndStopped
+			}
+		}
+		state.finish(agent.Event{Type: "done", Answer: result.answer, Turns: result.steps, Reason: result.reason, Status: status})
 	}
 	m.removeJob(state)
 	state.cancel()
@@ -670,13 +707,12 @@ func (m *Manager) completeLocked(state *runState, result runResult) {
 	}
 }
 
-func (m *Manager) cleanupRecords(state *runState, reason string) {
+func (m *Manager) cleanupRecords(state *runState) {
 	m.mu.Lock()
 	current := m.owners[state.owner.tabID] == state.owner
 	m.mu.Unlock()
 	cleanupCtx := context.WithoutCancel(state.ctx)
 	if current {
-		_ = m.injectExit(cleanupCtx, state.owner.tabID, reason)
 		state.owner.cancel()
 	}
 	if deleter, ok := m.checkpoints.(adk.CheckPointDeleter); ok {

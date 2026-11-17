@@ -1782,6 +1782,7 @@ func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
 		"ai_takeover_pause",
 		"ai_takeover_resume",
 		"ai_takeover_run",
+		"ai_takeover_status",
 		"ai_test_provider",
 		"ai_usage_summary",
 		"app_info",

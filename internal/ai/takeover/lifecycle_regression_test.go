@@ -34,7 +34,9 @@ func TestLifecycleNormalCompletionLeavesNoGoroutines(t *testing.T) {
 }
 
 func TestLifecycleEscalatedPauseLeavesNoGoroutines(t *testing.T) {
+	inFlight := make(chan struct{}, 1)
 	chat := &fakeModel{stream: func(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+		inFlight <- struct{}{}
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}}
@@ -43,6 +45,7 @@ func TestLifecycleEscalatedPauseLeavesNoGoroutines(t *testing.T) {
 	})
 	stream := &agent.SliceStream{}
 	h.run(t, stream, RunArgs{})
+	<-inFlight
 	h.manager.Pause("tab")
 	events := waitClosed(t, stream)
 	done, failed := counts(events)

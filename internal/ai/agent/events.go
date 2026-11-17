@@ -172,6 +172,11 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		payload["plan"] = e.Plan
 	case "done":
 		payload["answer"], payload["turns"], payload["tokensIn"], payload["tokensOut"] = e.Answer, e.Turns, e.TokensIn, e.TokensOut
+		// A takeover's done says how it ended (completed, failed, incomplete
+		// or stopped) and why; chat runs leave both empty.
+		if e.Status != "" {
+			payload["status"], payload["reason"] = e.Status, e.Reason
+		}
 	case "error":
 		payload["message"], payload["retryable"] = e.Message, e.Retryable
 		if e.MaxIterations {
@@ -181,6 +186,8 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		payload["message"] = e.Message
 	case "paused":
 		payload["reason"], payload["tabId"] = e.Reason, e.TabID
+	case "resumed":
+		payload["tabId"] = e.TabID
 	case "subagentDelta":
 		payload["parentCallId"], payload["subagentId"], payload["depth"] = e.ParentCallID, e.SubagentID, e.Depth
 		payload["text"] = e.Text
