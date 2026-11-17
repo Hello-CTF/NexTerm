@@ -118,3 +118,28 @@ func requireStoreTestResponse(t *testing.T, response ipc.Response, target any) {
 		t.Fatalf("decode %s: %v", response.Data, err)
 	}
 }
+
+func TestDesktopAssetListOffersTheCurrentDeviceOnAFreshInstall(t *testing.T) {
+	for _, desktop := range []bool{true, false} {
+		database, err := store.OpenInMemory(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		dispatcher := ipc.NewDispatcher()
+		if err := registerStoreCommands(dispatcher, database, nil, t.TempDir(), desktop); err != nil {
+			t.Fatal(err)
+		}
+		var assets []assetDTO
+		requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "asset_list", `{}`), &assets)
+		found := slices.ContainsFunc(assets, func(asset assetDTO) bool {
+			return asset.ID == store.BuiltinLocalAssetID && asset.Builtin && asset.Kind == "local"
+		})
+		if found != desktop {
+			t.Errorf("desktop=%v: built-in local asset listed = %v, assets = %+v", desktop, found, assets)
+		}
+		_ = database.Close()
+	}
+	if localTerminalSupported("ios") || localTerminalSupported("android") || !localTerminalSupported("windows") {
+		t.Fatal("local terminals are offered on desktop platforms only")
+	}
+}

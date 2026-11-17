@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"runtime"
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -372,6 +374,13 @@ func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *
 		},
 		func() error {
 			return ipc.Register(dispatcher, "asset_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]assetDTO, error) {
+				if desktop && localTerminalSupported(runtime.GOOS) && ipc.OwnerID(ctx) == "" {
+					// The built-in local asset was created only by the first local terminal, so a fresh install
+					// listed no "当前设备" to open one from.
+					if _, err := database.AssetEnsureBuiltinLocal(ctx); err != nil {
+						slog.Warn("内置当前设备资产创建失败", "error", err)
+					}
+				}
 				rows, err := database.AssetList(ctx, false)
 				return assetsFromRows(rows), err
 			})
@@ -754,4 +763,9 @@ func validateSnippetBody(body string, steps []store.SnippetStep) error {
 		return ipc.BadParam(fmt.Errorf("片段内容不能为空"))
 	}
 	return nil
+}
+
+// localTerminalSupported reports whether the app opens local terminals on goos; mobile builds connect to remote hosts only.
+func localTerminalSupported(goos string) bool {
+	return goos != "ios" && goos != "android"
 }
