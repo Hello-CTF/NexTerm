@@ -38,10 +38,7 @@ func TestProductionTakeoverResumeFailsClosedWhenRealAssetChanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	confirmation := waitOutcomeEvent(t, stream, "confirmRequired")
-	if err := first.Takeover.Confirm(agent.Confirmation{JobID: response.JobID, CallID: confirmation.ID, Nonce: confirmation.Nonce, Decision: "allow"}); err != nil {
-		t.Fatal(err)
-	}
+	// The scripted ls at a recognized prompt is read-only, so it runs without a confirmation.
 	waitOutcomeEvent(t, stream, "toolResult")
 	first.Takeover.Pause("tab-takeover")
 	close(script.release)
