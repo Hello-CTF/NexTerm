@@ -43,6 +43,26 @@ useUi.subscribe((state, previous) => {
   if (zoomedPanes !== state.zoomedPanes) useUi.setState({ zoomedPanes });
 });
 
+// The sidebars follow the workspace: leaving one records what it showed, and entering one shows what it showed last.
+// A workspace with no record yet keeps the current sidebars.
+useUi.subscribe((state, previous) => {
+  if (state.activeWorkspaceId === previous.activeWorkspaceId) return;
+  let workspaceDocks = state.workspaceDocks;
+  const left = previous.activeWorkspaceId;
+  if (left && state.workspaces.some((workspace) => workspace.id === left)) {
+    const recorded = workspaceDocks[left];
+    if (recorded?.leftOpen !== previous.leftOpen || recorded?.rightOpen !== previous.rightOpen) {
+      workspaceDocks = { ...workspaceDocks, [left]: { leftOpen: previous.leftOpen, rightOpen: previous.rightOpen } };
+    }
+  }
+  const entered = state.activeWorkspaceId ? workspaceDocks[state.activeWorkspaceId] : undefined;
+  const leftOpen = entered?.leftOpen ?? state.leftOpen;
+  const rightOpen = entered?.rightOpen ?? state.rightOpen;
+  if (workspaceDocks !== state.workspaceDocks || leftOpen !== state.leftOpen || rightOpen !== state.rightOpen) {
+    useUi.setState({ workspaceDocks, leftOpen, rightOpen });
+  }
+});
+
 useUi.subscribe((state, previous) => {
   if (
     state.rightOpen !== previous.rightOpen ||

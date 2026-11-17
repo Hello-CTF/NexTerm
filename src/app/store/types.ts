@@ -353,6 +353,12 @@ export interface BroadcastTargetUpdate extends BroadcastTargetReport {
   targetId: string;
 }
 
+// WorkspaceDocks is whether a workspace last showed the left sidebar and the AI dock on this device.
+export interface WorkspaceDocks {
+  leftOpen: boolean;
+  rightOpen: boolean;
+}
+
 export interface UiState {
   leftOpen: boolean;
   leftMode: LeftMode;
@@ -360,6 +366,8 @@ export interface UiState {
   leftOverride: LeftMode | null;
   setLeftOverride: (m: LeftMode | null) => void;
   rightOpen: boolean;
+  // workspaceDocks remembers leftOpen/rightOpen per workspace id; leftOpen/rightOpen are the active workspace's.
+  workspaceDocks: Record<string, WorkspaceDocks>;
   themeMode: ThemeMode;
   resolvedTheme: ResolvedTheme;
   setThemeMode: (m: ThemeMode) => void;

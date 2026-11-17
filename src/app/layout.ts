@@ -31,6 +31,7 @@ import {
 import { retainUnreadTabs } from "./unreadStore";
 import {
   captureDeviceLayout,
+  deviceWorkspaceDocks,
   deviceLayoutStorageKey,
   hasDeviceLayoutChange,
   loadDeviceLayout,
@@ -1073,7 +1074,7 @@ function prepareDeviceLayout(): void {
   pendingDeviceLayout = loadDeviceLayout(deviceStorageKey);
   pendingDeviceLayoutLoaded = true;
   if (!pendingDeviceLayout) {
-    useUi.setState({ activeProject: ALL_PROJECTS });
+    useUi.setState({ activeProject: ALL_PROJECTS, workspaceDocks: {} });
     return;
   }
   applyingRemote = true;
@@ -1083,6 +1084,7 @@ function prepareDeviceLayout(): void {
       leftOpen: pendingDeviceLayout.leftOpen,
       leftMode: pendingDeviceLayout.leftMode,
       rightOpen: pendingDeviceLayout.rightOpen,
+      workspaceDocks: deviceWorkspaceDocks(pendingDeviceLayout),
       leftWidth: clampNum(
         pendingDeviceLayout.leftWidth,
         LEFT_WIDTH_RANGE.min,

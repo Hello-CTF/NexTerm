@@ -5,7 +5,7 @@ import {
   workspaceLogicalKey,
   type PersistedLayout,
 } from "./layoutMerge";
-import type { AiBoard, AiDockTab, AppTab, LeftMode, Pane, Workspace } from "./store";
+import type { AiBoard, AiDockTab, AppTab, LeftMode, Pane, Workspace, WorkspaceDocks } from "./store";
 import { ALL_PROJECTS, isProjectFocus, type ProjectFocus } from "./projectFocus";
 import { workspacePaneOrder } from "./paneLayout";
 
@@ -25,6 +25,8 @@ interface DeviceWorkspaceFocus {
   workspace: FocusReference;
   activePane: FocusReference | null;
   panes: DevicePaneFocus[];
+  // Absent for a workspace this device has not shown since sidebars followed the workspace.
+  docks?: WorkspaceDocks;
 }
 
 interface DeviceAiFocus {
@@ -56,6 +58,7 @@ export interface DeviceLayoutSource {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
   aiBoards: Record<string, AiBoard>;
+  workspaceDocks?: Record<string, WorkspaceDocks>;
 }
 
 // normalizeLeftMode reads a stored left dock mode; the legacy "files" value and anything unknown fall back to the asset tree.
@@ -92,7 +95,11 @@ export function captureDeviceLayout(source: DeviceLayoutSource): DeviceLayoutSta
     activeWorkspace: active ? workspaceReference(active) : null,
     workspaces: source.workspaces.map((workspace) => {
       const activePane = workspace.panes.find((pane) => pane.id === workspace.activePaneId);
+      const docks = workspace.id === source.activeWorkspaceId
+        ? { leftOpen: source.leftOpen, rightOpen: source.rightOpen }
+        : source.workspaceDocks?.[workspace.id];
       return {
+        ...(docks ? { docks: { leftOpen: docks.leftOpen, rightOpen: docks.rightOpen } } : {}),
         workspace: workspaceReference(workspace),
         activePane: activePane
           ? reference(activePane.id, paneLogicalKey(activePane))
@@ -155,6 +162,23 @@ function validDeviceLayout(value: unknown): value is DeviceLayoutState {
       isNullableReference(board.activeTab)
     )
   );
+}
+
+function isWorkspaceDocks(value: unknown): value is WorkspaceDocks {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<WorkspaceDocks>;
+  return typeof candidate.leftOpen === "boolean" && typeof candidate.rightOpen === "boolean";
+}
+
+// deviceWorkspaceDocks returns the sidebars each stored workspace last showed, by workspace id.
+export function deviceWorkspaceDocks(device: DeviceLayoutState): Record<string, WorkspaceDocks> {
+  const docks: Record<string, WorkspaceDocks> = {};
+  for (const workspace of device.workspaces) {
+    if (isWorkspaceDocks(workspace.docks)) {
+      docks[workspace.workspace.id] = { leftOpen: workspace.docks.leftOpen, rightOpen: workspace.docks.rightOpen };
+    }
+  }
+  return docks;
 }
 
 export function deviceLayoutStorageKey(accountId: string): string {

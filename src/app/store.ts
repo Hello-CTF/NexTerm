@@ -41,6 +41,7 @@ export type {
   ToastAction,
   ToastItem,
   Workspace,
+  WorkspaceDocks,
   WorkspaceKind,
   WorkspaceProblem,
   WorkspaceProblemConnection,

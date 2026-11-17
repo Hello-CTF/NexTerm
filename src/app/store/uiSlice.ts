@@ -45,6 +45,7 @@ export function createUiSlice(set: UiSet, get: UiGet) {
     leftOpen: true,
     leftMode: "assets",
     rightOpen: initialLayout.rightOpen,
+    workspaceDocks: {},
     themeMode: getThemeMode(),
     resolvedTheme: getResolvedTheme(),
     setThemeMode: (m) => {
