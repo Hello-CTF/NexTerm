@@ -1,7 +1,7 @@
 import { IconShield, IconClose, IconRefresh, IconList } from "../../../ui/icons";
 import { GrantPanel } from "../GrantPanel";
 import { useUi } from "../../../app/store";
-import { MODE_OPTIONS, PLAN_MODE_HINT, fullAccessConfirmText } from "./aiSidebarShared";
+import { MODE_LABEL, MODE_OPTIONS, PLAN_MODE_HINT, appliedPermissionMode, fullAccessConfirmText } from "./aiSidebarShared";
 import { ask } from "../../../ui/dialogs";
 import type { AiPermissionMode } from "../../../ipc/commands";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
@@ -9,15 +9,21 @@ import type { AiChatCtx } from "./aiChatCtx";
 import { t } from "../../../i18n";
 
 export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
-  const { permOpen, setPermOpen, permError, loadPermission, perm, permScope, permDeviceOverride, followGlobalMode, switchMode, applyModeGlobally, planMode, setPlanMode, aiScopeAssetId, tasksOpen } = ctx;
+  const { permOpen, setPermOpen, permError, loadPermission, perm, permState, permScope, switchMode, setHostOverride, planMode, setPlanMode, aiScopeAssetId, aiScopeProduction, tasksOpen } = ctx;
+  const hostOverride = permState?.source === "host";
+  const confirmFullAccess = (perHost: boolean) => ask(fullAccessConfirmText(perHost), { title: t("开启完全放行"), kind: "warning" });
   const chooseMode = async (mode: AiPermissionMode) => {
-    if (mode === "full_access" && perm?.mode !== "full_access" && !(await ask(fullAccessConfirmText(Boolean(permScope)), { title: t("开启完全放行"), kind: "warning" }))) return;
+    if (mode === perm?.mode) return;
+    if (mode === "full_access" && !(await confirmFullAccess(hostOverride))) return;
     switchMode(mode);
   };
-  const chooseGlobalMode = async (mode: AiPermissionMode) => {
-    if (mode === "full_access" && !(await ask(fullAccessConfirmText(false), { title: t("开启完全放行"), kind: "warning" }))) return;
-    applyModeGlobally(mode);
+  const toggleHostOverride = async () => {
+    if (!permState) return;
+    // Following the global mode can widen this host to full access, so that path asks like choosing it does.
+    if (hostOverride && permState.globalMode === "full_access" && perm?.mode !== "full_access" && !(await confirmFullAccess(true))) return;
+    setHostOverride(!hostOverride);
   };
+  const capped = perm ? appliedPermissionMode(perm.mode, aiScopeProduction?.production === true).capped : false;
   return (
     <>
       {permOpen && (
@@ -49,20 +55,11 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
           ) : (
             <>
               <div className="mb-1 flex items-center gap-1.5 text-[11px] text-neutral-300">
-                {permScope ? t("当前主机的模式") : t("默认模式")}
+                {hostOverride ? t("这台主机的模式") : t("全局模式")}
                 <span className="nx-spacer" />
-                {permScope &&
-                  (permDeviceOverride ? (
-                    <button
-                      className="text-[10.5px] text-neutral-500 hover:text-neutral-300"
-                      title={t("清除当前主机的专属模式，改用全局默认模式")}
-                      onClick={followGlobalMode}
-                    >
-                      {t("改为跟随全局")}
-                    </button>
-                  ) : (
-                    <span className="text-[10.5px] text-neutral-500">{t("跟随全局默认")}</span>
-                  ))}
+                <span className="text-[10.5px] text-neutral-500" data-testid="ai-permission-source">
+                  {hostOverride ? t("仅这台主机") : t("所有主机")}
+                </span>
               </div>
               <div className="mb-1 grid grid-cols-4 gap-1" role="radiogroup" aria-label={t("AI 权限模式")}>
                 {MODE_OPTIONS.map((m) => (
@@ -80,17 +77,32 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
               </div>
               <div className="mb-2.5 text-[10.5px] leading-relaxed text-neutral-500">
                 {MODE_OPTIONS.find((m) => m.value === perm.mode)?.hint}
-                {permScope && (
-                  <button
-                    type="button"
-                    className="ml-1 text-neutral-400 underline hover:text-neutral-200"
-                    title={t("把当前模式设为全局默认，所有未单独设置模式的主机（包括这台）都使用它")}
-                    onClick={() => void chooseGlobalMode(perm.mode)}
-                  >
-                    {t("设为全局默认")}
-                  </button>
+                {capped && (
+                  <div className="mt-1 text-amber-300/90">{t("这台主机属于生产环境，完全放行在这里按「自动执行」处理。")}</div>
                 )}
               </div>
+
+              {permScope && permState?.hostResolved && (
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={hostOverride}
+                  className={`nx-menu-item mb-2.5 w-full ${hostOverride ? "bg-amber-500/10" : ""}`}
+                  title={
+                    hostOverride
+                      ? t("关闭后这台主机改用全局模式")
+                      : t("开启后这台主机使用自己的模式，修改全局模式不会影响它")
+                  }
+                  onClick={() => void toggleHostOverride()}
+                >
+                  <span className="nx-menu-label">{t("这台主机单独设置")}</span>
+                  <span className="nx-menu-hint">
+                    {hostOverride
+                      ? t("已开启 · 全局模式为「{mode}」", { mode: MODE_LABEL[permState.globalMode] })
+                      : t("已关闭 · 跟随全局模式")}
+                  </span>
+                </button>
+              )}
 
               <button
                 type="button"

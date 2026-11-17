@@ -1534,6 +1534,16 @@ export interface AiPermissionConfig {
   dangerRules: string[];
 }
 
+// The permission that applies to a scope: the global mode, or an explicit override stored for the scope's host.
+export interface AiPermissionState {
+  config: AiPermissionConfig;
+  globalMode: AiPermissionMode;
+  hostMode?: AiPermissionMode;
+  // The scope names a host, so an override can be set for it.
+  hostResolved: boolean;
+  source: "global" | "host";
+}
+
 export type AiDecision = "allow" | "allow_session" | "allow_persistent" | "deny";
 
 export interface AiConfirmationInput {
@@ -1584,11 +1594,20 @@ export const aiApi = {
   },
   getPermission: (scope?: Record<string, unknown>) =>
     call<AiPermissionConfig>("ai_get_permission", scope ? { scope } : {}),
-  setPermission: (config: AiPermissionConfig, scope?: Record<string, unknown>, followGlobal?: boolean) =>
-    call<void>("ai_set_permission", {
+  permissionState: (scope?: Record<string, unknown>) =>
+    call<AiPermissionState>("ai_permission_state", scope ? { scope } : {}),
+  // Without options the configuration is the global one, whatever the scope; hostOnly stores the mode for the
+  // scope's host only and followGlobal removes that host's override.
+  setPermission: (
+    config: AiPermissionConfig,
+    scope?: Record<string, unknown>,
+    options?: { hostOnly?: boolean; followGlobal?: boolean },
+  ) =>
+    call<AiPermissionState>("ai_set_permission", {
       config,
       ...(scope ? { scope } : {}),
-      ...(followGlobal ? { followGlobal: true } : {}),
+      ...(options?.hostOnly ? { hostOnly: true } : {}),
+      ...(options?.followGlobal ? { followGlobal: true } : {}),
     }),
   cancel: (jobId: string) => call<void>("ai_cancel", { jobId }),
   steer: (jobId: string, message: string) => call<void>("ai_steer", { jobId, message }),

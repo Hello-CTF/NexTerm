@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   hitlEvents: vi.fn(),
   runs: vi.fn(),
   runEvents: vi.fn(),
-  getPermission: vi.fn(),
+  permissionState: vi.fn(),
   conversationList: vi.fn(),
   conversationDelete: vi.fn(),
   messages: vi.fn(),
@@ -39,7 +39,7 @@ vi.mock("../../ipc/commands", () => ({
     hitlEvents: mocks.hitlEvents,
     runs: mocks.runs,
     runEvents: mocks.runEvents,
-    getPermission: mocks.getPermission,
+    permissionState: mocks.permissionState,
     conversationList: mocks.conversationList,
     conversationDelete: mocks.conversationDelete,
     messages: mocks.messages,
@@ -105,7 +105,7 @@ beforeEach(async () => {
   mocks.hitlEvents.mockResolvedValue([]);
   mocks.runs.mockResolvedValue([]);
   mocks.runEvents.mockResolvedValue([]);
-  mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
+  mocks.permissionState.mockResolvedValue({ config: { mode: "read_write", dangerRules: [] }, globalMode: "read_write", hostResolved: false, source: "global" });
   mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
   mocks.conversationList.mockResolvedValue([]);
   mocks.conversationDelete.mockResolvedValue(undefined);

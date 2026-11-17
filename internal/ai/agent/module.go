@@ -77,8 +77,7 @@ func agentIPCError(err error) error {
 	switch err.Error() {
 	case "AI 补充指令不能为空",
 		"只能编辑用户消息",
-		"无法确定设备身份，不能清除设备模式",
-		"无法确定设备身份，权限未保存；请重新连接后重试",
+		"无法确定当前主机，不能单独设置它的模式；请重新连接后重试",
 		"缺少配置":
 		return ipc.WrapError(ipc.CodeBadParam, err.Error(), err)
 	case "消息不存在":
@@ -219,46 +218,59 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 		},
 		func() error {
 			return ipc.Register(dispatcher, "ai_set_permission", func(ctx context.Context, _ *ipc.Call, args struct {
-				Config       *guard.Config `json:"config"`
-				Scope        tools.Scope   `json:"scope"`
-				FollowGlobal bool          `json:"followGlobal,omitempty"`
-			}) (guard.Config, error) {
+				Config *guard.Config `json:"config"`
+				Scope  tools.Scope   `json:"scope"`
+				// HostOnly stores config.mode as an explicit override for the scope's host only.
+				HostOnly bool `json:"hostOnly,omitempty"`
+				// FollowGlobal removes the scope's host override.
+				FollowGlobal bool `json:"followGlobal,omitempty"`
+			}) (PermissionState, error) {
 				if r.config.Permissions == nil {
-					return guard.Config{}, ipc.NewError(ipc.CodeUnsupported, "权限设置未配置")
+					return PermissionState{}, ipc.NewError(ipc.CodeUnsupported, "权限设置未配置")
 				}
-				deviceID := tools.ResolveGrantDeviceID(ctx, r.config.Tools, args.Scope)
-				if args.FollowGlobal {
+				if args.HostOnly || args.FollowGlobal {
+					if args.HostOnly && args.FollowGlobal {
+						return PermissionState{}, ipc.NewError(ipc.CodeBadParam, "hostOnly 与 followGlobal 不能同时使用")
+					}
+					deviceID := tools.ResolveGrantDeviceID(ctx, r.config.Tools, args.Scope)
 					if deviceID == "" {
-						return guard.Config{}, ipc.NewError(ipc.CodeBadParam, "无法确定设备身份，不能清除设备模式")
+						return PermissionState{}, ipc.NewError(ipc.CodeBadParam, "无法确定当前主机，不能单独设置它的模式；请重新连接后重试")
 					}
-					if err := r.config.Permissions.SetDeviceMode(ctx, deviceID, ""); err != nil {
-						return guard.Config{}, agentIPCError(err)
+					mode := guard.Mode("")
+					if args.HostOnly {
+						if args.Config == nil {
+							return PermissionState{}, ipc.NewError(ipc.CodeBadParam, "缺少配置")
+						}
+						mode = args.Config.Mode
 					}
-					config, err := r.config.Permissions.Get(ctx)
-					return config, agentIPCError(err)
+					if err := r.config.Permissions.SetDeviceMode(ctx, deviceID, mode); err != nil {
+						return PermissionState{}, agentIPCError(err)
+					}
+					state, err := r.permissionState(ctx, args.Scope)
+					return state, agentIPCError(err)
 				}
+				// Without hostOnly the configuration is the global one, whatever
+				// terminal the panel is opened on: a host override is never created
+				// implicitly.
 				if args.Config == nil {
-					return guard.Config{}, ipc.NewError(ipc.CodeBadParam, "缺少配置")
-				}
-				if deviceID != "" {
-					if err := r.config.Permissions.SetDeviceMode(ctx, deviceID, args.Config.Mode); err != nil {
-						return guard.Config{}, agentIPCError(err)
-					}
-					config, err := r.config.Permissions.Get(ctx)
-					if err != nil {
-						return guard.Config{}, agentIPCError(err)
-					}
-					config, err = r.config.Permissions.WithDeviceMode(ctx, config, deviceID)
-					return config, agentIPCError(err)
-				}
-				if args.Scope.SessionID != "" || args.Scope.TabID != "" {
-					return guard.Config{}, ipc.NewError(ipc.CodeBadParam, "无法确定设备身份，权限未保存；请重新连接后重试")
+					return PermissionState{}, ipc.NewError(ipc.CodeBadParam, "缺少配置")
 				}
 				if err := r.config.Permissions.Set(ctx, *args.Config); err != nil {
-					return guard.Config{}, agentIPCError(err)
+					return PermissionState{}, agentIPCError(err)
 				}
-				config, err := r.config.Permissions.Get(ctx)
-				return config, agentIPCError(err)
+				state, err := r.permissionState(ctx, args.Scope)
+				return state, agentIPCError(err)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_permission_state", func(ctx context.Context, _ *ipc.Call, args struct {
+				Scope tools.Scope `json:"scope"`
+			}) (PermissionState, error) {
+				if r.config.Permissions == nil {
+					return PermissionState{}, ipc.NewError(ipc.CodeUnsupported, "权限设置未配置")
+				}
+				state, err := r.permissionState(ctx, args.Scope)
+				return state, agentIPCError(err)
 			})
 		},
 		func() error {

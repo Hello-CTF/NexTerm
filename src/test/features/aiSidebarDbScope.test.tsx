@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   run: vi.fn(),
   runEvents: vi.fn(),
   getPermission: vi.fn(),
+  permissionState: vi.fn(),
   setPermission: vi.fn(),
   conversationList: vi.fn(),
   conversationDelete: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock("../../ipc/commands", () => ({
     run: mocks.run,
     runEvents: mocks.runEvents,
     getPermission: mocks.getPermission,
+    permissionState: mocks.permissionState,
     setPermission: mocks.setPermission,
     conversationList: mocks.conversationList,
     conversationDelete: mocks.conversationDelete,
@@ -145,6 +147,7 @@ describe("AiSidebar database workspace scope", () => {
     mocks.runEvents.mockResolvedValue([]);
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
     mocks.setPermission.mockResolvedValue(undefined);
+    mocks.permissionState.mockResolvedValue({ config: { mode: "read_write", dangerRules: [] }, globalMode: "read_write", hostResolved: false, source: "global" });
     mocks.conversationList.mockResolvedValue([]);
     mocks.conversationDelete.mockResolvedValue(undefined);
     mocks.messages.mockResolvedValue([]);
@@ -215,13 +218,12 @@ describe("AiSidebar database workspace scope", () => {
       connId: "conn-a",
       assetId: "asset-a",
     });
-    expect(mocks.getPermission).toHaveBeenCalledWith({
+    expect(mocks.permissionState).toHaveBeenCalledWith({
       sessionId: undefined,
       tabId: undefined,
       connId: "conn-a",
       assetId: "asset-a",
     });
-    expect(mocks.getPermission).toHaveBeenCalledWith();
   });
 
   it("updates the label and chat scope after switching database workspaces", async () => {

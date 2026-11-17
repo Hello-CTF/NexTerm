@@ -593,6 +593,12 @@ func (e *Engine) applyAIGrantMode(ctx context.Context, plaintext []byte, report 
 		report.warnf("AI 设备权限模式时钟记录失败: %v", err)
 		return false, false
 	}
+	// A synced device mode may be an explicit choice made on an upgraded device;
+	// the one-time cleanup of implicitly created modes must not remove it here.
+	if err := e.store.SettingSet(ctx, guard.DeviceModeExplicitSettingKeyForUser(ctx), "1"); err != nil {
+		report.warnf("AI 设备权限模式迁移标记写入失败: %v", err)
+		return false, false
+	}
 	if err := e.clearTombstone(ctx, payload.ID); err != nil {
 		report.warnf("AI 设备权限模式删除标记清理失败：%v", err)
 		return false, false

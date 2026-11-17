@@ -69,7 +69,7 @@ func TestAIPermissionFollowGlobalDeviceIdentityContract(t *testing.T) {
 		// The HTTP layer vouches identity-less callers only on open deployments;
 		// the vouch alone must not resolve device identity on a closed manager.
 		response := fixture.followGlobal(t, WithOpenAccess(context.Background()))
-		if response.OK || response.Error == nil || !strings.Contains(response.Error.Message, "无法确定设备身份") {
+		if response.OK || response.Error == nil || !strings.Contains(response.Error.Message, "无法确定当前主机") {
 			t.Fatalf("identity-less followGlobal on account server = %+v", response)
 		}
 		if mode, ok := mustAgentDeviceMode(t, fixture.manager, "asset-a"); !ok || mode != guard.Silent {
@@ -89,7 +89,7 @@ func TestAIPermissionFollowGlobalDeviceIdentityContract(t *testing.T) {
 		if !response.OK {
 			t.Fatalf("open desktop followGlobal failed: %+v", response.Error)
 		}
-		if got := permissionOf(t, response.Data); got.Mode != guard.ReadWrite {
+		if got := stateOf(t, response.Data).Config; got.Mode != guard.ReadWrite {
 			t.Fatalf("cleared response = %+v", got)
 		}
 		if _, ok := mustAgentDeviceMode(t, fixture.manager, "asset-a"); ok {
@@ -118,7 +118,7 @@ func TestAIPermissionFollowGlobalDeviceIdentityContract(t *testing.T) {
 		}
 		bob := ipc.WithUserID(context.Background(), "bob")
 		response := fixture.followGlobal(t, bob)
-		if response.OK || response.Error == nil || !strings.Contains(response.Error.Message, "无法确定设备身份") {
+		if response.OK || response.Error == nil || !strings.Contains(response.Error.Message, "无法确定当前主机") {
 			t.Fatalf("cross-account followGlobal = %+v", response)
 		}
 		if mode, ok := mustAgentDeviceMode(t, fixture.manager, "asset-a", alice); !ok || mode != guard.Silent {

@@ -11,7 +11,7 @@ import { modelApi } from "../../../ipc/commands";
 import { ModelPanel } from "../ModelPanel";
 import { PrivacyIndicator, useChatPrivacy } from "../PrivacyIndicator";
 import { acknowledgePrivacyImageNotice, PRIVACY_IMAGE_NOTICE, usePrivacyImageNoticeSeen } from "../privacyImageNotice";
-import { PLAN_MODE_HINT, statusText, MODE_LABEL } from "./aiSidebarShared";
+import { PLAN_MODE_HINT, statusText, MODE_LABEL, appliedPermissionMode, permissionSourceText } from "./aiSidebarShared";
 import type { AiChatCtx } from "./aiChatCtx";
 import { t } from "../../../i18n";
 
@@ -19,7 +19,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
   const chatPrivacy = useChatPrivacy(ctx.tabKey);
   const privacyGuard = chatPrivacy.guard;
   const imageNoticeSeen = usePrivacyImageNoticeSeen();
-  const { planMode, editing, editSubmitting, input, submitEditResend, setEditing, activeRun, stop, follow, syncNotice, activeGeneration, activeRunRef, resyncRun, busy, hitlWaiting, conv, aiScopeProduction, refs, setRefs, images, setImages, slashMenuOpen, slashItems, slashEmptyText, slashIndex, setSlashIndex, modelQuery, skillOptions, atOpen, atItems, atIndex, setAtIndex, pickRef, inputRef, sessionId, onInputChange, onPaste, setAtOpen, steer, send, setModelPanelOpen, imageInputRef, onPickImages, conversationRuns, perm, permOpen, permError, permScope, setPermOpen, tabId, bindings, reclaimKeyLabel, runTakeover, modelPanelOpen, setInput } = ctx;
+  const { planMode, editing, editSubmitting, input, submitEditResend, setEditing, activeRun, stop, follow, syncNotice, activeGeneration, activeRunRef, resyncRun, busy, hitlWaiting, conv, aiScopeProduction, refs, setRefs, images, setImages, slashMenuOpen, slashItems, slashEmptyText, slashIndex, setSlashIndex, modelQuery, skillOptions, atOpen, atItems, atIndex, setAtIndex, pickRef, inputRef, sessionId, onInputChange, onPaste, setAtOpen, steer, send, setModelPanelOpen, imageInputRef, onPickImages, conversationRuns, perm, permState, permOpen, permError, setPermOpen, tabId, bindings, reclaimKeyLabel, runTakeover, modelPanelOpen, setInput } = ctx;
   // A prompt queued elsewhere (the jump palette's "ask AI" row) prefills the visible composer; it is never sent.
   const pendingPrompt = useUi((s) => s.aiPendingPrompt);
   useEffect(() => {
@@ -36,10 +36,15 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
     void send();
   };
   const sendDisabled = (!input.trim() && images.length === 0) || editSubmitting;
+  // The indicator names the mode tool calls here are decided with, and why it applies.
+  const applied = perm ? appliedPermissionMode(perm.mode, aiScopeProduction?.production === true) : null;
+  const permReason = applied?.capped
+    ? t("生产环境中「完全放行」按「自动执行」处理")
+    : permissionSourceText(permState?.source ?? "global");
   const permTitle = permError
     ? t("未能读取 AI 权限（选择以查看并重试）")
-    : perm
-      ? t("AI 权限与模式：{value}（{value2}），含计划模式和免确认授权", { value: MODE_LABEL[perm.mode], value2: permScope ? t("这台主机") : t("全局默认") })
+    : applied
+      ? t("AI 权限与模式：{value}（{value2}），含计划模式和免确认授权", { value: MODE_LABEL[applied.mode], value2: permReason })
       : t("AI 权限与模式：读取中（选择以设置）");
   // Rarely used or experimental actions live here; with no terminal tab the
   // takeover entry is omitted instead of shown disabled.
@@ -349,14 +354,14 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
-              className={`nx-cbar-btn ${permError ? "is-error" : ""} ${perm?.mode === "silent" || perm?.mode === "full_access" ? "is-attention" : ""} ${permOpen ? "is-open" : ""}`}
+              className={`nx-cbar-btn ${permError ? "is-error" : ""} ${applied?.mode === "silent" || applied?.mode === "full_access" ? "is-attention" : ""} ${permOpen ? "is-open" : ""}`}
               title={permTitle}
               aria-label={permTitle}
               aria-expanded={permOpen}
               onClick={() => setPermOpen((v) => !v)}
             >
               {permError ? <IconAlert size={13} /> : <IconKey size={13} />}
-              <span className="nx-cbar-label">{permError ? t("权限异常") : perm ? MODE_LABEL[perm.mode] : t("权限")}</span>
+              <span className="nx-cbar-label">{permError ? t("权限异常") : applied ? MODE_LABEL[applied.mode] : t("权限")}</span>
             </button>
             <PrivacyIndicator guard={privacyGuard} chat={chatPrivacy} />
             <UsageRing

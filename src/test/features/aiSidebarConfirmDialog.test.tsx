@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   hitlEvents: vi.fn(),
   runs: vi.fn(),
   runEvents: vi.fn(),
-  getPermission: vi.fn(),
+  permissionState: vi.fn(),
   conversationList: vi.fn(),
   conversationDelete: vi.fn(),
   messages: vi.fn(),
@@ -39,7 +39,7 @@ vi.mock("../../ipc/commands", () => ({
     hitlEvents: mocks.hitlEvents,
     runs: mocks.runs,
     runEvents: mocks.runEvents,
-    getPermission: mocks.getPermission,
+    permissionState: mocks.permissionState,
     conversationList: mocks.conversationList,
     conversationDelete: mocks.conversationDelete,
     messages: mocks.messages,
@@ -129,7 +129,7 @@ beforeEach(async () => {
   mocks.hitlEvents.mockResolvedValue([]);
   mocks.runs.mockResolvedValue([]);
   mocks.runEvents.mockResolvedValue([]);
-  mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
+  mocks.permissionState.mockResolvedValue({ config: { mode: "read_write", dangerRules: [] }, globalMode: "read_write", hostResolved: false, source: "global" });
   mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
   mocks.conversationList.mockResolvedValue([]);
   mocks.conversationDelete.mockResolvedValue(undefined);
@@ -604,13 +604,13 @@ describe("AiSidebar permission request dialogs", () => {
     ]);
     expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "始终拦截")).toBe(false);
 
-    mocks.getPermission.mockRejectedValueOnce(new Error("权限服务不可用"));
+    mocks.permissionState.mockRejectedValueOnce(new Error("权限服务不可用"));
     click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
     await flush();
     expect(mounted!.container.textContent).toContain("未能读取权限设置：权限服务不可用");
     expect(mounted!.container.textContent).not.toContain("查看操作直接执行");
 
-    mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
+    mocks.permissionState.mockResolvedValue({ config: { mode: "read_write", dangerRules: [] }, globalMode: "read_write", hostResolved: false, source: "global" });
     clickButton(mounted!.container, "重试");
     await flush();
     expect(mounted!.container.textContent).toContain("查看操作直接执行");

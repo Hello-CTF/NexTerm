@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/compact"
+	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
 	"github.com/Hello-CTF/NexTerm/internal/ai/memory"
 	"github.com/Hello-CTF/NexTerm/internal/ai/provider"
@@ -248,16 +249,15 @@ func (r *Runner) setupEino(current *job, assembleInput bool) error {
 	if r.config.Model == nil || r.config.Tools == nil {
 		return errors.New("Eino ChatModel 或工具注册表未配置")
 	}
-	permission, err := r.config.Permission(current.ctx)
+	scope := current.args.Scope
+	permission, err := r.effectivePermission(current.ctx, scope)
 	if err != nil {
 		return err
 	}
-	permission = permission.Normalized()
-	if r.config.Permissions != nil {
-		permission, err = r.config.Permissions.WithDeviceMode(current.ctx, permission, tools.ResolveGrantDeviceID(current.ctx, r.config.Tools, current.args.Scope))
-		if err != nil {
-			return err
-		}
+	// The job context carries the owner and the unattended marker, so every
+	// tool call resolves the permission the same way the run started with.
+	livePermission := func(context.Context) (guard.Config, error) {
+		return r.effectivePermission(current.ctx, scope)
 	}
 	chatModel, contextWindow, err := r.modelFor(current)
 	if err != nil {
@@ -309,7 +309,7 @@ func (r *Runner) setupEino(current *job, assembleInput bool) error {
 		}
 		subagents = &cloned
 	}
-	execution := &tools.Execution{JobID: current.id, ConversationID: current.args.ConversationID, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, Memory: current.memory, PlanMode: current.args.PlanMode, Subagents: subagents, SubagentEvents: func(ctx context.Context, parentCallID string, depth int, event subagent.Event) {
+	execution := &tools.Execution{JobID: current.id, ConversationID: current.args.ConversationID, Registry: r.config.Tools, Scope: current.args.Scope, Permission: permission, PermissionSource: livePermission, Memory: current.memory, PlanMode: current.args.PlanMode, Subagents: subagents, SubagentEvents: func(ctx context.Context, parentCallID string, depth int, event subagent.Event) {
 		if event.Kind == "" {
 			return
 		}

@@ -3,12 +3,12 @@ import type { MessageDto, AiRunDto } from "../../../ipc/types";
 import { messageHistoryStart, MESSAGE_HISTORY_PAGE_SIZE, earlierMessageHistoryStart } from "../aiWire";
 import { replayableJobIds } from "../runRestore";
 import { historyJobIdOf, historyToItems } from "../conversation";
-import { type AiPermissionConfig, aiApi, modelApi } from "../../../ipc/commands";
+import { modelApi } from "../../../ipc/commands";
+import { useAiPermission } from "./useAiPermission";
 import { useConversationFollow } from "../conversationFollow";
 import { useVirtualWindow } from "../conversationVirtual";
 import { useHistoryAutoload } from "../historyAutoload";
 import { findItemMatches, stepMatch } from "../conversationSearch";
-import { describeError } from "../../../ui/errorText";
 import { productionSkillsApi } from "../../settings/skillsApi";
 import { useUi } from "../../../app/store";
 import { type RefChip, type AiChatBase, composeUserMessage } from "./aiSidebarShared";
@@ -92,8 +92,6 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
     return true;
   };
   const deletedConversationIdsRef = useRef<Set<string>>(new Set());
-  const [perm, setPerm] = useState<AiPermissionConfig | null>(null);
-  const [permError, setPermError] = useState<string | null>(null);
   const [permOpen, setPermOpen] = useState(false);
   const [atOpen, setAtOpen] = useState(false);
   // Typing "/" at the start of the message opens the command menu: built-in
@@ -157,83 +155,11 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
     if (!searchOpen) virtualClearReveal();
   }, [searchOpen, virtualClearReveal]);
 
-  const [permDeviceOverride, setPermDeviceOverride] = useState(false);
-  const loadPermission = useCallback(async (): Promise<AiPermissionConfig | null> => {
-    try {
-      const effective = await aiApi.getPermission(permScope);
-      if (permScope) {
-        const global = await aiApi.getPermission();
-        setPermDeviceOverride(global.mode !== effective.mode);
-      } else {
-        setPermDeviceOverride(false);
-      }
-      setPerm(effective);
-      setPermError(null);
-      return effective;
-    } catch (e) {
-      setPermError(describeError(e));
-      return null;
-    }
-  }, [permScope]);
-
-  useEffect(() => {
-    void loadPermission();
-  }, [loadPermission]);
+  const { permState, perm, permError, loadPermission, switchMode, setHostOverride } = useAiPermission(permScope, pushToast);
 
   useEffect(() => {
     if (permOpen) void loadPermission();
   }, [permOpen, loadPermission]);
-
-  const savePerm = async (next: AiPermissionConfig) => {
-    const prev = perm;
-    setPerm(next);
-    try {
-      await aiApi.setPermission(next, permScope);
-      if (permScope) setPermDeviceOverride(true);
-    } catch (e) {
-      setPerm(prev);
-      pushToast("error", tr("未能保存权限设置：{value}", { value: describeError(e) }));
-    }
-  };
-
-  const switchMode = (mode: AiPermissionConfig["mode"]) => {
-    void (async () => {
-      const latest = await loadPermission();
-      if (latest) await savePerm({ ...latest, mode });
-    })();
-  };
-
-  const followGlobalMode = () => {
-    void (async () => {
-      if (!permScope) return;
-      const prev = perm;
-      try {
-        await aiApi.setPermission(prev ?? { mode: "read_write", dangerRules: [] }, permScope, true);
-        setPermDeviceOverride(false);
-        await loadPermission();
-      } catch (e) {
-        setPerm(prev);
-        pushToast("error", tr("未能保存权限设置：{value}", { value: describeError(e) }));
-      }
-    })();
-  };
-
-  // Makes the chosen mode the default of every host without its own mode, and lets this host follow it, so one
-  // choice covers the other terminals the AI moves to.
-  const applyModeGlobally = (mode: AiPermissionConfig["mode"]) => {
-    void (async () => {
-      if (!permScope) return;
-      try {
-        const global = await aiApi.getPermission();
-        await aiApi.setPermission({ ...global, mode });
-        await aiApi.setPermission({ ...global, mode }, permScope, true);
-        setPermDeviceOverride(false);
-      } catch (e) {
-        pushToast("error", tr("未能保存权限设置：{value}", { value: describeError(e) }));
-      }
-      await loadPermission();
-    })();
-  };
 
   const slashQuery = /^\/([a-z0-9-]*)$/.exec(input)?.[1] ?? null;
   const modelQuery = /^\/model\s+(.*)$/i.exec(input)?.[1] ?? null;
@@ -353,7 +279,7 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
 
   const composeMessage = composeUserMessage;
 
-  return { isRestoreActive, leadingReplayJobIds, setConversationRuns, updateConversationId, clearMessageHistory, resetMessageHistory, permOpen, setPermOpen, setAtOpen, composeMessage, deletedConversationIdsRef, conversationRuns, inputRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, historyOpen, setHistoryOpen, setCompacting, compacting, slashQuery, modelQuery, modelOptions, skillOptions, searchOpen, setSearchOpen, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, conversations, runStatusByConv, permError, loadPermission, perm, permDeviceOverride, followGlobalMode, switchMode, applyModeGlobally, setScrollEl, messageWindowStart, loadOlderMessages, virtual, activeMatchIndex, follow, slashIndex, setSlashIndex, atOpen, refCandidates, atItems, atIndex, setAtIndex, imageInputRef };
+  return { isRestoreActive, leadingReplayJobIds, setConversationRuns, updateConversationId, clearMessageHistory, resetMessageHistory, permOpen, setPermOpen, setAtOpen, composeMessage, deletedConversationIdsRef, conversationRuns, inputRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, historyOpen, setHistoryOpen, setCompacting, compacting, slashQuery, modelQuery, modelOptions, skillOptions, searchOpen, setSearchOpen, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, conversations, runStatusByConv, permError, loadPermission, perm, permState, switchMode, setHostOverride, setScrollEl, messageWindowStart, loadOlderMessages, virtual, activeMatchIndex, follow, slashIndex, setSlashIndex, atOpen, refCandidates, atItems, atIndex, setAtIndex, imageInputRef };
 }
 
 export type UseChatPanelStateOut = ReturnType<typeof useChatPanelState>;

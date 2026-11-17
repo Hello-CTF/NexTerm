@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   run: vi.fn(),
   runEvents: vi.fn(),
   getPermission: vi.fn(),
+  permissionState: vi.fn(),
   setPermission: vi.fn(),
   conversationList: vi.fn(),
   conversationDelete: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock("../../ipc/commands", () => ({
     run: mocks.run,
     runEvents: mocks.runEvents,
     getPermission: mocks.getPermission,
+    permissionState: mocks.permissionState,
     setPermission: mocks.setPermission,
     conversationList: mocks.conversationList,
     conversationDelete: mocks.conversationDelete,
@@ -98,6 +100,16 @@ function emit(ev: Record<string, unknown>, channelIndex = -1) {
 
 function textOf(view: MountedView): string {
   return view.container.textContent ?? "";
+}
+
+function permissionStateOf(mode: string, hostMode?: string) {
+  return {
+    config: { mode: hostMode ?? mode, dangerRules: [] },
+    globalMode: mode,
+    hostMode,
+    hostResolved: true,
+    source: hostMode ? "host" : "global",
+  };
 }
 
 function stripTabs(view: MountedView): HTMLElement[] {
@@ -158,7 +170,8 @@ describe("AiSidebar stuck busy-state fixes", () => {
     mocks.run.mockResolvedValue({ id: "job-1", conversationId: "conv-1", status: "running", finishedAt: null });
     mocks.runEvents.mockResolvedValue([]);
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
-    mocks.setPermission.mockResolvedValue(undefined);
+    mocks.permissionState.mockResolvedValue(permissionStateOf("read_write"));
+    mocks.setPermission.mockImplementation((config: { mode: string }) => Promise.resolve(permissionStateOf(config.mode)));
     mocks.overview.mockResolvedValue({ profiles: [], activeId: null });
     mocks.conversationList.mockResolvedValue([]);
     mocks.conversationDelete.mockResolvedValue(undefined);
@@ -394,6 +407,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
     expect(mocks.setPermission).toHaveBeenCalledWith(
       expect.objectContaining({ mode: "read_only" }),
       { sessionId: "s1", tabId: "t1" },
+      undefined,
     );
     expect(textOf(view!)).toContain("AI 权限");
 
@@ -402,43 +416,47 @@ describe("AiSidebar stuck busy-state fixes", () => {
     expect(mocks.chat).toHaveBeenCalledTimes(1);
   });
 
-  it("applies the permission mode for the current device and can clear the device override to follow the global default", async () => {
+  it("edits an explicit host override in place and can make the host follow the global mode", async () => {
+    let stored = permissionStateOf("read_write", "silent");
+    mocks.permissionState.mockImplementation(() => Promise.resolve(stored));
+    mocks.setPermission.mockImplementation((config: { mode: string }, _scope: unknown, options?: { hostOnly?: boolean; followGlobal?: boolean }) => {
+      stored = options?.followGlobal ? permissionStateOf("read_write") : permissionStateOf("read_write", config.mode);
+      return Promise.resolve(stored);
+    });
     await flush();
-    mocks.getPermission.mockImplementation((scope?: unknown) =>
-      Promise.resolve(
-        scope ? { mode: "silent", dangerRules: [] } : { mode: "read_write", dangerRules: [] },
-      ),
-    );
     const shield = view!.container.querySelector<HTMLButtonElement>(
       'button[title^="AI 权限与模式"]',
     )!;
+    // Opening the panel reloads the permission, which now reports the host's own mode.
     click(shield);
     await flush();
+    expect(shield.title).toContain("自动执行（这台主机单独设置）");
 
-    expect(textOf(view!)).toContain("当前主机的模式");
-    expect(textOf(view!)).toContain("改为跟随全局");
+    expect(textOf(view!)).toContain("这台主机的模式");
+    const override = view!.container.querySelector<HTMLButtonElement>('button[role="switch"][aria-checked="true"]')!;
+    expect(override.textContent).toContain("这台主机单独设置");
+    expect(override.textContent).toContain("全局模式为「读写」");
 
-    const readonlyOption = [...view!.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("只读"),
-    )!;
+    const readonlyOption = view!.container.querySelector<HTMLButtonElement>('[role="radiogroup"] [role="radio"]')!;
+    expect(readonlyOption.textContent).toBe("只读");
     click(readonlyOption);
     await flush();
     expect(mocks.setPermission).toHaveBeenCalledWith(
       expect.objectContaining({ mode: "read_only" }),
       { sessionId: "s1", tabId: "t1" },
+      { hostOnly: true },
     );
 
     mocks.setPermission.mockClear();
-    const follow = [...view!.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("改为跟随全局"),
-    )!;
-    click(follow);
+    click(view!.container.querySelector<HTMLButtonElement>('button[role="switch"][aria-checked="true"]')!);
     await flush();
     expect(mocks.setPermission).toHaveBeenCalledWith(
       expect.anything(),
       { sessionId: "s1", tabId: "t1" },
-      true,
+      { followGlobal: true },
     );
+    expect(view!.container.querySelector('[role="radio"][aria-checked="true"]')?.textContent).toBe("读写");
+    expect(textOf(view!)).toContain("全局模式");
   });
 
   it("keeps a tab open with an unconfirmed state when the cancel request times out", async () => {

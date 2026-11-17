@@ -300,8 +300,12 @@ type Execution struct {
 	Registry       *Registry
 	Scope          Scope
 	Permission     guard.Config
-	Memory         *guard.Memory
-	PlanMode       bool
+	// PermissionSource, when set, is read at every tool call so a mode or rule
+	// change applies to a run already in progress; Permission is then only the
+	// value the run started with.
+	PermissionSource func(context.Context) (guard.Config, error)
+	Memory           *guard.Memory
+	PlanMode         bool
 	// Subagent marks the tool execution of a spawned subagent. It cannot pause
 	// for the user, so a call that would ask for confirmation fails instead.
 	Subagent  bool
@@ -716,7 +720,7 @@ func (s spawnOutputTool) InvokableRun(ctx context.Context, arguments string, opt
 }
 
 func (e *Execution) scopedSubagentTools(ctx context.Context, manager *subagent.Manager) ([]tool.BaseTool, error) {
-	child := &Execution{JobID: e.JobID, ConversationID: e.ConversationID, Registry: e.Registry, Scope: e.Scope, Permission: e.Permission, Memory: e.Memory, PlanMode: e.PlanMode, Subagent: true}
+	child := &Execution{JobID: e.JobID, ConversationID: e.ConversationID, Registry: e.Registry, Scope: e.Scope, Permission: e.Permission, PermissionSource: e.PermissionSource, Memory: e.Memory, PlanMode: e.PlanMode, Subagent: true}
 	available, err := child.Tools()
 	if err != nil {
 		return nil, err
@@ -770,6 +774,16 @@ func (e *Execution) run(ctx context.Context, name string, input any) (Output, er
 }
 
 func (e *Execution) runInner(ctx context.Context, name string, input any) (Output, error) {
+	if e.PermissionSource != nil {
+		live, err := e.PermissionSource(ctx)
+		if err != nil {
+			return Fail(errors.New("读取 AI 权限设置失败: " + err.Error())), nil
+		}
+		// A per-call copy keeps the shared execution free of writes from concurrent calls.
+		current := *e
+		current.Permission = live.Normalized()
+		e = &current
+	}
 	ctx = e.screenMemoryContext(ctx)
 	encoded, err := json.Marshal(input)
 	if err != nil {

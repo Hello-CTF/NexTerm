@@ -50,7 +50,19 @@ export function fullAccessConfirmText(perHost: boolean): string {
   );
 }
 
-export const PLAN_MODE_HINT = t("先生成方案，批准后执行");
+// appliedPermissionMode is the mode a tool call on this scope is decided with: full access never reaches a production
+// target, which the backend decides as 自动执行.
+export function appliedPermissionMode(mode: AiPermissionMode, production: boolean): { mode: AiPermissionMode; capped: boolean } {
+  if (production && mode === "full_access") return { mode: "silent", capped: true };
+  return { mode, capped: false };
+}
+
+// permissionSourceText says why a mode applies: the global mode, or this host's own setting.
+export function permissionSourceText(source: "global" | "host"): string {
+  return source === "host" ? t("这台主机单独设置") : t("全局默认");
+}
+
+export const PLAN_MODE_HINT =t("先生成方案，批准后执行");
 
 export const PLAN_EXECUTE_MESSAGE = t("按上面的方案执行。");
 

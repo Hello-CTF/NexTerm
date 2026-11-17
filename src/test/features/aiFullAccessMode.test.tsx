@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { click, flushUntil, mount, type MountedView } from "./reactTestUtils";
-import type { AiPermissionConfig } from "../../ipc/commands";
+import type { AiPermissionMode, AiPermissionState } from "../../ipc/commands";
 import type { AiChatCtx } from "../../features/ai/panel/aiChatCtx";
 
 const mocks = vi.hoisted(() => ({ ask: vi.fn() }));
@@ -28,26 +28,37 @@ afterEach(() => {
   mounted = undefined;
 });
 
-function renderPanels(perm: AiPermissionConfig, permScope?: string, applyModeGlobally = vi.fn()) {
+function stateOf(globalMode: AiPermissionMode, hostMode?: AiPermissionMode, hostResolved = true): AiPermissionState {
+  return {
+    config: { mode: hostMode ?? globalMode, dangerRules: [] },
+    globalMode,
+    hostMode,
+    hostResolved,
+    source: hostMode ? "host" : "global",
+  };
+}
+
+function renderPanels(permState: AiPermissionState, permScope?: Record<string, unknown>, production = false) {
   const switchMode = vi.fn();
+  const setHostOverride = vi.fn();
   const ctx = {
     permOpen: true,
     setPermOpen: vi.fn(),
     permError: null,
     loadPermission: vi.fn(),
-    perm,
+    perm: permState.config,
+    permState,
     permScope,
-    permDeviceOverride: false,
-    followGlobalMode: vi.fn(),
     switchMode,
-    applyModeGlobally,
+    setHostOverride,
     planMode: false,
     setPlanMode: vi.fn(),
     aiScopeAssetId: undefined,
+    aiScopeProduction: production ? { production: true, environment: "生产" } : null,
     tasksOpen: false,
   } as unknown as AiChatCtx;
   mounted = mount(createElement(AiChatPanels, { ctx }));
-  return switchMode;
+  return { switchMode, setHostOverride };
 }
 
 function modeButton(label: string): HTMLButtonElement {
@@ -57,10 +68,18 @@ function modeButton(label: string): HTMLButtonElement {
   return button;
 }
 
-describe("full access permission mode", () => {
-  it("asks before switching and keeps the previous mode when cancelled", async () => {
+function hostSwitch(): HTMLButtonElement | null {
+  return [...document.querySelectorAll<HTMLButtonElement>('button[role="switch"]')].find((item) =>
+    item.textContent?.includes("这台主机单独设置"),
+  ) ?? null;
+}
+
+const scope = { sessionId: "session-1", tabId: "tab-1" };
+
+describe("AI permission panel", () => {
+  it("asks before switching to full access and keeps the previous mode when cancelled", async () => {
     mocks.ask.mockResolvedValue(false);
-    const switchMode = renderPanels({ mode: "read_write", dangerRules: [] });
+    const { switchMode } = renderPanels(stateOf("read_write"), scope);
     click(modeButton("完全放行"));
     await flushUntil(() => mocks.ask.mock.calls.length > 0);
     await Promise.resolve();
@@ -68,16 +87,16 @@ describe("full access permission mode", () => {
     const [message, options] = mocks.ask.mock.calls[0] as [string, { title?: string; kind?: string }];
     expect(message).toContain("完全放行");
     expect(message).toContain("高危");
+    // Without a host override the switch applies to every host, even when the panel is opened on a terminal.
     expect(message).toContain("在所有未单独设置模式的主机上");
     expect(options).toMatchObject({ kind: "warning" });
     expect(switchMode).not.toHaveBeenCalled();
     expect(modeButton("读写").getAttribute("aria-checked")).toBe("true");
-    expect(modeButton("完全放行").getAttribute("aria-checked")).toBe("false");
   });
 
-  it("switches after the confirmation is accepted, naming the current host for a per-host mode", async () => {
+  it("names the current host when it has its own mode", async () => {
     mocks.ask.mockResolvedValue(true);
-    const switchMode = renderPanels({ mode: "silent", dangerRules: [] }, "session-1");
+    const { switchMode } = renderPanels(stateOf("read_write", "silent"), scope);
     click(modeButton("完全放行"));
     await flushUntil(() => switchMode.mock.calls.length > 0);
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("在这台主机上");
@@ -85,7 +104,7 @@ describe("full access permission mode", () => {
   });
 
   it("does not ask for the other modes", async () => {
-    const switchMode = renderPanels({ mode: "full_access", dangerRules: [] });
+    const { switchMode } = renderPanels(stateOf("full_access"));
     expect(document.body.textContent).toContain("命中拦截规则仍需确认");
     click(modeButton("自动执行"));
     await flushUntil(() => switchMode.mock.calls.length > 0);
@@ -93,21 +112,53 @@ describe("full access permission mode", () => {
     expect(switchMode).toHaveBeenCalledWith("silent");
   });
 
-  it("makes a host's full access the global default after confirming for every host", async () => {
-    mocks.ask.mockResolvedValue(true);
-    const applyModeGlobally = vi.fn();
-    const switchMode = renderPanels({ mode: "full_access", dangerRules: [] }, "session-1", applyModeGlobally);
-    const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "设为全局默认");
-    if (!button) throw new Error("global default button not found");
-    click(button);
-    await flushUntil(() => applyModeGlobally.mock.calls.length > 0);
-    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("在所有未单独设置模式的主机上");
-    expect(applyModeGlobally).toHaveBeenCalledWith("full_access");
+  it("labels the global mode and offers an explicit host override without a separate global button", async () => {
+    const { setHostOverride, switchMode } = renderPanels(stateOf("silent"), scope);
+    expect(document.body.textContent).toContain("全局模式");
+    expect(document.body.textContent).toContain("所有主机");
+    expect([...document.querySelectorAll("button")].some((item) => item.textContent === "设为全局默认")).toBe(false);
+    const toggle = hostSwitch();
+    expect(toggle?.getAttribute("aria-checked")).toBe("false");
+    click(toggle!);
+    await flushUntil(() => setHostOverride.mock.calls.length > 0);
+    expect(setHostOverride).toHaveBeenCalledWith(true);
     expect(switchMode).not.toHaveBeenCalled();
   });
 
-  it("offers the global default only for a per-host mode", () => {
-    renderPanels({ mode: "full_access", dangerRules: [] });
-    expect([...document.querySelectorAll("button")].some((item) => item.textContent === "设为全局默认")).toBe(false);
+  it("shows an explicit host override with the global mode it hides", async () => {
+    const { setHostOverride } = renderPanels(stateOf("read_write", "read_only"), scope);
+    expect(document.body.textContent).toContain("这台主机的模式");
+    expect(document.body.textContent).toContain("仅这台主机");
+    const toggle = hostSwitch();
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+    expect(toggle?.textContent).toContain("全局模式为「读写」");
+    expect(modeButton("只读").getAttribute("aria-checked")).toBe("true");
+    click(toggle!);
+    await flushUntil(() => setHostOverride.mock.calls.length > 0);
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(setHostOverride).toHaveBeenCalledWith(false);
+  });
+
+  it("asks before a host follows a global full access", async () => {
+    mocks.ask.mockResolvedValue(false);
+    const { setHostOverride } = renderPanels(stateOf("full_access", "read_write"), scope);
+    click(hostSwitch()!);
+    await flushUntil(() => mocks.ask.mock.calls.length > 0);
+    await Promise.resolve();
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("在这台主机上");
+    expect(setHostOverride).not.toHaveBeenCalled();
+  });
+
+  it("offers no host override without a terminal host", () => {
+    renderPanels(stateOf("read_write"));
+    expect(hostSwitch()).toBeNull();
+    mounted?.unmount();
+    renderPanels(stateOf("read_write", undefined, false), scope);
+    expect(hostSwitch()).toBeNull();
+  });
+
+  it("explains that full access is decided as 自动执行 on a production host", () => {
+    renderPanels(stateOf("full_access"), scope, true);
+    expect(document.body.textContent).toContain("完全放行在这里按「自动执行」处理");
   });
 });

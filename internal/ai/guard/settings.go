@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -43,6 +44,14 @@ func DevicePermissionSettingKeyForUser(ctx context.Context) string {
 // of another device win. Absent entries fall back to the mode map's revision.
 func DeviceModeClockSettingKeyForUser(ctx context.Context) string {
 	return DevicePermissionSettingKeyForUser(ctx) + ".clocks"
+}
+
+// DeviceModeExplicitSettingKeyForUser marks that the one-time cleanup of the
+// per-device modes created implicitly by earlier releases has run. Before it,
+// every mode switch in a terminal's AI panel stored a device mode, so the
+// global mode stopped applying to every host the user had visited.
+func DeviceModeExplicitSettingKeyForUser(ctx context.Context) string {
+	return DevicePermissionSettingKeyForUser(ctx) + ".explicit"
 }
 
 type Settings interface {
@@ -163,6 +172,7 @@ func (m *Manager) stateForLocked(ctx context.Context, ownerID string) (*permissi
 	if err != nil {
 		return nil, err
 	}
+	m.pruneImplicitDeviceModesLocked(ctx, &entry)
 	m.states[ownerID] = &entry
 	return &entry, nil
 }
@@ -189,6 +199,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 		delete(m.states, ownerID)
 		return err
 	}
+	m.pruneImplicitDeviceModesLocked(ctx, &entry)
 	m.states[ownerID] = &entry
 	return nil
 }
@@ -223,6 +234,91 @@ func (m *Manager) Set(ctx context.Context, config Config) error {
 // Valid reports whether the mode is one this build understands.
 func (m Mode) Valid() bool {
 	return m == ReadOnly || m == ReadWrite || m == Silent || m == FullAccess || m == Unattended
+}
+
+// permissiveness orders modes from strictest to loosest.
+func (m Mode) permissiveness() int {
+	switch m {
+	case ReadOnly:
+		return 1
+	case ReadWrite:
+		return 2
+	case Silent:
+		return 3
+	case FullAccess:
+		return 4
+	default:
+		return 0
+	}
+}
+
+// pruneImplicitDeviceModesLocked runs once per owner. Earlier releases stored a
+// device mode on every mode switch made in a terminal's AI panel; those that
+// are not stricter than the global mode are removed so the global mode applies
+// to those hosts again without making any host looser. Stricter device modes
+// stay as explicit overrides. A failure leaves the data unchanged and the
+// cleanup is retried on the next load.
+func (m *Manager) pruneImplicitDeviceModesLocked(ctx context.Context, entry *permissionState) {
+	markerKey := DeviceModeExplicitSettingKeyForUser(ctx)
+	_, done, err := m.settings.SettingGet(ctx, markerKey)
+	if err != nil {
+		slog.Warn("read AI device mode cleanup marker failed", "error", err)
+		return
+	}
+	if done {
+		return
+	}
+	global := entry.config.Normalized().Mode
+	next := make(map[string]Mode, len(entry.modes))
+	removed := make([]string, 0, len(entry.modes))
+	for deviceID, mode := range entry.modes {
+		if mode.permissiveness() >= global.permissiveness() {
+			removed = append(removed, deviceID)
+			continue
+		}
+		next[deviceID] = mode
+	}
+	values := map[string]string{markerKey: "1"}
+	if len(removed) > 0 {
+		encoded, err := json.Marshal(next)
+		if err != nil {
+			slog.Warn("encode AI device modes failed", "error", err)
+			return
+		}
+		clocks, err := m.deviceModeClocksWithout(ctx, removed)
+		if err != nil {
+			slog.Warn("read AI device mode clocks failed", "error", err)
+			return
+		}
+		values[DevicePermissionSettingKeyForUser(ctx)] = string(encoded)
+		values[DeviceModeClockSettingKeyForUser(ctx)] = clocks
+	}
+	if err := writeSettings(ctx, m.settings, values); err != nil {
+		slog.Warn("clean up implicit AI device modes failed", "error", err)
+		return
+	}
+	entry.modes = next
+	for _, deviceID := range removed {
+		if err := recordAIGrantTombstone(ctx, m.settings, AIGrantSyncModePrefix+deviceID); err != nil {
+			slog.Warn("record AI device mode tombstone failed", "device", deviceID, "error", err)
+		}
+	}
+}
+
+func (m *Manager) deviceModeClocksWithout(ctx context.Context, deviceIDs []string) (string, error) {
+	clocks := map[string]int64{}
+	raw, found, err := m.settings.SettingGet(ctx, DeviceModeClockSettingKeyForUser(ctx))
+	if err != nil {
+		return "", err
+	}
+	if found && raw != "" && json.Unmarshal([]byte(raw), &clocks) != nil || clocks == nil {
+		clocks = map[string]int64{}
+	}
+	for _, deviceID := range deviceIDs {
+		delete(clocks, deviceID)
+	}
+	encoded, err := json.Marshal(clocks)
+	return string(encoded), err
 }
 
 func (m *Manager) DeviceMode(ctx context.Context, deviceID string) (Mode, bool, error) {

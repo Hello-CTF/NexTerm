@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   answer: vi.fn(),
   hitlSnapshot: vi.fn(),
   hitlEvents: vi.fn(),
-  getPermission: vi.fn(),
+  permissionState: vi.fn(),
   conversationList: vi.fn(),
   conversationDelete: vi.fn(),
   messages: vi.fn(),
@@ -32,7 +32,7 @@ vi.mock("../../ipc/commands", () => ({
     answer: mocks.answer,
     hitlSnapshot: mocks.hitlSnapshot,
     hitlEvents: mocks.hitlEvents,
-    getPermission: mocks.getPermission,
+    permissionState: mocks.permissionState,
     conversationList: mocks.conversationList,
     conversationDelete: mocks.conversationDelete,
     messages: mocks.messages,
@@ -95,7 +95,7 @@ describe("M134 AI copy", () => {
       pending: [],
     });
     mocks.hitlEvents.mockResolvedValue([]);
-    mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
+    mocks.permissionState.mockResolvedValue({ config: { mode: "read_write", dangerRules: [] }, globalMode: "read_write", hostResolved: false, source: "global" });
     mocks.overview.mockResolvedValue({
       profiles: [{ id: "p1", name: "公司 DeepSeek", model: "deepseek-chat" }],
       activeId: "p1",

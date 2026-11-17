@@ -121,6 +121,8 @@ func TestDeviceModeOverrideLifecycle(t *testing.T) {
 func TestDeviceModeDropsInvalidPersistedValues(t *testing.T) {
 	settings := &memorySettings{values: map[string]string{
 		DevicePermissionSettingKey: `{"asset-a":"silent","asset-b":"yolo"}`,
+		// The store is past the one-time cleanup, so asset-a is an explicit override.
+		DeviceModeExplicitSettingKeyForUser(context.Background()): "1",
 	}}
 	manager, err := NewManager(context.Background(), settings)
 	if err != nil {
