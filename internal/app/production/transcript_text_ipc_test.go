@@ -119,22 +119,23 @@ func TestTranscriptExportTextUsesTheViewerTimeZone(t *testing.T) {
 	}
 }
 
-func TestTranscriptExportTextStopsInflatedOutput(t *testing.T) {
+func TestTranscriptExportTextWritesOutputThatGrowsPastTheRecording(t *testing.T) {
 	ctx := context.Background()
-	// Each 9-byte chunk moves the cursor to the end of a 1024-column row and prints, roughly 114 output bytes per input byte.
-	payload := []byte(strings.Repeat("\x1b[1024Gx\n", 20_000))
+	// Each 9-byte line moves the cursor to the end of a 1024-column row and prints, roughly 114 output bytes per input
+	// byte. The renderer bounds the growth per recorded byte, so the text is written in full.
+	payload := []byte(strings.Repeat("\x1b[1024Gx\n", 1000))
 	chunks := []store.TranscriptChunkRow{{Seq: 0, TabID: "t", TS: 1000, Kind: store.TranscriptChunkKindResize, Data: []byte(`{"cols":1024,"rows":24}`)}}
-	for seq := int64(1); seq <= 10; seq++ {
+	for seq := int64(1); seq <= 5; seq++ {
 		chunks = append(chunks, store.TranscriptChunkRow{Seq: seq, TabID: "t", TS: 1000 + seq, Data: payload})
 	}
 	dispatcher, id := newTextExportFixture(t, ctx, chunks)
 	target := filepath.Join(t.TempDir(), "inflated.txt")
 	response := dispatchStoreTest(dispatcher, "transcript_export_text", `{"id":"`+id+`","path":`+castJSONString(t, target)+`}`)
-	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
-		t.Fatalf("inflated export must fail with a bad param: %+v", response)
-	}
-	if _, err := os.Stat(target); err == nil {
-		t.Fatal("a rejected export must not leave a file")
+	var result transcriptExportTextResult
+	requireStoreTestResponse(t, response, &result)
+	raw, err := os.ReadFile(target)
+	if err != nil || result.Lines != 5000 || int64(len(raw)) != result.Bytes || len(raw) <= 1<<20+32*5*len(payload) {
+		t.Fatalf("text: %d bytes, result %+v, %v", len(raw), result, err)
 	}
 }
 

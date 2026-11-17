@@ -94,6 +94,10 @@ type transcriptHostDTO struct {
 }
 
 func (s *terminalCommandService) registerTranscripts(dispatcher *ipc.Dispatcher) error {
+	// archives tracks the running batch exports by the caller's task id, so transcript_export_archive_cancel can stop one,
+	// also when the cancel arrives before the export started.
+	archives := newFSTransferRegistry()
+	archiveProgress := newTranscriptArchiveProgressRegistry()
 	registrations := []func() error{
 		func() error {
 			return ipc.Register(dispatcher, "transcript_hosts", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]transcriptHostDTO, error) {
@@ -224,7 +228,23 @@ func (s *terminalCommandService) registerTranscripts(dispatcher *ipc.Dispatcher)
 		},
 		func() error {
 			return ipc.Register(dispatcher, "transcript_export_archive", func(ctx context.Context, _ *ipc.Call, input transcriptExportArchiveRequest) (transcriptExportArchiveResult, error) {
-				return s.exportTranscriptArchive(ctx, input)
+				return s.runTranscriptArchive(ctx, archives, archiveProgress, input)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "transcript_export_archive_progress", func(ctx context.Context, _ *ipc.Call, input transcriptArchiveTaskRequest) (transcriptArchiveProgress, error) {
+				if err := ensureTranscriptArchiveTaskID(input.TaskID); err != nil {
+					return transcriptArchiveProgress{}, err
+				}
+				return archiveProgress.get(ctx, input.TaskID), nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "transcript_export_archive_cancel", func(ctx context.Context, _ *ipc.Call, input transcriptArchiveTaskRequest) (bool, error) {
+				if err := ensureTranscriptArchiveTaskID(input.TaskID); err != nil {
+					return false, err
+				}
+				return archives.cancel(ctx, input.TaskID, "")
 			})
 		},
 		func() error {

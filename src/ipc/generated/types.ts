@@ -3607,9 +3607,22 @@ export type TerminalWriteRequest = {
   broadcast?: TerminalBroadcastWriteOptions | null;
 };
 
+export type TranscriptArchiveProgress = {
+  taskId: string;
+  running: boolean;
+  transcripts: number;
+  doneTranscripts: number;
+  bytes: number;
+  doneBytes: number;
+  current?: string;
+};
+
 export type TranscriptArchiveSkipped = {
   contentOmitted: number;
-  active: number;
+};
+
+export type TranscriptArchiveTaskRequest = {
+  taskId: string;
 };
 
 export type TranscriptChunkDTO = {
@@ -3636,6 +3649,7 @@ export type TranscriptExportArchiveRequest = {
   timeZone?: string;
   utcOffsetMinutes?: number | null;
   dryRun?: boolean;
+  taskId?: string;
 };
 
 export type TranscriptExportArchiveResult = {
@@ -3643,6 +3657,7 @@ export type TranscriptExportArchiveResult = {
   matched: number;
   exported: number;
   skipped: TranscriptArchiveSkipped;
+  partial: number;
   files: number;
   bytes: number;
   estimatedBytes: number;

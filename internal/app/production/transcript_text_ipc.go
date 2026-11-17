@@ -8,42 +8,18 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/atomicfile"
+	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/termtext"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 const (
 	// maxUTCOffsetMinutes bounds a client-reported zone offset (UTC-14:00 to UTC+14:00 cover every real zone).
 	maxUTCOffsetMinutes  = 14 * 60
 	maxTimeZoneNameBytes = 64
-	// The text may grow past its input (timestamp prefixes on short lines, cursor moves padded with blanks), but not without
-	// bound: the output stays within a fixed allowance plus a multiple of the recorded output consumed so far.
-	transcriptTextBaseAllowance = 1 << 20
-	transcriptTextGrowthFactor  = 32
 )
-
-var errTranscriptTextTooLarge = errors.New("transcript text export exceeds its size limit")
-
-// transcriptTextLimit caps the export at base + factor x the input consumed, so crafted output cannot inflate the file.
-type transcriptTextLimit struct {
-	out     io.Writer
-	input   int64
-	written int64
-}
-
-func (l *transcriptTextLimit) allowance() int64 {
-	return transcriptTextBaseAllowance + transcriptTextGrowthFactor*l.input
-}
-
-func (l *transcriptTextLimit) Write(p []byte) (int, error) {
-	if l.written+int64(len(p)) > l.allowance() {
-		return 0, errTranscriptTextTooLarge
-	}
-	n, err := l.out.Write(p)
-	l.written += int64(n)
-	return n, err
-}
 
 type transcriptExportTextRequest struct {
 	ID   string `json:"id"`
@@ -79,18 +55,19 @@ func (s *terminalCommandService) exportTranscriptText(ctx context.Context, input
 	if row.ContentOmitted {
 		return transcriptExportTextResult{}, ipc.BadParam(errors.New("该录像只同步了元数据，没有可导出的内容"))
 	}
-	path, err := resolveStagedLocalPath(ctx, s.stagedBlobs, input.Path)
+	path, maxBytes, release, err := resolveStagedWriteTarget(ctx, s.stagedBlobs, input.Path)
 	if err != nil {
 		return transcriptExportTextResult{}, err
 	}
+	defer release()
 	var summary termtext.Result
 	err = atomicfile.Write(path, 0o600, func(out io.Writer) error {
 		var renderErr error
-		summary, renderErr = s.renderTranscriptText(ctx, row, out, termtext.Options{Timestamps: input.Timestamps, Location: location})
+		summary, renderErr = s.renderTranscriptText(ctx, row, fslocal.LimitWriter(out, maxBytes), termtext.Options{Timestamps: input.Timestamps, Location: location}, nil)
 		return renderErr
 	})
-	if errors.Is(err, errTranscriptTextTooLarge) {
-		return transcriptExportTextResult{}, ipc.BadParam(errors.New("导出的文本远大于录像本身，可能含有异常的控制序列，已停止导出"))
+	if errors.Is(err, base.ErrTransferTooLarge) {
+		return transcriptExportTextResult{}, fsIPCError("", err)
 	}
 	if err != nil {
 		return transcriptExportTextResult{}, err
@@ -132,16 +109,19 @@ func truncateForError(value string) string {
 	return value
 }
 
-// renderTranscriptText streams the transcript pages through the plain-text renderer, one page in memory at a time.
-func (s *terminalCommandService) renderTranscriptText(ctx context.Context, row store.TranscriptRow, out io.Writer, opts termtext.Options) (termtext.Result, error) {
-	limit := &transcriptTextLimit{out: out}
-	renderer := termtext.NewRenderer(limit, opts)
+// renderTranscriptText streams the transcript pages through the plain-text renderer, one page in memory at a time. The
+// renderer keeps cursor moves on one row of at most 1024 columns, so the text grows at most linearly with the recording
+// and is written in full; only the caller's write budget (browser mode) bounds it. read, when set, receives the recorded
+// bytes of each page as it is consumed.
+func (s *terminalCommandService) renderTranscriptText(ctx context.Context, row store.TranscriptRow, out io.Writer, opts termtext.Options, read func(int64)) (termtext.Result, error) {
+	renderer := termtext.NewRenderer(out, opts)
 	afterSeq := int64(0)
 	for {
 		chunks, err := s.database.TranscriptChunks(ctx, row.ID, afterSeq, transcriptCastPageBytes)
 		if err != nil {
 			return termtext.Result{}, err
 		}
+		chunks = transcriptSnapshotPage(row, chunks)
 		if len(chunks) == 0 {
 			break
 		}
@@ -152,7 +132,6 @@ func (s *terminalCommandService) renderTranscriptText(ctx context.Context, row s
 			// Keyboard input (and unknown kinds) are never exported: input can carry passwords.
 			switch chunk.Kind {
 			case store.TranscriptChunkKindOutput:
-				limit.input += int64(len(chunk.Data))
 				if err := renderer.Write(chunk.TS, chunk.Data); err != nil {
 					return termtext.Result{}, err
 				}
@@ -161,6 +140,9 @@ func (s *terminalCommandService) renderTranscriptText(ctx context.Context, row s
 					renderer.Resize(cols)
 				}
 			}
+		}
+		if read != nil {
+			read(transcriptPageBytes(chunks))
 		}
 		afterSeq = chunks[len(chunks)-1].Seq + 1
 		if afterSeq >= row.Chunks {

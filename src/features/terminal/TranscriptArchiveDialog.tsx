@@ -1,12 +1,17 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { transcriptApi } from "../../ipc/commands";
-import type { TranscriptExportArchiveRequest, TranscriptExportArchiveResult } from "../../ipc/generated/types";
+import type {
+  TranscriptArchiveProgress,
+  TranscriptExportArchiveRequest,
+  TranscriptExportArchiveResult,
+} from "../../ipc/generated/types";
 import { useUi } from "../../app/store";
 import { finishSave, pickSavePath } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { Select } from "../../ui/Select";
 import { IconRefresh } from "../../ui/icons";
+import { ProgressBar } from "../../ui/DownloadProgress";
 import { formatTranscriptBytes } from "./transcriptText";
 import { compactDate, isoDate, localDayStart, sanitizeFileName, viewerTimeZone } from "./transcriptExport";
 import { t } from "../../i18n";
@@ -41,23 +46,23 @@ function rangeBounds(from: string, to: string): { startedFrom: number; startedBe
   return { startedFrom, startedBefore, valid };
 }
 
+// The poll interval of a running export's progress; it also throttles how often the bar redraws.
+const PROGRESS_POLL_MS = 250;
+
+// Only transcripts whose content was not synced here are skipped; ones still recording are exported up to now.
 function skippedReasons(result: TranscriptExportArchiveResult): string {
-  const reasons: string[] = [];
-  if (result.skipped.contentOmitted > 0) {
-    reasons.push(t("{count} 条只同步了元数据，没有内容", { count: result.skipped.contentOmitted }));
-  }
-  if (result.skipped.active > 0) reasons.push(t("{count} 条仍在录制", { count: result.skipped.active }));
-  return reasons.length === 2 ? t("{first}，{second}", { first: reasons[0], second: reasons[1] }) : reasons.join("");
+  return t("{count} 条只同步了元数据，没有内容", { count: result.skipped.contentOmitted });
 }
 
 function skippedCount(result: TranscriptExportArchiveResult): number {
-  return result.skipped.contentOmitted + result.skipped.active;
+  return result.skipped.contentOmitted;
 }
 
 export function archiveResultMessage(result: TranscriptExportArchiveResult, where: string): string {
   let message = t("已导出 {count} 条记录到 {where}", { count: result.exported, where });
   const skipped = skippedCount(result);
   if (skipped > 0) message += t("。已跳过 {count} 条：{reasons}", { count: skipped, reasons: skippedReasons(result) });
+  if (result.partial > 0) message += t("。{count} 条仍在录制，只导出到开始导出时", { count: result.partial });
   if (result.fullScreenSegments > 0) {
     message += t("。{count} 段全屏程序（如 vim、top）的画面不在文本中", { count: result.fullScreenSegments });
   }
@@ -94,6 +99,11 @@ export function TranscriptArchiveDialog({
   const [preview, setPreview] = useState<TranscriptExportArchiveResult | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // taskId names the running export for its progress polls and the cancel button.
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<TranscriptArchiveProgress | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const cancelledRef = useRef(false);
   const aliveRef = useRef(true);
   useEffect(() => {
     aliveRef.current = true;
@@ -143,6 +153,26 @@ export function TranscriptArchiveDialog({
     };
   }, [request]);
 
+  // While an export runs, its progress is polled; a poll that fails or finds no running export keeps the last state.
+  useEffect(() => {
+    if (!taskId) return;
+    let current = true;
+    const poll = () => {
+      transcriptApi.exportArchiveProgress(taskId).then(
+        (next) => {
+          if (current && next.running) setProgress(next);
+        },
+        () => undefined,
+      );
+    };
+    poll();
+    const timer = setInterval(poll, PROGRESS_POLL_MS);
+    return () => {
+      current = false;
+      clearInterval(timer);
+    };
+  }, [taskId]);
+
   const choosePreset = (value: Exclude<RangePreset, "custom">) => {
     setPreset(value);
     setDates(presetDates(value, new Date()));
@@ -164,9 +194,14 @@ export function TranscriptArchiveDialog({
     const name = archiveName();
     const path = await pickSavePath(name);
     if (!path) return;
+    const id = globalThis.crypto.randomUUID();
+    cancelledRef.current = false;
+    setProgress(null);
+    setCancelling(false);
+    setTaskId(id);
     setBusy(true);
     try {
-      const result = await transcriptApi.exportArchive({ ...request, path });
+      const result = await transcriptApi.exportArchive({ ...request, path, taskId: id });
       const where = await finishSave(path, name);
       if (!where) {
         pushToast("info", t("已取消保存"));
@@ -175,11 +210,36 @@ export function TranscriptArchiveDialog({
       }
       if (aliveRef.current) onClose();
     } catch (error) {
-      pushToast("error", t("导出失败：{value}。请更换保存位置后重试", { value: describeError(error) }));
+      if (cancelledRef.current) {
+        pushToast("info", t("已取消导出，未保存文件"));
+      } else {
+        pushToast("error", t("导出失败：{value}。请更换保存位置后重试", { value: describeError(error) }));
+      }
     } finally {
-      if (aliveRef.current) setBusy(false);
+      if (aliveRef.current) {
+        setBusy(false);
+        setTaskId(null);
+        setProgress(null);
+        setCancelling(false);
+      }
     }
   };
+
+  const cancelExport = () => {
+    if (!taskId || cancelling) return;
+    cancelledRef.current = true;
+    setCancelling(true);
+    transcriptApi.cancelArchive(taskId).catch((error: unknown) => {
+      cancelledRef.current = false;
+      if (aliveRef.current) setCancelling(false);
+      pushToast("error", t("无法取消导出：{value}", { value: describeError(error) }));
+    });
+  };
+
+  // Until the first poll answers, the bar starts from the dry run's totals.
+  const shown: TranscriptArchiveProgress | null = progress ?? (busy && preview
+    ? { taskId: taskId ?? "", running: true, transcripts: preview.exported, doneTranscripts: 0, bytes: preview.estimatedBytes, doneBytes: 0 }
+    : null);
 
   const canExport = !!request && !!preview && preview.exported > 0 && !busy;
 
@@ -321,6 +381,9 @@ export function TranscriptArchiveDialog({
                         {t("将跳过 {count} 条：{reasons}", { count: skippedCount(preview), reasons: skippedReasons(preview) })}
                       </div>
                     )}
+                    {preview.partial > 0 && (
+                      <div>{t("{count} 条仍在录制，将导出到开始导出时为止", { count: preview.partial })}</div>
+                    )}
                   </>
                 )
                 : request
@@ -328,11 +391,43 @@ export function TranscriptArchiveDialog({
                   : null}
           </div>
           <p className="nx-hint text-[11.5px]">{t("导出内容不含键盘输入。压缩包内含 manifest.json，列出每条记录和跳过的原因。")}</p>
+          {busy && shown && (
+            <div className="flex flex-col gap-1.5" data-testid="transcript-archive-progress">
+              {/* Recorded bytes measure the work; empty recordings fall back to the transcript count. */}
+              <ProgressBar
+                label={t("导出进度")}
+                transferred={shown.bytes > 0 ? shown.doneBytes : shown.doneTranscripts}
+                total={shown.bytes > 0 ? shown.bytes : shown.transcripts}
+              />
+              <div className="nx-hint flex flex-wrap justify-between gap-2 tabular-nums">
+                <span>
+                  {t("{done} / {total} 条记录", { done: shown.doneTranscripts, total: shown.transcripts })}
+                </span>
+                <span>
+                  {t("录像 {done} / {total}", {
+                    done: formatTranscriptBytes(shown.doneBytes),
+                    total: formatTranscriptBytes(shown.bytes),
+                  })}
+                </span>
+              </div>
+              {shown.current && (
+                <div className="nx-hint truncate" title={shown.current}>
+                  {t("正在导出：{name}", { name: shown.current })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <div className="nx-modal-footer">
-          <button type="button" className="nx-btn nx-btn-ghost" disabled={busy} onClick={close}>
-            {t("取消")}
-          </button>
+          {busy ? (
+            <button type="button" className="nx-btn nx-btn-ghost" disabled={cancelling} onClick={cancelExport}>
+              {cancelling ? t("正在取消…") : t("取消导出")}
+            </button>
+          ) : (
+            <button type="button" className="nx-btn nx-btn-ghost" onClick={close}>
+              {t("取消")}
+            </button>
+          )}
           <button type="button" className="nx-btn nx-btn-primary" disabled={!canExport} onClick={() => void runExport()}>
             {busy ? <IconRefresh size={12} className="animate-spin" /> : null}
             {busy ? t("正在导出…") : t("导出")}

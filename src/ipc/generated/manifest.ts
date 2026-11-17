@@ -3044,6 +3044,22 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptExportArchiveRequest", ts: "TranscriptExportArchiveRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptExportArchiveResult", ts: "TranscriptExportArchiveResult" },
     },
+    "transcript_export_archive_cancel": {
+      scope: "transcript",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptArchiveTaskRequest", ts: "TranscriptArchiveTaskRequest" },
+      output: { go: "bool", ts: "boolean" },
+    },
+    "transcript_export_archive_progress": {
+      scope: "transcript",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptArchiveTaskRequest", ts: "TranscriptArchiveTaskRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptArchiveProgress", ts: "TranscriptArchiveProgress" },
+    },
     "transcript_export_cast": {
       scope: "transcript",
       nested: false,
@@ -4865,6 +4881,14 @@ export interface IPCCommandTypeMap {
   "transcript_export_archive": {
     input: contractTypes.TranscriptExportArchiveRequest;
     output: contractTypes.TranscriptExportArchiveResult;
+  };
+  "transcript_export_archive_cancel": {
+    input: contractTypes.TranscriptArchiveTaskRequest;
+    output: boolean;
+  };
+  "transcript_export_archive_progress": {
+    input: contractTypes.TranscriptArchiveTaskRequest;
+    output: contractTypes.TranscriptArchiveProgress;
   };
   "transcript_export_cast": {
     input: contractTypes.TranscriptExportCastRequest;

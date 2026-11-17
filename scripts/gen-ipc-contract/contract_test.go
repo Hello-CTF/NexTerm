@@ -441,6 +441,8 @@ func TestTranscriptVerticalContracts(t *testing.T) {
 		{name: "transcript_search_host", input: "TranscriptHostSearchRequest", output: "TranscriptHostSearchResult"},
 		{name: "transcript_delete", input: "TranscriptIDRequest", output: "unknown"},
 		{name: "transcript_export_archive", input: "TranscriptExportArchiveRequest", output: "TranscriptExportArchiveResult"},
+		{name: "transcript_export_archive_progress", input: "TranscriptArchiveTaskRequest", output: "TranscriptArchiveProgress"},
+		{name: "transcript_export_archive_cancel", input: "TranscriptArchiveTaskRequest", output: "boolean"},
 		{name: "transcript_export_cast", input: "TranscriptExportCastRequest", output: "TranscriptExportCastResult"},
 		{name: "transcript_export_text", input: "TranscriptExportTextRequest", output: "TranscriptExportTextResult"},
 		{name: "transcript_sync_opt_in", input: "TranscriptSyncOptInRequest", output: "Record<string, never>"},
@@ -481,8 +483,8 @@ func TestTranscriptVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 16 {
-		t.Fatalf("selected transcript command count = %d, want 16", len(selected))
+	if len(selected) != 18 {
+		t.Fatalf("selected transcript command count = %d, want 18", len(selected))
 	}
 	for name, command := range commands {
 		if strings.HasPrefix(name, "transcript_") && !selected[name] {

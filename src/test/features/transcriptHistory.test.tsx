@@ -11,6 +11,7 @@ import {
   setInputValue,
   chooseSelectOption,
   waitFor,
+  waitForRendered,
   type MountedView,
 } from "./reactTestUtils";
 import { chosenOptionLabels, optionLabels, selectedLabel } from "./selectProbe";
@@ -27,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   transcriptExportText: vi.fn(),
   transcriptStar: vi.fn(),
   transcriptExportArchive: vi.fn(),
+  transcriptExportArchiveProgress: vi.fn(),
+  transcriptCancelArchive: vi.fn(),
   addTab: vi.fn(),
   pickSavePath: vi.fn(),
   finishSave: vi.fn(),
@@ -57,6 +60,8 @@ vi.mock("../../ipc/commands", () => ({
     exportText: mocks.transcriptExportText,
     star: mocks.transcriptStar,
     exportArchive: mocks.transcriptExportArchive,
+    exportArchiveProgress: mocks.transcriptExportArchiveProgress,
+    cancelArchive: mocks.transcriptCancelArchive,
   },
   sessionApi: {},
   terminalApi: {},
@@ -1133,7 +1138,8 @@ describe("TranscriptHistoryPanel batch export and global history", () => {
     path: "",
     matched: 4,
     exported: 2,
-    skipped: { contentOmitted: 1, active: 1 },
+    skipped: { contentOmitted: 1 },
+    partial: 1,
     files: 2,
     bytes: 0,
     estimatedBytes: 2048,
@@ -1161,7 +1167,14 @@ describe("TranscriptHistoryPanel batch export and global history", () => {
     mocks.transcriptExportArchive.mockImplementation(async (request: { dryRun?: boolean }) =>
       archiveResult(request.dryRun ? {} : { path: "/tmp/history.zip", bytes: 900 }),
     );
+    mocks.transcriptExportArchiveProgress.mockImplementation(async (taskId: string) => ({
+      taskId, running: false, transcripts: 0, doneTranscripts: 0, bytes: 0, doneBytes: 0,
+    }));
+    mocks.transcriptCancelArchive.mockResolvedValue(true);
   });
+
+  const exportRequest = () =>
+    mocks.transcriptExportArchive.mock.calls.find(([request]) => request.path)?.[0] as Record<string, unknown> | undefined;
 
   it("opens the global history with this host from a host workspace tab", async () => {
     mounted = mount(createElement(TranscriptHistoryPanel, { workspaceId: "ws-1", assetId: ASSET.id, fixedHost: true }));
@@ -1194,7 +1207,8 @@ describe("TranscriptHistoryPanel batch export and global history", () => {
 
   it("sets the range from the quick picks and shows what will be skipped", async () => {
     await openDialog({ fixedHost: true });
-    expect(dialog()!.textContent).toContain("将跳过 2 条");
+    expect(dialog()!.textContent).toContain("将跳过 1 条：1 条只同步了元数据");
+    expect(dialog()!.textContent).toContain("1 条仍在录制，将导出到开始导出时为止");
     click(button(dialog()!, "最近 30 天")!);
     const now = new Date();
     const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
@@ -1224,14 +1238,65 @@ describe("TranscriptHistoryPanel batch export and global history", () => {
     const name = mocks.pickSavePath.mock.calls[0][0] as string;
     expect(name).toMatch(/^nexterm-history-当前设备-\d{8}-\d{8}\.tar\.gz$/);
     expect(mocks.transcriptExportArchive).toHaveBeenCalledWith(expect.objectContaining({ path: "/tmp/history.zip", format: "tar.gz", assetId: ASSET.id }));
-    expect(mocks.transcriptExportArchive.mock.calls.find(([request]) => request.path)?.[0]).not.toHaveProperty("dryRun");
+    expect(exportRequest()).not.toHaveProperty("dryRun");
+    expect(exportRequest()?.taskId).toEqual(expect.any(String));
     expect(mocks.finishSave).toHaveBeenCalledWith("/tmp/history.zip", name);
     const [kind, message] = mocks.toast.mock.calls[0] as [string, string];
     expect(kind).toBe("success");
     expect(message).toContain("已导出 2 条记录");
-    expect(message).toContain("已跳过 2 条");
+    expect(message).toContain("已跳过 1 条");
     expect(message).toContain("1 条只同步了元数据");
-    expect(message).toContain("1 条仍在录制");
+    expect(message).toContain("1 条仍在录制，只导出到开始导出时");
     await waitFor(() => expect(dialog()).toBeNull());
+  });
+
+  it("shows the export progress in the open dialog until the result toast", async () => {
+    mocks.pickSavePath.mockResolvedValue("/tmp/history.zip");
+    mocks.finishSave.mockResolvedValue("/tmp/history.zip");
+    const running = deferred<ReturnType<typeof archiveResult>>();
+    mocks.transcriptExportArchive.mockImplementation((request: { dryRun?: boolean }) =>
+      request.dryRun ? Promise.resolve(archiveResult()) : running.promise,
+    );
+    mocks.transcriptExportArchiveProgress.mockImplementation(async (taskId: string) => ({
+      taskId, running: true, transcripts: 2, doneTranscripts: 1, bytes: 2048, doneBytes: 1024,
+      current: "当前设备/当前设备-2023-11-14-221320-000001",
+    }));
+    await openDialog({ fixedHost: true });
+    click(button(dialog()!, "导出")!);
+    const bar = () => dialog()?.querySelector<HTMLElement>('[role="progressbar"][aria-label="导出进度"]');
+    await waitForRendered(() => expect(bar()?.getAttribute("aria-valuenow")).toBe("50"));
+    const progress = dialog()!.querySelector('[data-testid="transcript-archive-progress"]')!.textContent ?? "";
+    expect(progress).toContain("1 / 2 条记录");
+    expect(progress).toContain("正在导出：当前设备/当前设备-2023-11-14-221320-000001");
+    expect(mocks.transcriptExportArchiveProgress).toHaveBeenCalledWith(exportRequest()?.taskId);
+    expect(button(dialog()!, "取消导出")).toBeDefined();
+    expect(mocks.toast).not.toHaveBeenCalled();
+    running.resolve(archiveResult({ path: "/tmp/history.zip", bytes: 900 }));
+    await waitForRendered(() => expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已导出 2 条记录")));
+    await waitForRendered(() => expect(dialog()).toBeNull());
+  });
+
+  it("cancels a running export and keeps the dialog open", async () => {
+    mocks.pickSavePath.mockResolvedValue("/tmp/history.zip");
+    const running = deferred<ReturnType<typeof archiveResult>>();
+    mocks.transcriptExportArchive.mockImplementation((request: { dryRun?: boolean }) =>
+      request.dryRun ? Promise.resolve(archiveResult()) : running.promise,
+    );
+    mocks.transcriptCancelArchive.mockImplementation(async () => {
+      running.reject(Object.assign(new Error("已取消导出"), { code: "cancelled" }));
+      return true;
+    });
+    await openDialog({ fixedHost: true });
+    click(button(dialog()!, "导出")!);
+    await waitForRendered(() => expect(button(dialog()!, "取消导出")).toBeDefined());
+    // Until the first poll answers, the bar starts from the dry run's totals.
+    expect(dialog()!.querySelector('[data-testid="transcript-archive-progress"]')!.textContent).toContain("0 / 2 条记录");
+    click(button(dialog()!, "取消导出")!);
+    await waitForRendered(() => expect(mocks.toast).toHaveBeenCalledWith("info", "已取消导出，未保存文件"));
+    expect(mocks.transcriptCancelArchive).toHaveBeenCalledWith(exportRequest()?.taskId);
+    expect(mocks.finishSave).not.toHaveBeenCalled();
+    expect(dialog()).not.toBeNull();
+    await waitForRendered(() => expect(button(dialog()!, "导出")?.disabled).toBe(false));
+    expect(dialog()!.querySelector('[data-testid="transcript-archive-progress"]')).toBeNull();
   });
 });

@@ -47,7 +47,7 @@ func (s *terminalCommandService) exportTranscriptCast(ctx context.Context, input
 	var summary asciicast.Result
 	err = atomicfile.Write(path, 0o600, func(out io.Writer) error {
 		var encodeErr error
-		summary, encodeErr = s.encodeTranscriptCast(ctx, row, fslocal.LimitWriter(out, maxBytes))
+		summary, encodeErr = s.encodeTranscriptCast(ctx, row, fslocal.LimitWriter(out, maxBytes), nil)
 		return encodeErr
 	})
 	if errors.Is(err, base.ErrTransferTooLarge) {
@@ -62,8 +62,9 @@ func (s *terminalCommandService) exportTranscriptCast(ctx context.Context, input
 }
 
 // encodeTranscriptCast streams the transcript pages into an asciicast writer. The header is written before
-// any event, so chunks are held back until the first output (or the end) fixes the initial terminal size.
-func (s *terminalCommandService) encodeTranscriptCast(ctx context.Context, row store.TranscriptRow, out io.Writer) (asciicast.Result, error) {
+// any event, so chunks are held back until the first output (or the end) fixes the initial terminal size. read, when set,
+// receives the recorded bytes of each page as it is consumed.
+func (s *terminalCommandService) encodeTranscriptCast(ctx context.Context, row store.TranscriptRow, out io.Writer, read func(int64)) (asciicast.Result, error) {
 	var (
 		writer  *asciicast.Writer
 		held    []store.TranscriptChunkRow
@@ -97,6 +98,7 @@ func (s *terminalCommandService) encodeTranscriptCast(ctx context.Context, row s
 		if err != nil {
 			return asciicast.Result{}, err
 		}
+		chunks = transcriptSnapshotPage(row, chunks)
 		if len(chunks) == 0 {
 			break
 		}
@@ -128,6 +130,9 @@ func (s *terminalCommandService) encodeTranscriptCast(ctx context.Context, row s
 				return asciicast.Result{}, err
 			}
 		}
+		if read != nil {
+			read(transcriptPageBytes(chunks))
+		}
 		afterSeq = chunks[len(chunks)-1].Seq + 1
 		if afterSeq >= row.Chunks {
 			break
@@ -139,6 +144,28 @@ func (s *terminalCommandService) encodeTranscriptCast(ctx context.Context, row s
 		}
 	}
 	return writer.Close()
+}
+
+// transcriptSnapshotPage keeps, for a transcript that has not ended, the chunks recorded before the row was read, so
+// the export of a transcript that is still recording stops where the export started. Ended transcripts no longer grow.
+func transcriptSnapshotPage(row store.TranscriptRow, chunks []store.TranscriptChunkRow) []store.TranscriptChunkRow {
+	if row.EndedAt != nil {
+		return chunks
+	}
+	for index, chunk := range chunks {
+		if chunk.Seq >= row.Chunks {
+			return chunks[:index]
+		}
+	}
+	return chunks
+}
+
+func transcriptPageBytes(chunks []store.TranscriptChunkRow) int64 {
+	var total int64
+	for _, chunk := range chunks {
+		total += int64(len(chunk.Data))
+	}
+	return total
 }
 
 func writeCastChunk(writer *asciicast.Writer, chunk store.TranscriptChunkRow) error {
