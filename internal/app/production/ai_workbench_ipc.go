@@ -351,7 +351,7 @@ func (c *aiWorkbenchCommands) export(ctx context.Context, input aiConversationEx
 		if input.Format == aiConversationExportMarkdown {
 			writeErr = c.writeConversationMarkdown(ctx, plan.rows[0], plan.hosts[plan.rows[0].AssetID], labels, location, counted)
 		} else {
-			writeErr = c.writeConversationArchive(ctx, input, plan, labels, location, counted, filepath.Dir(path))
+			writeErr = c.writeConversationArchive(ctx, input, plan, labels, location, counted, filepath.Dir(path), maxBytes)
 		}
 		result.Bytes = counted.n
 		return writeErr
@@ -470,10 +470,10 @@ func (c *aiWorkbenchCommands) writeConversationMarkdown(ctx context.Context, row
 }
 
 func (c *aiWorkbenchCommands) writeConversationArchive(ctx context.Context, input aiConversationExportRequest, plan aiConversationExportPlan,
-	labels conversationLabels, location *time.Location, out io.Writer, tempDir string) error {
+	labels conversationLabels, location *time.Location, out io.Writer, tempDir string, maxBytes int64) error {
 	var archive transcriptArchiveWriter
 	if input.Format == transcriptArchiveTarGz {
-		archive = newTarGzArchive(out, tempDir)
+		archive = newTarGzArchive(out, tempDir, maxBytes)
 	} else {
 		archive = &zipArchive{writer: zip.NewWriter(out)}
 	}
