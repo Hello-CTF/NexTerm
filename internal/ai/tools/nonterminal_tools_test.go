@@ -330,32 +330,37 @@ func searchTree() *fakeFS {
 	return files
 }
 
+// searchResults runs find_files through the file-API walk and returns the paths, without the trailing notes.
 func searchResults(t *testing.T, registry *Registry, path, pattern string) []string {
 	t.Helper()
-	args, _ := json.Marshal(map[string]string{"path": path, "pattern": pattern, "by": "name"})
-	result := executeTool(registry, "j", "search_files", string(args))
+	args, _ := json.Marshal(map[string]string{"path": path, "pattern": pattern})
+	result := executeTool(registry, "j", "find_files", string(args))
 	if !result.OK {
 		t.Fatalf("search %q failed: %+v", pattern, result)
 	}
-	if result.Text == "无匹配" {
-		return nil
+	var paths []string
+	for _, line := range strings.Split(result.Text, "\n") {
+		if line != "无匹配" && !strings.HasPrefix(line, "[") {
+			paths = append(paths, line)
+		}
 	}
-	return strings.Split(result.Text, "\n")
+	return paths
 }
 
-func TestSearchFilesMatchesPathGlobs(t *testing.T) {
+func TestFindFilesWalkMatchesPathGlobs(t *testing.T) {
 	registry := searchRegistry(searchTree())
 	for _, test := range []struct {
 		pattern string
 		want    []string
 	}{
-		{"*.go", []string{"/src/main.go", "/src/pkg/deep/inner.go", "/src/pkg/util.go"}},
-		{"**/*.go", []string{"/src/main.go", "/src/pkg/deep/inner.go", "/src/pkg/util.go"}},
-		{"pkg/*.go", []string{"/src/pkg/util.go"}},
-		{"pkg/**/*.go", []string{"/src/pkg/deep/inner.go", "/src/pkg/util.go"}},
-		{"./pkg/deep/*.go", []string{"/src/pkg/deep/inner.go"}},
-		{"/src/pkg/**", []string{"/src/pkg/deep/inner.go", "/src/pkg/util.go"}},
-		{"**/README.md", []string{"/src/README.md"}},
+		{"*.go", []string{"main.go", "pkg/deep/inner.go", "pkg/util.go"}},
+		{"**/*.go", []string{"main.go", "pkg/deep/inner.go", "pkg/util.go"}},
+		{"pkg/*.go", []string{"pkg/util.go"}},
+		{"pkg/**/*.go", []string{"pkg/deep/inner.go", "pkg/util.go"}},
+		{"./pkg/deep/*.go", []string{"pkg/deep/inner.go"}},
+		{"/src/pkg/**", []string{"pkg/deep/inner.go", "pkg/util.go"}},
+		{"**/README.md", []string{"README.md"}},
+		{"*.{md,go}", []string{"README.md", "main.go", "pkg/deep/inner.go", "pkg/util.go"}},
 		{"deep/*.go", nil},
 	} {
 		got := searchResults(t, registry, "/src", test.pattern)
@@ -363,12 +368,15 @@ func TestSearchFilesMatchesPathGlobs(t *testing.T) {
 			t.Fatalf("pattern %q matched %v, want %v", test.pattern, got, test.want)
 		}
 	}
-	if result := executeTool(registry, "j", "search_files", `{"path":"/src","pattern":"pkg/[","by":"name"}`); result.OK {
+	if result := executeTool(registry, "j", "find_files", `{"path":"/src","pattern":"pkg/["}`); result.OK {
 		t.Fatalf("an invalid path glob was accepted: %+v", result)
+	}
+	if result := executeTool(registry, "j", "find_files", `{"path":"/src","pattern":"/etc/*.conf"}`); result.OK || !strings.Contains(result.ModelText, "not under path /src") {
+		t.Fatalf("an absolute glob outside path was accepted: %+v", result)
 	}
 }
 
-func TestSearchFilesReportsSkippedFiles(t *testing.T) {
+func TestGrepFilesWalkReportsSkippedFiles(t *testing.T) {
 	files := searchTree()
 	files.dirs["/src"] = append(files.dirs["/src"],
 		base.FileEntry{Name: "huge.log", Path: "/src/huge.log", Kind: base.FileFile, Size: 2 << 20},
@@ -379,34 +387,34 @@ func TestSearchFilesReportsSkippedFiles(t *testing.T) {
 	files.files["/src/main.go"] = []byte("package main\n// TODO: wire flags\n")
 	files.files["/src/image.bin"] = []byte{0xff, 0xfe, 0x00, 'T', 'O', 'D', 'O'}
 	registry := searchRegistry(&searchFS{fakeFS: files, listErr: map[string]error{"/src/private": errors.New("permission denied")}})
-	result := executeTool(registry, "j", "search_files", `{"path":"/src","pattern":"TODO","by":"content"}`)
+	result := executeTool(registry, "j", "grep_files", `{"path":"/src","pattern":"TODO","output_mode":"content"}`)
 	if !result.OK {
 		t.Fatalf("search = %+v", result)
 	}
-	requireContains(t, "display text", result.Text, "/src/main.go:2:// TODO: wire flags",
+	requireContains(t, "display text", result.Text, "main.go:2:// TODO: wire flags",
 		"[已跳过：1 个超过 1 MiB 的文件，1 个非 UTF-8 文件，", "无法读取的文件", "1 个无法列出的目录]")
-	requireContains(t, "model text", result.ModelText, "/src/main.go:2:// TODO: wire flags", "[skipped: 1 files over 1 MiB, 1 non-UTF-8 files, ",
+	requireContains(t, "model text", result.ModelText, "main.go:2:// TODO: wire flags", "[skipped: 1 files over 1 MiB, 1 non-UTF-8 files, ",
 		"unreadable files", "1 directories that could not be listed]")
 
 	// A root that cannot be listed is still an error.
 	failing := searchRegistry(&searchFS{fakeFS: files, listErr: map[string]error{"/src": errors.New("permission denied")}})
-	if result := executeTool(failing, "j", "search_files", `{"path":"/src","pattern":"*","by":"name"}`); result.OK {
+	if result := executeTool(failing, "j", "find_files", `{"path":"/src","pattern":"*"}`); result.OK {
 		t.Fatalf("unlistable root = %+v", result)
 	}
 }
 
-func TestSearchFilesTimeoutReturnsPartialResults(t *testing.T) {
-	previous := searchFilesTimeout
-	searchFilesTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { searchFilesTimeout = previous })
+func TestFindFilesWalkTimeoutReturnsPartialResults(t *testing.T) {
+	previous := searchWalkTimeout
+	searchWalkTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { searchWalkTimeout = previous })
 	files := searchTree()
 	registry := searchRegistry(&searchFS{fakeFS: files, blockList: map[string]bool{"/src/pkg/deep": true}})
-	result := executeTool(registry, "j", "search_files", `{"path":"/src","pattern":"*.go","by":"name"}`)
+	result := executeTool(registry, "j", "find_files", `{"path":"/src","pattern":"*.go"}`)
 	if !result.OK || !result.Truncated {
 		t.Fatalf("timed-out search = %+v", result)
 	}
-	requireContains(t, "display text", result.Text, "/src/main.go", "[搜索超时", "以上为部分结果]")
-	requireContains(t, "model text", result.ModelText, "/src/main.go", "search timed out")
+	requireContains(t, "display text", result.Text, "main.go", "[搜索超时", "以上为部分结果]")
+	requireContains(t, "model text", result.ModelText, "main.go", "search timed out")
 	if strings.Contains(result.ModelText, "context deadline exceeded") {
 		t.Fatalf("timeout surfaced as a raw error: %q", result.ModelText)
 	}

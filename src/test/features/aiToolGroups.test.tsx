@@ -109,6 +109,12 @@ describe("tool call groups", () => {
     expect(toolGroupSummary(groups[0])).toBe("执行了 1 次命令，读取了 2 个文件");
   });
 
+  it("counts file finds, content searches and the deprecated search_files as searches", () => {
+    const items = [tool("find_files", 'find_files "*.go"'), tool("grep_files", 'grep_files "TODO"'), tool("search_files", "search_files")];
+    const [group] = groupToolRuns(items);
+    expect(toolGroupSummary(group)).toBe("搜索了 3 次");
+  });
+
   it("names every category and counts unknown tools and failures", () => {
     const items = [
       tool("exec_commands", "ls"),

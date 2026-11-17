@@ -18,14 +18,19 @@ import (
 )
 
 func TestSearchAndDockerArgumentsCannotReachShell(t *testing.T) {
+	// A host without a command channel is searched through the file API, where the path stays one literal name.
+	// Hosts with one get quoted commands; search_test.go runs those through a real shell.
 	files := newFakeFS()
 	registry, transport := fileRegistry(files)
-	result := executeTool(registry, "j", "search_files", `{"path":"/tmp; touch /tmp/pwn","pattern":"*","by":"name"}`)
+	transport.execErr = base.ErrUnsupported
+	result := executeTool(registry, "j", "find_files", `{"path":"/tmp; touch /tmp/pwn","pattern":"*"}`)
 	if !result.OK {
 		t.Fatal(result.Text)
 	}
-	if transport.calls() != 0 {
-		t.Fatal("search used shell")
+	for _, command := range transport.execCalls {
+		if command != searchPOSIXProbe {
+			t.Fatalf("search ran a command other than the fixed probe: %q", command)
+		}
 	}
 	if len(files.listCalls) != 1 || files.listCalls[0] != "/tmp; touch /tmp/pwn" {
 		t.Fatalf("path was not literal: %v", files.listCalls)

@@ -82,6 +82,12 @@ export function toolLabel(tool: string): string {
       return t("定时提醒");
     case "shell_history":
       return t("读取 shell 历史");
+    case "find_files":
+      return t("查找文件");
+    case "grep_files":
+      return t("搜索文件内容");
+    case "search_files":
+      return t("搜索文件");
     default:
       return tool;
   }

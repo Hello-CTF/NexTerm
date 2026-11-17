@@ -34,6 +34,8 @@ type Registry struct {
 	screenMu    sync.Mutex
 	screenReads map[string]map[string]screenRead
 	screenOrder []string
+	// searchHosts caches, per session, how find_files and grep_files can search its host (see search_host.go).
+	searchHosts sync.Map
 }
 
 func NewRegistry(deps Dependencies) *Registry {
@@ -156,7 +158,7 @@ func (r *Registry) acquireOperationFlight(key string) (release func(), acquired 
 
 func PlanAllowed(name string) bool {
 	switch name {
-	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "terminal_list", "operation_result", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", "load_skill", NotifyTool:
+	case "read_file", "list_dir", FindFilesTool, GrepFilesTool, SearchFilesAlias, "read_screen", "wait_for", "terminal_list", "operation_result", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", "load_skill", NotifyTool:
 		return true
 	default:
 		return false
@@ -284,6 +286,9 @@ func (r *Registry) Validate(call Call) error {
 		if schema.Name == call.Name {
 			return ValidateCall(schema, call.Args)
 		}
+	}
+	if call.Name == SearchFilesAlias {
+		return ValidateCall(searchFilesAliasSchema(), call.Args)
 	}
 	return invalid("未知工具 %s", call.Name)
 }
@@ -1202,8 +1207,12 @@ func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, c
 		return r.writePrepared(ctx, jobID, scope, call, preparation)
 	case "list_dir":
 		return r.listDir(ctx, scope, call.Args)
-	case "search_files":
-		return r.searchFiles(ctx, scope, call.Args)
+	case FindFilesTool:
+		return r.findFiles(ctx, scope, call.Args)
+	case GrepFilesTool:
+		return r.grepFiles(ctx, scope, call.Args)
+	case SearchFilesAlias:
+		return r.searchFilesAlias(ctx, scope, call.Args)
 	case "read_screen":
 		return r.readScreen(ctx, jobID, scope, call.Args)
 	case "send_keys":

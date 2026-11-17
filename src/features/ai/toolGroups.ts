@@ -24,6 +24,9 @@ const CATEGORY_BY_TOOL: Record<string, ToolCategory> = {
   list_dir: "list",
   write_file: "write",
   edit_file: "write",
+  find_files: "search",
+  grep_files: "search",
+  // Deprecated alias; history rows still carry it.
   search_files: "search",
   memory_recall: "search",
   read_screen: "screen",

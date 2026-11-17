@@ -344,6 +344,7 @@ func (r *Runner) setupEino(current *job, assembleInput bool) error {
 		return err
 	}
 	toolSafety, unknownTool := tools.NewToolSafety(toolNames)
+	unknownTool = execution.DeprecatedToolHandler(unknownTool)
 	chatAgent, err := adk.NewChatModelAgent(current.ctx, &adk.ChatModelAgentConfig{
 		Name: "nexterm-ai", Description: "NexTerm ops assistant", Instruction: instruction, Model: chatModel, MaxIterations: runtime.maxTurns,
 		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true, UnknownToolsHandler: unknownTool}, ReturnDirectly: returnDirectly},

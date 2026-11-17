@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,11 +41,6 @@ type WriteFileArgs struct {
 }
 type ListDirArgs struct {
 	Path string `json:"path" jsonschema:"required" jsonschema_description:"Directory path on the current host"`
-}
-type SearchFilesArgs struct {
-	Path    string `json:"path" jsonschema:"required" jsonschema_description:"Directory to search under"`
-	Pattern string `json:"pattern" jsonschema:"required" jsonschema_description:"File name glob when by=name; regular expression when by=content"`
-	By      string `json:"by" jsonschema:"required,enum=name,enum=content" jsonschema_description:"Match file names (name) or file contents (content)"`
 }
 type ReadScreenArgs struct {
 	TabID        string `json:"tab_id,omitempty" jsonschema_description:"Terminal tab handle from terminal_list or terminal_create (default the current tab)"`
@@ -148,7 +144,7 @@ type LoadSkillArgs struct {
 }
 
 var einoNames = []string{
-	"exec_commands", "read_file", "write_file", "list_dir", "search_files", "read_screen", "send_keys", "wait_for",
+	"exec_commands", "read_file", "write_file", "list_dir", FindFilesTool, GrepFilesTool, "read_screen", "send_keys", "wait_for",
 	"shell_history",
 	"docker_ps", "docker_logs", "docker_exec", "docker_control", "db_list_tables", "db_describe", "db_query", "redis_scan",
 	"list_assets", "ask_user", "edit_file", "todo_write", "exit_plan_mode", ReminderTool, NotifyTool,
@@ -163,7 +159,8 @@ var einoDescriptions = map[string]string{
 	"read_file":        "Read a UTF-8 text file and record the whole file's content version for subsequent writes. Shows a window of lines (at most 120 KiB per call); when more lines remain, the result states the range shown, the total line count, and the offset and limit that read the next range.",
 	"write_file":       "Create a new file atomically without overwriting existing files; overwriting an existing file may need user confirmation depending on the permission mode and may overwrite external changes made after confirmation; before writing, the file must be read or confirmed to not exist. A .nexterm-bak backup is made only when the asset enables it; the result states whether one was made. " + fileWriteBoundHelp,
 	"list_dir":         "List directory contents, at most 500 entries (60-second timeout).",
-	"search_files":     "Search under path by file name glob (by=name) or file content regex (by=content), without going through the shell. A glob without / matches the base name; a glob with / matches the path relative to path (or the absolute path when it starts with /), and a ** segment matches any number of directories, e.g. **/*.go. Returns at most 100 results, 3 matching lines per file, 6 directory levels below path, within 30 seconds; a timeout returns the partial results found so far, and files skipped from content search (over 1 MiB, not UTF-8, unreadable) and directories that could not be listed are counted in the result.",
+	FindFilesTool:      "Find files by name or path glob on the current session's host, read-only and without confirmation. Use it to locate files (\"where is nginx.conf\", \"all *.go under src\"); use grep_files to search inside files. Runs ripgrep (rg --files) when the host has it, else find, and PowerShell on Windows; sessions without a command channel fall back to a slower file-by-file walk (30 seconds, 6 directory levels, 10000 entries). A search stops after 60 seconds and returns what it found, flagged as partial. Skips .git, node_modules and similar VCS or dependency directories and, with ripgrep, files ignored by .gitignore, unless include_ignored=true. Returns paths relative to the searched directory, newest first when modification times are available, head_limit per call (default 100); the result names the searched directory and backend, says when more results remain and which offset continues, and reports paths that could not be searched.",
+	GrepFilesTool:      "Search file contents for a regular expression on the current session's host, read-only and without confirmation, like ripgrep. output_mode=files_with_matches (default) lists matching files, content shows path:line:text with optional context lines, count shows matching lines per file; narrow with glob and/or type, case_insensitive for case-blind matching. Runs ripgrep when the host has it (Rust regex syntax), else grep -P (PCRE) or grep -E (POSIX extended, where \\d and lazy quantifiers do not work), .NET regex through PowerShell on Windows, and Go RE2 in the file-by-file fallback for sessions without a command channel; prefer portable syntax such as [0-9], \\s, \\b and (a|b). multiline=true needs ripgrep. Binary files and .git, node_modules and similar directories are skipped (and, with ripgrep, .gitignore'd files) unless include_ignored=true. A search stops after 60 seconds and returns what it found, flagged as partial. Results are sorted by path and paged with head_limit/offset (default 100 entries, or 200 lines in content mode); lines are clipped at 1000 characters; the result names the searched directory and backend, says when more remain and which offset continues, and reports paths that could not be searched.",
 	"read_screen":      "Read the visible screen and screen sequence number of the terminal in the current scope, or of the tab named by tab_id (a terminal_list handle, a tab this task created, or a read-only handle of a terminal the user @-referenced). A full-screen program (AltScreen, such as vim or top) always returns its whole screen; on a normal screen the first read in this conversation (and the first after the history was compacted) returns the whole screen without trailing blank rows, and a later plain read of the same terminal returns only the output printed since the previous read (or a note that nothing changed), so pass full=true when you need the whole screen again; subagents always get the whole screen; pass since_seq to read only new output after that sequence number, paged by max_bytes, or pass the opaque cursor from a previous page instead (a cursor is bound to the terminal geometry and fails explicitly after a resize); history_lines replays up to that many scrollback lines above the screen from the raw output stream and cannot be combined with since_seq, cursor, or max_bytes; a since_seq newer than the tab's latest sequence (for example an anchor from another terminal) is rejected; unwrap=true joins soft-wrapped lines into logical lines. The header carries the tab identity (title, kind, shell-reported cwd, stable handle) when available. Includes command state when the terminal supports OSC 133.",
 	"send_keys":        "Send keys to the terminal in the current scope; may include key tags such as <enter> and <ctrl+c>. " + SendKeysTagHelp + " Returns the screen sequence read before the write as an anchor, so wait_for or read_screen with since_seq set to it sees all output the keys produced; optional tab_id selects a tab created by this task's terminal_create or an unmarked terminal_list handle; @-referenced terminals on other connections are read-only and refuse send_keys. If the shell input line changed after this task last read the screen (new user input), the write is refused unless force=true confirms you know about the new input; the check is skipped while a command is running, on the alternate screen, or when no shell prompt line is recognized. Writes to a terminal that a terminal takeover currently owns are refused. With paste=true, keys are literal text wrapped in bracketed-paste markers when the terminal mode is on: carriage returns and control bytes are rejected (allow_control=true acknowledges deliberate control bytes), <...> sequences are sent literally, enter submits after submit_delay_ms (default 150, paste only), and when the terminal supports it the paste, delay, and Enter share one write lock so user input cannot interleave. submitted_seq is the post-write output anchor and write_confirmed is only transport acknowledgment, not remote application acceptance. When wait_ms>0 and the terminal supports OSC 133, waits for the command to finish and returns the exit code and screen tail; otherwise returns right after sending and notes that the result is unverified.",
 	"wait_for":         "Wait for the last 30 lines of the current terminal to match a regex (^ and $ match at line boundaries, ignoring a row's trailing spaces); optional tab_id selects a tab created by this task, an unmarked terminal_list handle, or a read-only handle of a terminal the user @-referenced. Pass since_seq to match only new output after that screen sequence anchor; a since_seq newer than the tab's latest sequence (for example an anchor from another terminal) is rejected. With quiet_ms>0, return only when the pattern also remains satisfied and the terminal has had no output for at least that many milliseconds; pattern may be omitted or empty only when quiet_ms or lines is set. lines waits for at least that many new output lines (counted by line feeds after the anchor) instead of a pattern; both may be combined. When lines>0 or several tab_ids are given, the pattern is matched only against output produced after each tab's anchor, never against text already on the screen. tab_ids waits across multiple tabs anchored at each tab's latest output sequence, with mode=any returning on the first satisfied tab and mode=all (default) waiting for every tab; per-tab anchors, line counts, and idle state are reported in the wait result metadata. Can be canceled by the task.",
@@ -203,8 +200,11 @@ func einoToolSchemas() []Schema {
 		"list_dir": func() (*schema.ToolInfo, error) {
 			return utils.GoStruct2ToolInfo[ListDirArgs]("list_dir", einoDescriptions["list_dir"])
 		},
-		"search_files": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[SearchFilesArgs]("search_files", einoDescriptions["search_files"])
+		FindFilesTool: func() (*schema.ToolInfo, error) {
+			return utils.GoStruct2ToolInfo[FindFilesArgs](FindFilesTool, einoDescriptions[FindFilesTool])
+		},
+		GrepFilesTool: func() (*schema.ToolInfo, error) {
+			return utils.GoStruct2ToolInfo[GrepFilesArgs](GrepFilesTool, einoDescriptions[GrepFilesTool])
 		},
 		"read_screen": func() (*schema.ToolInfo, error) {
 			return utils.GoStruct2ToolInfo[ReadScreenArgs]("read_screen", einoDescriptions["read_screen"])
@@ -406,8 +406,13 @@ func (e *Execution) Tools() ([]tool.BaseTool, error) {
 			return utils.InferTool("list_dir", einoDescriptions["list_dir"], func(ctx context.Context, input ListDirArgs) (Output, error) { return e.run(ctx, "list_dir", input) })
 		},
 		func() (tool.InvokableTool, error) {
-			return utils.InferTool("search_files", einoDescriptions["search_files"], func(ctx context.Context, input SearchFilesArgs) (Output, error) {
-				return e.run(ctx, "search_files", input)
+			return utils.InferTool(FindFilesTool, einoDescriptions[FindFilesTool], func(ctx context.Context, input FindFilesArgs) (Output, error) {
+				return e.run(ctx, FindFilesTool, input)
+			})
+		},
+		func() (tool.InvokableTool, error) {
+			return utils.InferTool(GrepFilesTool, einoDescriptions[GrepFilesTool], func(ctx context.Context, input GrepFilesArgs) (Output, error) {
+				return e.run(ctx, GrepFilesTool, input)
 			})
 		},
 		func() (tool.InvokableTool, error) {
@@ -541,6 +546,41 @@ func (e *Execution) Tools() ([]tool.BaseTool, error) {
 	return result, nil
 }
 
+// DeprecatedToolHandler answers calls to the deprecated search_files, which is no longer offered to the model but
+// may still be called from an older conversation, by running it as find_files or grep_files. Every other unknown
+// name goes to next.
+func (e *Execution) DeprecatedToolHandler(next UnknownToolHandler) UnknownToolHandler {
+	return func(ctx context.Context, name, input string) (string, error) {
+		if name != SearchFilesAlias || !e.enabled(SearchFilesAlias) {
+			return next(ctx, name, input)
+		}
+		var args SearchFilesArgs
+		output := Output{}
+		if err := json.Unmarshal([]byte(input), &args); err != nil {
+			output = searchInvalid("search_files 的参数不是有效 JSON；search_files 已弃用，请改用 find_files 或 grep_files",
+				"the search_files arguments are not valid JSON; search_files is deprecated, use find_files or grep_files instead")
+		} else {
+			var err error
+			output, err = e.run(ctx, SearchFilesAlias, args)
+			if err != nil {
+				// The unknown-tool path cannot pause for a confirmation; the new tools can.
+				output = searchFailure("search_files 已弃用，本次调用未执行，请改用 find_files 或 grep_files: "+err.Error(),
+					"search_files is deprecated and this call was not run; use find_files or grep_files instead: "+err.Error())
+			}
+		}
+		encoded, err := json.Marshal(output)
+		if err != nil {
+			return "", err
+		}
+		// Unknown tools bypass the tool middleware, so adk emits no result event; send it here so the run loop
+		// persists and shows the result like any other.
+		message := schema.ToolMessage(string(encoded), compose.GetToolCallID(ctx), schema.WithToolName(name))
+		adk.EnsureMessageID(message)
+		_ = adk.SendEvent(ctx, adk.EventFromMessage(message, nil, schema.Tool, name))
+		return string(encoded), nil
+	}
+}
+
 func (e *Execution) enabled(name string) bool {
 	if e.Registry == nil || e.PlanMode && !PlanAllowed(name) {
 		return false
@@ -549,7 +589,7 @@ func (e *Execution) enabled(name string) bool {
 	switch name {
 	case "exec_commands":
 		return e.Scope.SessionID != "" && (deps.Transport != nil || deps.ExecBatch != nil && deps.ResolveExecTargets != nil)
-	case "read_file", "write_file", "list_dir", "search_files", "edit_file":
+	case "read_file", "write_file", "list_dir", FindFilesTool, GrepFilesTool, SearchFilesAlias, "edit_file":
 		return deps.Transport != nil && e.Scope.SessionID != ""
 	case "read_screen", "send_keys", "wait_for":
 		return deps.Terminal != nil && e.Scope.TabID != ""
@@ -610,7 +650,11 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 	limits.OnFinish = e.persistSubagentRun
 	limits.ToolSafety = func(allowed []string) (adk.ChatModelAgentMiddleware, func(context.Context, string, string) (string, error)) {
 		handler, unknown := NewToolSafety(allowed)
-		return handler, unknown
+		child := &Execution{JobID: e.JobID, ConversationID: e.ConversationID, Registry: e.Registry, Scope: e.Scope, Permission: e.Permission, PermissionSource: e.PermissionSource, Memory: e.Memory, PlanMode: e.PlanMode, Subagent: true}
+		if !slices.Contains(allowed, FindFilesTool) || !slices.Contains(allowed, GrepFilesTool) {
+			return handler, unknown
+		}
+		return handler, child.DeprecatedToolHandler(unknown)
 	}
 	var manager *subagent.Manager
 	limits.NewTools = func(ctx context.Context, _ subagent.Scope) ([]tool.BaseTool, error) {
@@ -751,9 +795,18 @@ func (e *Execution) subagentAllowedTools() []string {
 	if len(configured) == 0 {
 		configured = einoNames
 	}
-	allowed := make([]string, 0, len(configured))
-	seen := make(map[string]struct{}, len(configured))
+	// A list written before search_files was split names the old tool; it grants both of its replacements.
+	expanded := make([]string, 0, len(configured)+1)
 	for _, name := range configured {
+		if strings.TrimSpace(name) == SearchFilesAlias {
+			expanded = append(expanded, FindFilesTool, GrepFilesTool)
+			continue
+		}
+		expanded = append(expanded, name)
+	}
+	allowed := make([]string, 0, len(expanded))
+	seen := make(map[string]struct{}, len(expanded))
+	for _, name := range expanded {
 		name = strings.TrimSpace(name)
 		if name == "" || name == "ask_user" || name == "exit_plan_mode" || name == ReminderTool {
 			continue

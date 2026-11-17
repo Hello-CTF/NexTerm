@@ -39,6 +39,10 @@ func DisplaySendKeys(call Call, buffered string, cursor int) string {
 }
 
 func DisplayCall(call Call) string {
+	switch call.Name {
+	case FindFilesTool, GrepFilesTool, SearchFilesAlias:
+		return DisplaySearchCall(call)
+	}
 	var fields map[string]any
 	_ = json.Unmarshal(call.Args, &fields)
 	display := call.Name

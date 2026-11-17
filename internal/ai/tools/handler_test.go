@@ -169,12 +169,9 @@ func TestSearchContentAndExecOutput(t *testing.T) {
 	files.dirs["/src"] = []base.FileEntry{{Name: "a.go", Path: "/src/a.go", Kind: base.FileFile}}
 	files.files["/src/a.go"] = []byte("hello\nworld hello\n")
 	registry, transport := fileRegistry(files)
-	result := executeTool(registry, "j", "search_files", `{"path":"/src","pattern":"hello","by":"content"}`)
-	if !result.OK || !strings.Contains(result.Text, "/src/a.go:1:hello") || !strings.Contains(result.Text, ":2:world hello") {
+	result := executeTool(registry, "j", "grep_files", `{"path":"/src","pattern":"hello","output_mode":"content"}`)
+	if !result.OK || !strings.Contains(result.Text, "a.go:1:hello") || !strings.Contains(result.Text, "a.go:2:world hello") {
 		t.Fatalf("search=%+v", result)
-	}
-	if transport.calls() != 0 {
-		t.Fatal("content search used shell")
 	}
 	code := 3
 	transport.result = base.ExecResult{Stdout: "out", Stderr: "err", ExitCode: &code}
@@ -227,7 +224,7 @@ func TestExecModelTextUsesKnownFailureAndTruncation(t *testing.T) {
 func TestModelTextOnlyMarksGeneratedEmptyResults(t *testing.T) {
 	emptySearch, _ := fileRegistry(newFakeFS())
 	literalSearchFiles := newFakeFS()
-	literalSearchFiles.dirs["/src"] = []base.FileEntry{{Name: "literal", Path: "无匹配", Kind: base.FileFile}}
+	literalSearchFiles.dirs["/src"] = []base.FileEntry{{Name: "无匹配", Path: "/src/无匹配", Kind: base.FileFile}}
 	literalSearch, _ := fileRegistry(literalSearchFiles)
 	tests := []struct {
 		name          string
@@ -240,8 +237,8 @@ func TestModelTextOnlyMarksGeneratedEmptyResults(t *testing.T) {
 	}{
 		{name: "empty tables", registry: NewRegistry(Dependencies{Database: &fakeDatabase{tables: []string{}}}), scope: Scope{ConnID: "c"}, tool: "db_list_tables", args: `{}`, wantText: "无表", wantModelText: "no tables"},
 		{name: "literal table name", registry: NewRegistry(Dependencies{Database: &fakeDatabase{tables: []string{"无表"}}}), scope: Scope{ConnID: "c"}, tool: "db_list_tables", args: `{}`, wantText: "无表"},
-		{name: "empty search", registry: emptySearch, scope: Scope{SessionID: "s"}, tool: "search_files", args: `{"path":"/src","pattern":"*","by":"name"}`, wantText: "无匹配", wantModelText: "no matches"},
-		{name: "literal search result", registry: literalSearch, scope: Scope{SessionID: "s"}, tool: "search_files", args: `{"path":"/src","pattern":"*","by":"name"}`, wantText: "无匹配"},
+		{name: "empty search", registry: emptySearch, scope: Scope{SessionID: "s"}, tool: "find_files", args: `{"path":"/src","pattern":"*"}`, wantText: "无匹配\n[目录：/src；路径相对于该目录；后端：file API walk]", wantModelText: "no matches\n[searched /src with file API walk; paths are relative to it]"},
+		{name: "literal search result", registry: literalSearch, scope: Scope{SessionID: "s"}, tool: "find_files", args: `{"path":"/src","pattern":"*"}`, wantText: "无匹配\n[目录：/src；路径相对于该目录；后端：file API walk]", wantModelText: "无匹配\n[searched /src with file API walk; paths are relative to it]"},
 		{name: "empty docker logs", registry: NewRegistry(Dependencies{DockerLogs: func(context.Context, string, string, int, string) (string, error) { return "", nil }}), scope: Scope{SessionID: "s"}, tool: "docker_logs", args: `{"container_id":"web"}`, wantText: "日志为空", wantModelText: "no logs"},
 		{name: "literal docker logs", registry: NewRegistry(Dependencies{DockerLogs: func(context.Context, string, string, int, string) (string, error) { return "日志为空", nil }}), scope: Scope{SessionID: "s"}, tool: "docker_logs", args: `{"container_id":"web"}`, wantText: "日志为空"},
 		{name: "empty docker exec", registry: NewRegistry(Dependencies{DockerExec: func(context.Context, string, string, string) (ExecResult, error) { return ExecResult{}, nil }}), scope: Scope{SessionID: "s"}, tool: "docker_exec", args: `{"container_id":"web","cmd":"true"}`, wantText: "(无输出)", wantModelText: "(no output)"},

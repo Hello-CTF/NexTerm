@@ -151,7 +151,7 @@ func projectModelResult(view modelResultView) string {
 			return projectMachineText(view.Text)
 		}
 		return view.Text
-	case "read_file", "list_dir", "search_files", "db_list_tables", "db_describe", "redis_scan", "todo_write":
+	case "read_file", "list_dir", "find_files", "grep_files", "search_files", "db_list_tables", "db_describe", "redis_scan", "todo_write":
 		if view.OK {
 			return projectFreeResultText(view.Text, view.Truncated)
 		}

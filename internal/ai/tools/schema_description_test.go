@@ -37,7 +37,7 @@ func TestEveryToolParameterHasDescription(t *testing.T) {
 
 func TestToolParameterEnumsAndRequired(t *testing.T) {
 	enums := map[string]map[string][]any{
-		"search_files":   {"by": {"name", "content"}},
+		"grep_files":     {"output_mode": {"files_with_matches", "content", "count"}},
 		"docker_control": {"action": {"start", "stop", "restart", "rm"}},
 		"wait_for":       {"mode": {"any", "all"}},
 	}
@@ -45,7 +45,8 @@ func TestToolParameterEnumsAndRequired(t *testing.T) {
 		"exec_commands":   {"commands"},
 		"read_file":       {"path"},
 		"edit_file":       {"path", "old_string", "new_string"},
-		"search_files":    {"path", "pattern", "by"},
+		"find_files":      {"pattern"},
+		"grep_files":      {"pattern"},
 		"docker_logs":     {"container_id"},
 		"db_describe":     {"table"},
 		"send_keys":       {"keys"},
