@@ -1747,7 +1747,7 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 	now := m.now()
 	for _, input := range accepted {
 		ownerChanged = tab.noteInputClientLocked(input.client) || ownerChanged
-		controlChanged = tab.noteInputLocked(clientID(input.client), now) || controlChanged
+		controlChanged = tab.noteInputLocked(clientID(input.client), now, isTerminalReply(input.data)) || controlChanged
 	}
 	var control ControlEvent
 	if controlChanged {
@@ -1888,7 +1888,7 @@ func (m *Manager) ExecLine(ctx context.Context, tabID, client, command string) (
 		return base.ExecResult{}, ErrUnsupported
 	}
 	ownerChanged := tab.noteInputClientLocked(client)
-	controlChanged := tab.noteInputLocked(clientID(client), m.now())
+	controlChanged := tab.noteInputLocked(clientID(client), m.now(), false)
 	var control ControlEvent
 	if controlChanged {
 		control = tab.controlEventLocked()

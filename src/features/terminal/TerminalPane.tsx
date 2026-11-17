@@ -21,6 +21,7 @@ import { useSessionSidebarHost } from "./sessionSidebarHost";
 import { setSessionSidebarOpen, getCtrlVPaste, useSessionSidebarOpen } from "../../app/preferences";
 import { FollowerSizeBadge } from "./FollowerSizeBadge";
 import type { FollowerScale, FollowerZoom } from "./followerScale";
+import { SizeOverrideGuard } from "./sizeOverrideGuard";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
@@ -642,7 +643,21 @@ export function TerminalPane({
   const controlSupported = !containerId && !effectiveWinrm;
   // Every attached client may type. The PTY follows the size of the client
   // that typed last; the others render the PTY size until they type.
-  const canResize = !controlSupported || control === null || control.sizeOwner === me;
+  const ownsSize = !controlSupported || control === null || control.sizeOwner === me;
+  // After other devices took the size from this view a few times in a short window, the view stops sending its
+  // size, even when the backend hands it back, until the user takes it here on purpose.
+  const sizeGuard = useRef(new SizeOverrideGuard()).current;
+  const [sizeContended, setSizeContended] = useState(false);
+  const controlOwner = control === null ? undefined : control.sizeOwner;
+  useEffect(() => {
+    if (!controlSupported || controlOwner === undefined) return;
+    if (sizeGuard.note(controlOwner === me, controlOwner !== null)) setSizeContended(true);
+  }, [controlSupported, controlOwner, me, sizeGuard]);
+  useEffect(() => {
+    sizeGuard.reset();
+    setSizeContended(false);
+  }, [kernelTabId, sizeGuard]);
+  const canResize = ownsSize && !sizeContended;
   // Input from a follower makes the backend hand it the size once the owner has been idle for the handoff hold; the
   // control event announcing that can be lost (a sleeping window, a reconnect), which would leave this pane
   // shrunken until a manual resize. One re-read of the control state after the hold catches up.
@@ -687,6 +702,9 @@ export function TerminalPane({
 
   const takeSize = useCallback(
     async (tabId: string) => {
+      // Taking the size on purpose always works and lets this view send its size on its own again.
+      sizeGuard.reset();
+      setSizeContended(false);
       try {
         await terminalApi.takeSize(tabId);
       } catch (e) {
@@ -694,7 +712,7 @@ export function TerminalPane({
       }
       await refreshControl(tabId);
     },
-    [pushToast, refreshControl],
+    [pushToast, refreshControl, sizeGuard],
   );
 
   const broadcastContext = useCallback((): BroadcastContext | null => {
@@ -3098,6 +3116,7 @@ export function TerminalPane({
                 <FollowerSizeBadge
                   scale={followerScale}
                   ownedElsewhere={control?.sizeOwner != null}
+                  contended={sizeContended}
                   zoom={followerZoom}
                   onZoom={setFollowerZoom}
                   onTakeSize={kernelTabId && !containerId ? () => void takeSize(kernelTabId) : undefined}

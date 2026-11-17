@@ -17,7 +17,8 @@ import (
 //   - the size owner is the client whose terminal size the PTY follows.
 //     It moves to a client that types once the owner has not typed for
 //     sizeHandoffHold, so two clients typing in turn do not resize the PTY
-//     on every key. Other clients render the PTY size;
+//     on every key. Automatic query replies are not typing. Other clients
+//     render the PTY size;
 //   - lastInputClient (input_owner.go) is the newest client whose input was
 //     written; live clipboard writes apply only on its views.
 //
@@ -49,16 +50,20 @@ func (t *Tab) LastInputClient() string {
 // noteInputLocked records input written by an owner client: it ranks the
 // client as the most recent input client, takes the PTY size when the hold
 // allows, and ends a preview guest's control. lastInputClient itself is set
-// by noteInputClientLocked right before the input is written. It reports
-// whether the published control state changed. The caller holds t.mu.
-func (t *Tab) noteInputLocked(client string, now time.Time) bool {
+// by noteInputClientLocked right before the input is written. A reply the
+// client's emulator wrote on its own (isTerminalReply) neither ranks the
+// client nor takes or keeps the size: a device nobody uses answers the
+// queries of programs started from another device, and that must not pull
+// the PTY back to its size. It reports whether the published control state
+// changed. The caller holds t.mu.
+func (t *Tab) noteInputLocked(client string, now time.Time, reply bool) bool {
 	changed := false
 	if t.guestControl != "" || t.guestLease != "" {
 		changed = t.guestControl != ""
 		t.guestControl = ""
 		t.clearGuestLeaseLocked()
 	}
-	if !t.clientAttachedLocked(client) {
+	if reply || !t.clientAttachedLocked(client) {
 		// A client without a view neither answers nor has a size.
 		return changed
 	}

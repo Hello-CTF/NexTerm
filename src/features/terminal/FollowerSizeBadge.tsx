@@ -7,6 +7,8 @@ export interface FollowerSizeBadgeProps {
   scale: FollowerScale | null;
   // Another device owns the size (rather than nobody, briefly, between owners).
   ownedElsewhere: boolean;
+  // This view stopped sending its size after other devices kept taking it; only 「用本机尺寸」 sends it again.
+  contended?: boolean;
   zoom: FollowerZoom;
   onZoom: (zoom: FollowerZoom) => void;
   // Takes the PTY size for this view without typing; absent where the terminal cannot hand its size over.
@@ -16,8 +18,9 @@ export interface FollowerSizeBadgeProps {
 // FollowerSizeBadge is a compact chip on a terminal that renders the PTY size another device set: "跟随 · 62%" and a
 // zoom toggle. The chip expands to explain that the PTY follows the device that typed last, so typing here takes the
 // size, as does 「用本机尺寸」. The zoom switches between the whole grid and a larger font that fits the
-// rows and pans the columns (a pinch on the terminal does the same).
-export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom, onTakeSize }: FollowerSizeBadgeProps) {
+// rows and pans the columns (a pinch on the terminal does the same). While the size is contended a notice says this
+// device stopped resizing the terminal on its own and offers 「用本机尺寸」 in place of the chip's button.
+export function FollowerSizeBadge({ scale, ownedElsewhere, contended = false, zoom, onZoom, onTakeSize }: FollowerSizeBadgeProps) {
   const id = useId();
   // A pinch is only suggested where a touch screen is the primary pointer.
   const touch = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
@@ -58,7 +61,7 @@ export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom, onTakeS
             {t("放大文字")}
           </button>
         )}
-        {ownedElsewhere && onTakeSize && (
+        {ownedElsewhere && onTakeSize && !contended && (
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto pointer-coarse:min-h-8 px-1.5 py-0 text-[11px]"
@@ -70,6 +73,25 @@ export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom, onTakeS
           </button>
         )}
       </div>
+      {contended && (
+        <div
+          className="pointer-events-auto flex max-w-[320px] items-center gap-2 rounded border border-amber-500/40 bg-neutral-900/90 px-2 py-1 text-[11px] text-amber-300 shadow"
+          data-follower-contended=""
+        >
+          <span role="status">{t("其他设备正在使用此终端的尺寸，本机已停止自动调整尺寸")}</span>
+          {onTakeSize && (
+            <button
+              type="button"
+              className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-8 shrink-0 px-1.5 py-0 text-[11px]"
+              title={t("让终端改用本设备的尺寸，另一台设备随后按比例显示")}
+              data-follower-take-size=""
+              onClick={onTakeSize}
+            >
+              {t("用本机尺寸")}
+            </button>
+          )}
+        </div>
+      )}
       {expanded && (
         <p
           id={`${id}-why`}
