@@ -2096,7 +2096,7 @@ export function TerminalPane({
           },
         ] satisfies MenuItem[])
       : []),
-    ...(effectiveWinrm ? ([{ kind: "item", label: tr("非交互模式（WinRM）"), disabled: true }] satisfies MenuItem[]) : []),
+    ...(effectiveWinrm ? ([{ kind: "item", label: tr("PowerShell 会话（WinRM）"), disabled: true }] satisfies MenuItem[]) : []),
     ...(containerId
       ? ([{ kind: "item", label: execInterrupted ? tr("容器 exec 已结束") : tr("容器内 exec"), disabled: true }] satisfies MenuItem[])
       : []),
@@ -2590,9 +2590,9 @@ export function TerminalPane({
         {effectiveWinrm && (
           <span
             className="nx-badge nx-badge-amber"
-            title={tr("WinRM 非交互模式：每条命令在新的 Shell 中执行，不支持 vim/top 等交互界面")}
+            title={tr("WinRM PowerShell 会话：变量、模块和当前目录会保留；不支持 vim/top 等全屏界面和等待键盘输入的程序。无法建立会话时改为每条命令单独执行，终端里会提示")}
           >
-            {tr("非交互模式")}
+            {tr("PowerShell 会话")}
           </span>
         )}
         {containerId && (
