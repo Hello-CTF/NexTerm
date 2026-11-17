@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"fmt"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -1184,6 +1185,9 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 		return Dangerous("别名定义会使后续命令无法审查")
 	case "unalias":
 		return Dangerous("别名删除会改变命令解析")
+	}
+	if flag, ok := programRunningFlag(name, args); ok {
+		return Dangerous(fmt.Sprintf("%s 的 %s 选项会运行任意程序", name, flag))
 	}
 	if safeFirstToken[name] {
 		return Allow()
@@ -2919,4 +2923,34 @@ func hasShortFlag(args []string, flag rune) bool {
 		}
 	}
 	return false
+}
+
+// programRunningFlags are options of otherwise read-only commands that start another program named by the caller.
+var programRunningFlags = map[string][]string{
+	"rg":   {"--pre", "--hostname-bin"},
+	"sort": {"--compress-program"},
+}
+
+// programRunningFlag reports the first option in args that makes name run another program, in its --flag, --flag=value
+// or unambiguous-prefix spelling (GNU and ripgrep long options accept prefixes).
+func programRunningFlag(name string, args []string) (string, bool) {
+	flags := programRunningFlags[name]
+	if len(flags) == 0 {
+		return "", false
+	}
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if !strings.HasPrefix(arg, "--") || len(arg) < 3 {
+			continue
+		}
+		option, _, _ := strings.Cut(arg, "=")
+		for _, flag := range flags {
+			if option == flag || len(option) >= 5 && strings.HasPrefix(flag, option) {
+				return flag, true
+			}
+		}
+	}
+	return "", false
 }
