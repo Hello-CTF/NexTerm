@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -94,6 +95,9 @@ type productionAssetOptions struct {
 	TLSServerName      string `json:"tlsServerName"`
 	CACert             string `json:"caCert"`
 	RequestTimeoutMS   int64  `json:"requestTimeoutMs"`
+	KerberosRealm      string `json:"kerberosRealm"`
+	KerberosKDC        string `json:"kerberosKdc"`
+	KerberosSPN        string `json:"kerberosSpn"`
 	InitialCommand     string `json:"initialCommand"`
 	StartupCommand     string `json:"startupCommand"`
 	Encoding           string `json:"encoding"`
@@ -495,11 +499,19 @@ func (c *productionConnector) connectWinRM(ctx context.Context, options producti
 		AcceptInvalidCerts: options.AcceptInvalidCerts, TLSServerName: options.TLSServerName,
 		CACert: []byte(options.CACert), ProxyURL: options.Proxy,
 		RequestTimeout: time.Duration(options.RequestTimeoutMS) * time.Millisecond,
+		Kerberos: winrm.KerberosConfig{
+			Realm: options.KerberosRealm, KDCs: winRMKerberosKDCs(options.KerberosKDC), SPN: options.KerberosSPN,
+		},
 	})
 	if err != nil {
 		return nil, ipc.WrapError(ipc.CodeWinRM, err.Error(), err)
 	}
 	return transport, nil
+}
+
+// winRMKerberosKDCs splits the asset's KDC field, which lists addresses separated by commas or whitespace.
+func winRMKerberosKDCs(raw string) []string {
+	return strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' || unicode.IsSpace(r) })
 }
 
 func connectTelnet(ctx context.Context, options productionAssetOptions) (base.Transport, error) {

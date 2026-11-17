@@ -116,9 +116,15 @@ func (t *ntlmSealingTransport) handshake(req *http.Request, username, password s
 }
 
 func (t *ntlmSealingTransport) sendSealed(req *http.Request, body []byte) (*http.Response, error) {
-	encrypted, err := t.messageEncryption.encrypt(body)
+	return sendEncryptedRequest(t.inner, t.messageEncryption, "ntlm", req, body)
+}
+
+// sendEncryptedRequest sends body wrapped by the established message encryption and unwraps the response. An HTTP
+// 401 is returned unwrapped so the caller can renegotiate.
+func sendEncryptedRequest(inner http.RoundTripper, encryption *winRMMessageEncryption, protocol string, req *http.Request, body []byte) (*http.Response, error) {
+	encrypted, err := encryption.encrypt(body)
 	if err != nil {
-		return nil, fmt.Errorf("ntlm: seal request body: %w", err)
+		return nil, fmt.Errorf("%s: seal request body: %w", protocol, err)
 	}
 	sealedReq, err := http.NewRequestWithContext(req.Context(), req.Method, req.URL.String(), bytes.NewReader(encrypted))
 	if err != nil {
@@ -130,18 +136,18 @@ func (t *ntlmSealingTransport) sendSealed(req *http.Request, body []byte) (*http
 		}
 		sealedReq.Header[k] = v
 	}
-	sealedReq.Header.Set("Content-Type", t.messageEncryption.contentType())
+	sealedReq.Header.Set("Content-Type", encryption.contentType())
 	sealedReq.ContentLength = int64(len(encrypted))
-	resp, err := t.inner.RoundTrip(sealedReq)
+	resp, err := inner.RoundTrip(sealedReq)
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return resp, nil
 	}
-	plaintext, err := t.messageEncryption.decryptResponse(resp)
+	plaintext, err := encryption.decryptResponse(resp)
 	if err != nil {
-		return nil, fmt.Errorf("ntlm: unseal response: %w", err)
+		return nil, fmt.Errorf("%s: unseal response: %w", protocol, err)
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(plaintext))
 	resp.ContentLength = int64(len(plaintext))

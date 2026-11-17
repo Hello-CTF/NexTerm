@@ -80,12 +80,16 @@ import {
   type TelnetLocalEcho,
   validateResolution,
   writeRemoteDesktopOptions,
+  readWinRMAuthOptions,
+  writeWinRMAuthOptions,
   type AssetFormKind,
   type RemoteDesktopOptions,
+  type WinRMAuthOptions,
 } from "./assetKindFields";
 import { fleetClient } from "../fleet/clients";
 import { RemoteDesktopFields } from "./RemoteDesktopFields";
 import { WakeFields } from "./WakeFields";
+import { WinRMAuthFields } from "./WinRMAuthFields";
 import { LocalShellFields } from "./LocalShellFields";
 import { formatShellArgs, parseShellArgs, readShellArgs, shellArgsError } from "./shellArgs";
 import {
@@ -2361,6 +2365,8 @@ export function AssetEditor({
   };
   const [resolutionError, setResolutionError] = useState<string | null>(null);
   const [wakeOptions, setWakeOptions] = useState<WakeOptions>(() => readWakeOptions(initial?.options));
+  const [winrmAuth, setWinrmAuth] = useState<WinRMAuthOptions>(() => readWinRMAuthOptions(initial?.options));
+  const patchWinrmAuth = (patch: Partial<WinRMAuthOptions>) => setWinrmAuth((current) => ({ ...current, ...patch }));
   const [wakeShowErrors, setWakeShowErrors] = useState(false);
   const wakeErrors = validateWakeOptions(wakeOptions);
   const patchWake = (patch: Partial<WakeOptions>) => setWakeOptions((current) => ({ ...current, ...patch }));
@@ -2894,7 +2900,8 @@ export function AssetEditor({
       const remoteWritten = isRemoteDesktopKind(groupKind)
         ? writeRemoteDesktopOptions(groupKind, baseOptions, remoteValues)
         : baseOptions;
-      const options = kindFields.wake ? writeWakeOptions(remoteWritten, wakeOptions) : remoteWritten;
+      const winrmWritten = kindFields.winrmAuth ? writeWinRMAuthOptions(remoteWritten, winrmAuth) : remoteWritten;
+      const options = kindFields.wake ? writeWakeOptions(winrmWritten, wakeOptions) : winrmWritten;
       // The editor never invents a username: an empty field stays empty, so a group default (or the connector's
       // own fallback for ssh, docker and winrm) decides. A field that was NULL and is still empty stays NULL, so an
       // unrelated edit does not rewrite it.
@@ -3458,6 +3465,8 @@ export function AssetEditor({
                   <InheritanceHint view={inheritance} field="jump" empty={viaAssetId === ""} />
                 </div>
               )}
+
+              {kindFields.winrmAuth && <WinRMAuthFields values={winrmAuth} onChange={patchWinrmAuth} />}
 
               {kindFields.remote && (
                 <RemoteDesktopFields

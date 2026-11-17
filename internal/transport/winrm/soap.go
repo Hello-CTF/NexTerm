@@ -54,11 +54,15 @@ func newLibraryRunner(config Config) (*libraryRunner, error) {
 		ResponseHeaderTimeout: config.RequestTimeout,
 	}
 	var roundTripper http.RoundTripper = httpTransport
-	if config.Auth == AuthNTLM {
+	if config.Auth == AuthNTLM || config.Auth == AuthKerberos {
 		httpTransport.MaxConnsPerHost = 1
 		httpTransport.MaxIdleConnsPerHost = 1
 		httpTransport.IdleConnTimeout = 0
-		roundTripper = newNTLMSealingTransport(httpTransport)
+		if config.Auth == AuthNTLM {
+			roundTripper = newNTLMSealingTransport(httpTransport)
+		} else {
+			roundTripper = newKerberosSealingTransport(httpTransport, newGokrb5TicketSource(config))
+		}
 	}
 	scheme := "http"
 	if config.UseTLS {
@@ -82,6 +86,9 @@ func newLibraryRunner(config Config) (*libraryRunner, error) {
 
 func (r *libraryRunner) Close() error {
 	r.httpTransport.CloseIdleConnections()
+	if closer, ok := r.httpClient.Transport.(io.Closer); ok {
+		return closer.Close()
+	}
 	return nil
 }
 

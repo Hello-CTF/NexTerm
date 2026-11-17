@@ -31,12 +31,43 @@ func TestConnectWinRMValidationAndClassification(t *testing.T) {
 		t.Fatalf("invalid port lost underlying detail: %q", appErr.Message)
 	}
 
-	_, err = connector.connectWinRM(ctx, productionAssetOptions{Host: "example.com", Auth: "kerberos"})
+	_, err = connector.connectWinRM(ctx, productionAssetOptions{Host: "example.com", Auth: "digest"})
 	if !errors.As(err, &appErr) || appErr.Code != ipc.CodeWinRM {
 		t.Fatalf("invalid auth = %+v, want winrm", err)
 	}
-	if !strings.Contains(appErr.Message, `unsupported WinRM authentication "kerberos"`) {
+	if !strings.Contains(appErr.Message, `unsupported WinRM authentication "digest"`) {
 		t.Fatalf("invalid auth lost underlying detail: %q", appErr.Message)
+	}
+}
+
+func TestConnectWinRMPassesKerberosOptions(t *testing.T) {
+	ctx := t.Context()
+	connector := &productionConnector{}
+	base := productionAssetOptions{Host: "win01.corp.example.com", Username: "alice", Auth: "kerberos", KerberosRealm: "corp.example.com"}
+	tests := []struct {
+		name   string
+		mutate func(*productionAssetOptions)
+		want   string
+	}{
+		// The explicit realm is consumed, so validation reaches the missing password.
+		{"realm", func(*productionAssetOptions) {}, "Kerberos 认证需要密码凭据"},
+		{"no realm", func(o *productionAssetOptions) { o.KerberosRealm = "" }, "Kerberos 需要域（realm）"},
+		{"KDC list", func(o *productionAssetOptions) { o.KerberosKDC = "dc1.corp.example.com, dc2:bad" }, `KDC 地址 "dc2:bad"`},
+		{"SPN", func(o *productionAssetOptions) { o.KerberosSPN = "HTTP" }, `Kerberos SPN "HTTP" 无效`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options := base
+			test.mutate(&options)
+			_, err := connector.connectWinRM(ctx, options)
+			var appErr *ipc.Error
+			if !errors.As(err, &appErr) || appErr.Code != ipc.CodeWinRM || !strings.Contains(appErr.Message, test.want) {
+				t.Fatalf("error = %+v, want winrm error containing %q", err, test.want)
+			}
+		})
+	}
+	if got := winRMKerberosKDCs(" dc1.corp.example.com, dc2:750;\n10.0.0.5 "); strings.Join(got, "|") != "dc1.corp.example.com|dc2:750|10.0.0.5" {
+		t.Fatalf("KDC list = %q", got)
 	}
 }
 

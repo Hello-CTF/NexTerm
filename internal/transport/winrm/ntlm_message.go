@@ -36,7 +36,8 @@ func newWinRMMessageEncryption(protocol string, protector messageProtector) (*wi
 	}
 	var protocolString string
 	switch protocol {
-	case "ntlm":
+	case "ntlm", "kerberos":
+		// WinRM uses the SPNEGO protocol string for both mechanisms of the Negotiate scheme.
 		protocolString = "application/HTTP-SPNEGO-session-encrypted"
 	default:
 		return nil, fmt.Errorf("message encryption for protocol %q not supported", protocol)

@@ -41,6 +41,8 @@ export interface AssetKindFields {
   plaintext: boolean;
   // The Telnet terminal options: local echo and what Enter sends.
   telnetOptions: boolean;
+  // The WinRM authentication protocol and its Kerberos settings.
+  winrmAuth: boolean;
 }
 
 const NONE: AssetKindFields = {
@@ -56,13 +58,14 @@ const NONE: AssetKindFields = {
   terminalEncoding: false,
   plaintext: false,
   telnetOptions: false,
+  winrmAuth: false,
 };
 
 const DATABASE: AssetKindFields = { ...NONE, authMethod: false, password: true, via: "ssh" };
 
 export const ASSET_KIND_FIELDS: Record<AssetFormKind, AssetKindFields> = {
   ssh: { ...NONE, sshAdvanced: true, wake: true },
-  winrm: { ...NONE, defaultPort: 5985, wake: true },
+  winrm: { ...NONE, defaultPort: 5985, wake: true, winrmAuth: true },
   local: { ...NONE, network: false, username: false, authMethod: false },
   docker: { ...NONE, sshAdvanced: true, wake: true },
   "docker-context": NONE,
@@ -219,6 +222,50 @@ export function writeTelnetOptions(base: Record<string, unknown>, localEcho: Tel
   return options;
 }
 
+// The WinRM authentication options. NTLM is the backend default and is stored as an absent key; Basic is not offered
+// for new assets but an asset that already uses it keeps it.
+export type WinRMAuth = "ntlm" | "kerberos" | "basic";
+
+export interface WinRMAuthOptions {
+  auth: WinRMAuth;
+  // Kerberos only; empty values let the backend derive the realm from the user name, find the KDCs through DNS
+  // and use HTTP/<host> as the SPN.
+  kerberosRealm: string;
+  kerberosKdc: string;
+  kerberosSpn: string;
+}
+
+const WINRM_OPTION_KEYS = ["auth", "kerberosRealm", "kerberosKdc", "kerberosSpn"];
+
+function optionText(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+export function readWinRMAuthOptions(options: Record<string, unknown> | undefined): WinRMAuthOptions {
+  const raw = options ?? {};
+  const auth = optionText(raw.auth).trim().toLowerCase();
+  return {
+    auth: auth === "kerberos" || auth === "basic" ? auth : "ntlm",
+    kerberosRealm: optionText(raw.kerberosRealm),
+    kerberosKdc: optionText(raw.kerberosKdc),
+    kerberosSpn: optionText(raw.kerberosSpn),
+  };
+}
+
+// writeWinRMAuthOptions stores the protocol when it is not the NTLM default, and the Kerberos settings only while
+// Kerberos is selected.
+export function writeWinRMAuthOptions(base: Record<string, unknown>, values: WinRMAuthOptions): Record<string, unknown> {
+  const options = { ...base };
+  for (const key of WINRM_OPTION_KEYS) delete options[key];
+  if (values.auth !== "ntlm") options.auth = values.auth;
+  if (values.auth === "kerberos") {
+    if (values.kerberosRealm.trim()) options.kerberosRealm = values.kerberosRealm.trim();
+    if (values.kerberosKdc.trim()) options.kerberosKdc = values.kerberosKdc.trim();
+    if (values.kerberosSpn.trim()) options.kerberosSpn = values.kerberosSpn.trim();
+  }
+  return options;
+}
+
 // Options the local terminal form writes; on another kind they would describe a shell that does not run there.
 const LOCAL_OPTION_KEYS = ["shell", "cwd"];
 const REMOTE_DESKTOP_OPTION_KEYS = ["domain", "width", "height", "promptPassword", "clipboard", "clipboardAutoSync", "commandAsCtrl", "viewOnly", "legacyTLS"];
@@ -234,6 +281,7 @@ export function optionsForKindChange(from: string, to: string, options: Record<s
   if (fromFields.remote && !toFields.remote) for (const key of REMOTE_DESKTOP_OPTION_KEYS) delete next[key];
   if (from === "local") for (const key of LOCAL_OPTION_KEYS) delete next[key];
   if (fromFields.telnetOptions && !toFields.telnetOptions) for (const key of TELNET_OPTION_KEYS) delete next[key];
+  if (fromFields.winrmAuth && !toFields.winrmAuth) for (const key of WINRM_OPTION_KEYS) delete next[key];
   if (fromFields.terminalEncoding && !toFields.terminalEncoding && !toFields.sshAdvanced) delete next.encoding;
   return next;
 }

@@ -46,6 +46,13 @@ func integrationConfig(t *testing.T) Config {
 		TLSServerName:      strings.TrimSpace(os.Getenv("NEXTERM_WINRM_TLS_SERVER_NAME")),
 		ProxyURL:           strings.TrimSpace(os.Getenv("NEXTERM_WINRM_PROXY_URL")),
 		InitialCWD:         os.Getenv("NEXTERM_WINRM_INITIAL_CWD"),
+		Kerberos: KerberosConfig{
+			Realm: strings.TrimSpace(os.Getenv("NEXTERM_WINRM_KERBEROS_REALM")),
+			SPN:   strings.TrimSpace(os.Getenv("NEXTERM_WINRM_KERBEROS_SPN")),
+		},
+	}
+	if raw := strings.TrimSpace(os.Getenv("NEXTERM_WINRM_KERBEROS_KDCS")); raw != "" {
+		config.Kerberos.KDCs = strings.Split(raw, ",")
 	}
 	if raw := strings.TrimSpace(os.Getenv("NEXTERM_WINRM_PORT")); raw != "" {
 		port, err := strconv.Atoi(raw)

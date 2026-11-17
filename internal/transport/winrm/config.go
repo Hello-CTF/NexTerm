@@ -13,6 +13,7 @@ type AuthMethod string
 const (
 	AuthNTLM              AuthMethod = "ntlm"
 	AuthBasic             AuthMethod = "basic"
+	AuthKerberos          AuthMethod = "kerberos"
 	DefaultExecTimeout               = 60 * time.Second
 	DefaultRequestTimeout            = 60 * time.Second
 )
@@ -31,6 +32,7 @@ type Config struct {
 	ProxyURL           string
 	RequestTimeout     time.Duration
 	InitialCWD         string
+	Kerberos           KerberosConfig
 }
 
 func (c Config) normalized() (Config, error) {
@@ -67,8 +69,16 @@ func (c Config) normalized() (Config, error) {
 		c.Auth = AuthNTLM
 	}
 	c.Auth = AuthMethod(strings.ToLower(strings.TrimSpace(string(c.Auth))))
-	if c.Auth != AuthNTLM && c.Auth != AuthBasic {
-		return Config{}, fmt.Errorf("unsupported WinRM authentication %q (want ntlm or basic)", c.Auth)
+	switch c.Auth {
+	case AuthNTLM, AuthBasic:
+	case AuthKerberos:
+		kerberos, err := c.normalizedKerberos()
+		if err != nil {
+			return Config{}, err
+		}
+		c.Kerberos = kerberos
+	default:
+		return Config{}, fmt.Errorf("unsupported WinRM authentication %q (want ntlm, kerberos or basic)", c.Auth)
 	}
 	if c.RequestTimeout == 0 {
 		c.RequestTimeout = DefaultRequestTimeout

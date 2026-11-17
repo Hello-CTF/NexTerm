@@ -39,7 +39,6 @@ func TestConfigRejectsAmbiguousOrInvalidValues(t *testing.T) {
 		{Host: "server.example"},
 		{Host: "server.example", User: `DOMAIN\alice`, Domain: "OTHER"},
 		{Host: "server.example", User: "alice@example.com", Domain: "EXAMPLE"},
-		{Host: "server.example", User: "alice", Auth: "kerberos"},
 		{Host: "server.example", User: "alice", RequestTimeout: -1},
 		{Host: "server.example", User: "alice", CACert: []byte("certificate")},
 		{Host: "server.example", User: "alice", TLSServerName: "server.example"},
