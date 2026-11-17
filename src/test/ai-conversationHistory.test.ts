@@ -29,6 +29,28 @@ describe("structured history mapping", () => {
     expect(items[1]).toMatchObject({ text: "历史回答", attempt: null });
   });
 
+  it("restores the saved reasoning before the turn it belongs to", () => {
+    const items = historyToItems(state, [
+      msg("user", { role: "user", content: "看下负载" }),
+      msg("assistant", { role: "assistant", content: "先看进程", jobId: "j1", interim: true, reasoning: "先确认进程" }),
+      msg("toolCall", { type: "toolCall", jobId: "j1", id: "c1", name: "exec", reasoning: "" }),
+      msg("toolCall", { type: "toolCall", jobId: "j1", id: "c2", name: "exec", reasoning: "再看内存" }),
+      msg("toolResult", { type: "toolResult", jobId: "j1", id: "c2", ok: true, summary: "ok" }),
+      msg("assistant", { role: "assistant", content: "负载正常", jobId: "j1", reasoning: "结论" }),
+    ]);
+    expect(items.map((i) => [i.role, "text" in i ? i.text : ""])).toEqual([
+      ["user", "看下负载"],
+      ["reasoning", "先确认进程"],
+      ["assistant", "先看进程"],
+      ["tool", ""],
+      ["reasoning", "再看内存"],
+      ["tool", ""],
+      ["reasoning", "结论"],
+      ["assistant", "负载正常"],
+    ]);
+    expect(items[5]).toMatchObject({ callId: "c2", ok: true, summary: "ok" });
+  });
+
   it("maps a /compact summary row to a compact marker", () => {
     const items = historyToItems(state, [
       msg("user", { role: "user", content: "旧问题" }),

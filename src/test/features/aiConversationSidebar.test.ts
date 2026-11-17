@@ -365,19 +365,20 @@ describe("AiSidebar conversation stream UX", () => {
     expect(view!.container.querySelectorAll('[role="alert"]')).toHaveLength(1);
   });
 
-  it("streams reasoning in an open details block that folds at run end", async () => {
+  it("streams reasoning collapsed with a preview of its newest text, which goes at run end", async () => {
     await send("Think about it");
     emit({ type: "reasoning", text: "第一段推理" });
     emit({ type: "reasoning", text: "第二段" });
     act(runFrames);
     const reasoning = view!.container.querySelector("details");
-    expect(reasoning?.open).toBe(true);
-    expect(reasoning?.textContent).toContain("第一段推理第二段");
+    expect(reasoning?.open).toBe(false);
+    expect(view!.container.querySelector('[data-testid="reasoning-preview"]')?.textContent).toContain("第一段推理第二段");
     emit({ type: "done", answer: "Finished thinking" });
     await flush();
     const settled = view!.container.querySelector("details");
     expect(settled?.open).toBe(false);
     expect(settled?.textContent).toContain("第一段推理第二段");
+    expect(view!.container.querySelector('[data-testid="reasoning-preview"]')).toBeNull();
   });
 
   it("stop records a canceled outcome only after the terminal event and a late done cannot overwrite it", async () => {

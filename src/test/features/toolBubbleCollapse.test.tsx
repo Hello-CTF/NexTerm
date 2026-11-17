@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { click, mount, type MountedView } from "./reactTestUtils";
 
 import { ChatBubble } from "../../features/ai/panel/AiMessageBubbles";
@@ -88,5 +88,44 @@ describe("tool bubble", () => {
     mountBubble(toolItem({ summary: undefined, text: undefined, ok: undefined, exitCode: undefined }));
     expect(view!.container.querySelector('[aria-busy="true"]')).not.toBeNull();
     expect(view!.container.querySelectorAll("pre")).toHaveLength(0);
+  });
+});
+
+describe("reasoning bubble", () => {
+  function mountReasoning(text: string, streaming: boolean): MountedView {
+    view = mount(
+      createElement(ChatBubble, {
+        item: { id: "r1", attempt: 1, role: "reasoning", text } as ChatItem,
+        streaming,
+        planApproved: false,
+        onApprovePlan: vi.fn(),
+        onRetry: vi.fn(),
+        onEdit: vi.fn(),
+        agentToolCall: null,
+        onAgentApproval: vi.fn(),
+        agentApprovalBusy: false,
+      }),
+    );
+    return view;
+  }
+
+  it("stays collapsed while streaming and previews the newest text until opened", () => {
+    mountReasoning("第一步\n第二步\n最新一步", true);
+    const details = view!.container.querySelector("details")!;
+    expect(details.open).toBe(false);
+    expect(view!.container.querySelector('[data-testid="reasoning-preview"]')?.textContent).toContain("最新一步");
+
+    act(() => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle"));
+    });
+    expect(view!.container.querySelector('[data-testid="reasoning-preview"]')).toBeNull();
+    expect(details.textContent).toContain("第一步");
+  });
+
+  it("shows no preview once the turn finished", () => {
+    mountReasoning("已结束的思考", false);
+    expect(view!.container.querySelector("details")!.open).toBe(false);
+    expect(view!.container.querySelector('[data-testid="reasoning-preview"]')).toBeNull();
   });
 });

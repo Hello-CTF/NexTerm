@@ -1029,6 +1029,12 @@ export function historyToItems(
     const jobId = historyString(raw, "jobId");
     return jobId !== "" && skipJobIds?.has(jobId) === true;
   };
+  // A saved model turn keeps its reasoning on the row that opens the turn
+  // (its text, or its first tool call), so it is shown before that row.
+  const pushReasoning = (raw: unknown) => {
+    const reasoning = historyString(raw, "reasoning");
+    if (reasoning.trim()) items.push({ id: `h${seq++}`, attempt: null, role: "reasoning", text: reasoning });
+  };
   for (const m of messages) {
     const raw = m.content;
     const structured = historyField(raw, "type");
@@ -1037,6 +1043,7 @@ export function historyToItems(
       if (structured === "toolCall") {
         const callId = historyString(raw, "id");
         const name = historyString(raw, "name");
+        pushReasoning(raw);
         pendingTools.set(callId, items.length);
         items.push({
           id: `h${seq++}`,
@@ -1119,6 +1126,7 @@ export function historyToItems(
       // Assistant text written before a turn's tool calls. An unfinished run is
       // rebuilt from its events, which carry the same text, so its rows are skipped.
       if (jobSkipped(raw)) continue;
+      pushReasoning(raw);
       items.push({ id: `h${seq++}`, attempt: null, role: "assistant", text });
       continue;
     }
@@ -1126,6 +1134,7 @@ export function historyToItems(
       // Text a run streamed before it failed or was stopped. A replayed run
       // shows the same text from its events, so its row is skipped.
       if (jobSkipped(raw) || !text.trim()) continue;
+      pushReasoning(raw);
       items.push({ id: `h${seq++}`, attempt: null, role: "assistant", text, interrupted: true });
       continue;
     }
@@ -1143,6 +1152,7 @@ export function historyToItems(
         ...(historyField(raw, "steered") === true ? { steered: true } : {}),
       });
     } else if (m.role === "assistant") {
+      pushReasoning(raw);
       items.push({ id: `h${seq++}`, attempt: null, role: "assistant", text });
     }
   }

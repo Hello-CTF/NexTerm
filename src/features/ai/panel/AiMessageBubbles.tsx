@@ -93,17 +93,7 @@ export const ChatBubble = memo(function ChatBubble({
     );
   }
   if (item.role === "reasoning") {
-    return (
-      <details
-        className="ml-1 border-l-2 border-neutral-700 pl-2.5 text-[11.5px] leading-relaxed text-neutral-500"
-        open={streaming}
-      >
-        <summary className="cursor-pointer select-none text-[10.5px] text-[var(--nx-fg-tertiary)] hover:text-neutral-400">
-          {t("思考过程（{length} 字）{value}", { length: item.text.length, value: streaming ? t(" · 进行中") : "" })}
-        </summary>
-        <div className="mt-1 whitespace-pre-wrap italic">{item.text}</div>
-      </details>
-    );
+    return <ReasoningBubble text={item.text} streaming={streaming} />;
   }
   if (item.role === "confirm" || item.role === "question") {
     return <InteractionRecord item={item} />;
@@ -195,6 +185,30 @@ export const ChatBubble = memo(function ChatBubble({
   }
   return null;
 });
+
+// Reasoning stays collapsed: while it streams, only its newest lines show
+// under the summary, and opening it shows all of it.
+function ReasoningBubble({ text, streaming }: { text: string; streaming: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="ml-1 border-l-2 border-neutral-700 pl-2.5 text-[11.5px] leading-relaxed text-neutral-500">
+      <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+        <summary className="cursor-pointer select-none text-[10.5px] text-[var(--nx-fg-tertiary)] hover:text-neutral-400">
+          {t("思考过程（{length} 字）{value}", { length: text.length, value: streaming ? t(" · 进行中") : "" })}
+        </summary>
+        <div className="mt-1 whitespace-pre-wrap italic">{text}</div>
+      </details>
+      {streaming && !open && text.trim() ? (
+        <div
+          data-testid="reasoning-preview"
+          className="mt-1 flex max-h-[5em] flex-col justify-end overflow-hidden whitespace-pre-wrap italic [mask-image:linear-gradient(to_bottom,transparent,black_1.6em)]"
+        >
+          <div>{text.trimEnd()}</div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function InteractionRecord({ item }: { item: ConfirmItem | QuestionItem }) {
   const pending = item.resolution === undefined;
