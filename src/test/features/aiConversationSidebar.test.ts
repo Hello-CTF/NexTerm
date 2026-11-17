@@ -981,6 +981,40 @@ describe("AiSidebar conversation stream UX", () => {
     expect(mocks.reopens.has(takeoverChannel)).toBe(false);
   });
 
+  it("shows the latest finished run's usage in a reopened conversation", async () => {
+    mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
+    mocks.messages.mockResolvedValue([
+      { role: "user", content: { role: "user", content: "旧问题" } },
+      { role: "assistant", content: { role: "assistant", content: "旧回答", jobId: "job-done" } },
+    ]);
+    mocks.runs.mockResolvedValue([
+      {
+        id: "job-done", conversationId: "c-9", status: "completed", attempt: 1, seq: 2,
+        planMode: false, source: "chat", answer: "旧回答", turns: 1, tokensIn: 4000, tokensOut: 300,
+        createdAt: 1000, updatedAt: 1500, finishedAt: 1500,
+      },
+      {
+        id: "job-older", conversationId: "c-9", status: "completed", attempt: 1, seq: 1,
+        planMode: false, source: "chat", answer: "", turns: 1, tokensIn: 0, tokensOut: 0,
+        createdAt: 500, updatedAt: 600, finishedAt: 600,
+      },
+    ]);
+    mocks.runEvents.mockResolvedValue([
+      { type: "usage", seq: 1, channel: "main", promptTokens: 4000, completionTokens: 300, cachedTokens: 1000, contextWindow: 8000 },
+      { type: "done", seq: 2, answer: "旧回答" },
+    ]);
+    click(view!.container.querySelector('button[title="历史会话"]')!);
+    await flush();
+    clickButton(view!.container, "旧会话");
+    await flush();
+    await flushReplay();
+
+    expect(textOf(view!)).toContain("旧回答");
+    const ring = view!.container.querySelector('[role="img"][aria-label^="上下文占用"]');
+    expect(ring?.getAttribute("aria-label")).toContain("50%");
+    expect(mocks.runEvents.mock.calls.map((call) => call[0])).toEqual(["job-done"]);
+  });
+
   it("does not bind a finished interrupted run or leave the sidebar busy", async () => {
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
     mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "旧问题" } }]);

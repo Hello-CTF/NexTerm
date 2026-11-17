@@ -3,7 +3,7 @@ import { isCurrentAiRun, markAiRunCancellationUnconfirmed, requestAiRunCancellat
 import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto, MessageDto } from "../../../ipc/types";
 import { aiApi } from "../../../ipc/commands";
 import { describeError } from "../../../ui/errorText";
-import { isRunTerminal, replayRunEventsAfter, pendingDeadline, RUN_RESTORE_LIMIT, replayableRuns, findResumableRun } from "../runRestore";
+import { isRunTerminal, replayRunEventsAfter, fetchRunEventsAfter, latestRunUsage, pendingDeadline, RUN_RESTORE_LIMIT, replayableRuns, findResumableRun } from "../runRestore";
 import { type ApplyResult } from "../conversation";
 import { useUi, nextTabId } from "../../../app/store";
 import { createAiChannel, onChannelReopen } from "../../../ipc/events";
@@ -495,6 +495,26 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
       );
       if (!isRestoreActive(restoreGeneration, id)) return;
       stream.placeReplayedRuns(leadingReplayJobIds(id));
+    }
+    // Saved history carries no usage. A replayed run reports its own; when the
+    // newest run finished and is not replayed, its events alone give the
+    // context ring its value, so older finished runs are never fetched.
+    const newest = runs.reduce<AiRunDto | undefined>(
+      (latest, run) => (!latest || run.createdAt > latest.createdAt ? run : latest),
+      undefined,
+    );
+    if (newest && !generations.has(newest.id)) {
+      const usageSequence = runSequenceRef.current;
+      void latestRunUsage([newest], (jobId) =>
+        fetchRunEventsAfter((afterSeq, limit) => aiApi.runEvents(jobId, afterSeq, limit), 0),
+      ).then(
+        (usage) => {
+          if (usage && isRestoreActive(restoreGeneration, id) && runSequenceRef.current === usageSequence) {
+            stream.restoreUsage(usage);
+          }
+        },
+        () => undefined,
+      );
     }
     const resumable = await findResumableRun(
       runs,
