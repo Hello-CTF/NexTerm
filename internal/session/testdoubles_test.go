@@ -37,9 +37,9 @@ func (c *fakeConnector) Connect(ctx context.Context, asset Asset, generation uin
 	} else {
 		transport = newFakeTransport(asset.Kind, uint64(call)+1000)
 	}
-	if transport != nil {
+	if fake, ok := transport.(*fakeTransport); ok {
 		c.mu.Lock()
-		c.transports = append(c.transports, transport.(*fakeTransport))
+		c.transports = append(c.transports, fake)
 		c.mu.Unlock()
 	}
 	return transport, err

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -247,15 +248,27 @@ func TestWinRMLineModeAndReconnect(t *testing.T) {
 	if err != nil || result.Stdout != "ran:whoami" {
 		t.Fatalf("WinRM exec result = %+v, err = %v", result, err)
 	}
-	if err := manager.Write(context.Background(), tab.ID, "client-a", []byte("whoami")); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("WinRM PTY write error = %v", err)
+	// WinRM has no PTY: the tab edits typed lines itself and runs them on
+	// Enter, here in line mode since the fake transport has no PowerShell.
+	if err := manager.Write(context.Background(), tab.ID, "client-a", []byte("hostname\r")); err != nil {
+		t.Fatalf("WinRM typed input error = %v", err)
 	}
+	execs := func(transport *fakeTransport) []string {
+		transport.mu.Lock()
+		defer transport.mu.Unlock()
+		return append([]string(nil), transport.execs...)
+	}
+	waitFor(t, func() bool { return slices.Contains(execs(connector.transport(0)), "hostname") })
 	if err := manager.Reconnect(context.Background(), session.ID); err != nil {
 		t.Fatal(err)
 	}
 	if got := connector.transport(1).channelCount(); got != 0 {
 		t.Fatalf("WinRM reconnect opened %d PTYs", got)
 	}
+	if err := manager.Write(context.Background(), tab.ID, "client-a", []byte("ver\r")); err != nil {
+		t.Fatalf("WinRM typed input after reconnect error = %v", err)
+	}
+	waitFor(t, func() bool { return slices.Contains(execs(connector.transport(1)), "ver") })
 	raw := terminals.terminal(tab.ID).bytes()
 	if !bytes.Contains(raw, []byte("ran:whoami")) || bytes.Contains(raw, []byte("[NexTerm] reconnected")) {
 		t.Fatalf("WinRM scrollback/reconnect mismatch: %q", raw)

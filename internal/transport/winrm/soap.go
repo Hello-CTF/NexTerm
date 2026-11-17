@@ -92,13 +92,28 @@ func (r *libraryRunner) Close() error {
 	return nil
 }
 
+// soapHTTPError is a SOAP response with a non-200 status; WS-Management
+// faults (operation timeout, shell quota) arrive this way.
+type soapHTTPError struct {
+	status string
+	body   string
+}
+
+func (e *soapHTTPError) Error() string {
+	return fmt.Sprintf("WinRM SOAP HTTP %s: %s", e.status, e.body)
+}
+
 func (r *libraryRunner) post(ctx context.Context, message *soap.SoapMessage) (string, error) {
+	return r.postBody(ctx, message.String())
+}
+
+func (r *libraryRunner) postBody(ctx context.Context, body string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, r.requestTimeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, r.endpoint, strings.NewReader(message.String()))
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, r.endpoint, strings.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("create WinRM SOAP request: %w", err)
 	}
@@ -112,7 +127,7 @@ func (r *libraryRunner) post(ctx context.Context, message *soap.SoapMessage) (st
 		return "", fmt.Errorf("WinRM SOAP request: %w", err)
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
+	responseBody, err := io.ReadAll(response.Body)
 	if err != nil {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
@@ -120,12 +135,12 @@ func (r *libraryRunner) post(ctx context.Context, message *soap.SoapMessage) (st
 		return "", fmt.Errorf("read WinRM SOAP response: %w", err)
 	}
 	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("WinRM SOAP HTTP %s: %s", response.Status, strings.TrimSpace(string(body)))
+		return "", &soapHTTPError{status: response.Status, body: strings.TrimSpace(string(responseBody))}
 	}
 	if !strings.Contains(response.Header.Get("Content-Type"), "application/soap+xml") {
 		return "", fmt.Errorf("WinRM SOAP response has invalid content type %q", response.Header.Get("Content-Type"))
 	}
-	return string(body), nil
+	return string(responseBody), nil
 }
 
 func (r *libraryRunner) createShell(ctx context.Context) (string, error) {

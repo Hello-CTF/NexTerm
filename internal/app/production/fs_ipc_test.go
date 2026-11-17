@@ -1267,6 +1267,12 @@ func (f *winRMChainFixture) ServeHTTP(w http.ResponseWriter, request *http.Reque
 	switch {
 	case strings.Contains(string(body), "transfer/Create"):
 		winRMChainWriteSOAP(w, winRMChainCreateResponse)
+	case strings.Contains(string(body), "shell/Command") && strings.Contains(string(body), "-Command -"):
+		// The tab's persistent PowerShell cannot start here, so its lines
+		// fall back to line mode and run through the Exec chain under test.
+		w.Header().Set("Content-Type", "application/soap+xml;charset=UTF-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, "interactive PowerShell unavailable")
 	case strings.Contains(string(body), "shell/Command"):
 		script, err := decodeWinRMChainScript(string(body))
 		if err != nil {

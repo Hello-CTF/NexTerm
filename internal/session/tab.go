@@ -24,8 +24,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-var winRMBanner = []byte("[NexTerm] WinRM 行模式：每条命令都在新的 shell 中运行。\r\nPS> ")
-
 // durableUnrecoverableBanner tells the user why a durable tab ended at reconnect
 // instead of silently attaching to an unverified helper session.
 var durableUnrecoverableBanner = []byte("\r\n\x1b[31m[NexTerm] 无法恢复此持久终端：没有记录到它的运行实例\x1b[0m\r\n")
@@ -196,6 +194,9 @@ type Tab struct {
 	streamEpoch      string
 	outputWake       chan struct{}
 	recovery         *recoveryRing
+	// winrm is the line editor and PowerShell session of a WinRM tab, which
+	// has no channel; set before the tab is published.
+	winrm *winRMConsole
 
 	// transcriptSkip is the rest of a recovered durable tab's replay, which is
 	// history and never recorded again.
@@ -621,6 +622,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if options.Durable == nil {
 		tab.runtimeEpisode = ids.New()
 	}
+	if kind == KindWinRM {
+		tab.winrm = newWinRMConsole(m, tab)
+	}
 	if options.Ephemeral {
 		tab.recovery = newRecoveryRing(recoveryRingBytes)
 	}
@@ -713,6 +717,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		if err := m.feed(ctx, tab, generation, winRMBanner); err != nil {
 			return TabInfo{}, errors.Join(err, m.closeTab(tab, destroyOnFailure))
 		}
+		tab.winrm.start()
 	} else if !m.startPump(tab, channel, generation) {
 		return TabInfo{}, errors.Join(ErrSessionClosed, m.closeTab(tab, destroyOnFailure))
 	}
@@ -1682,7 +1687,8 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 		finish(batch, ErrTabClosed)
 		return
 	}
-	if !ptyBacked(tab.session.asset.Kind) {
+	console := tab.winrm
+	if !ptyBacked(tab.session.asset.Kind) && console == nil {
 		tab.mu.Unlock()
 		finish(batch, ErrUnsupported)
 		return
@@ -1724,7 +1730,7 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 		finish(accepted, ErrTabClosed)
 		return
 	}
-	if channel == nil {
+	if channel == nil && console == nil {
 		// The tab is still current; its channel is being re-established.
 		finish(accepted, ErrDisconnected)
 		return
@@ -1760,6 +1766,12 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 		for _, input := range accepted {
 			data = append(data, input.data...)
 		}
+	}
+	if console != nil {
+		console.input(data)
+		m.noteInput(tab, data)
+		finish(accepted, nil)
+		return
 	}
 	if err := writeChannelInput(ctx, channel, data); err != nil {
 		finish(accepted, err)
@@ -1894,24 +1906,13 @@ func (m *Manager) ExecLine(ctx context.Context, tabID, client, command string) (
 		tab.session.mu.Unlock()
 		return base.ExecResult{}, ErrDisconnected
 	}
-	transport := tab.session.transport
 	tab.session.mu.Unlock()
-	result, execErr := transport.Exec(ctx, command, base.ExecOptions{ExpectedGeneration: transport.Generation()})
-	m.recordExecCommand(ctx, tab, command, result)
-	if result.Stdout != "" {
-		if err := m.feed(ctx, tab, generation, []byte(result.Stdout)); err != nil {
-			return result, err
-		}
+	if tab.winrm == nil {
+		return base.ExecResult{}, ErrUnsupported
 	}
-	if result.Stderr != "" {
-		if err := m.feed(ctx, tab, generation, []byte(result.Stderr)); err != nil {
-			return result, err
-		}
-	}
-	if err := m.feed(ctx, tab, generation, []byte("\r\nPS> ")); err != nil {
-		return result, err
-	}
-	return result, execErr
+	// The command runs like a typed line, in the tab's PowerShell (or line
+	// mode), after any command already running there.
+	return tab.winrm.exec(ctx, command)
 }
 
 // CloseTab closes a tab. A durable tab ends its host process too, except one
@@ -2069,6 +2070,10 @@ func (m *Manager) closeTabResources(tab *Tab, bestEffortChannel bool, afterClose
 	}
 	tab.responses.close()
 	tab.cancel()
+	if tab.winrm != nil {
+		// Deletes the tab's remote shell, bounded by the shell close timeout.
+		tab.winrm.close()
+	}
 
 	m.mu.Lock()
 	for channelID := range subscribers {

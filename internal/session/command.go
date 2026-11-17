@@ -19,8 +19,8 @@ const (
 	// CommandSourceTerminalGap marks omitted terminal observations caused by
 	// persistence saturation. It never represents an executed command.
 	CommandSourceTerminalGap = "terminal_gap"
-	// CommandSourceExec marks a command executed through the WinRM line-mode
-	// exec path, where the exact command line and exit code are known.
+	// CommandSourceExec marks a command run by a WinRM tab (its PowerShell or
+	// line mode), where the exact command line and exit code are known.
 	CommandSourceExec = "exec"
 )
 
@@ -157,7 +157,7 @@ func (m *Manager) flushPendingCommand(tab *Tab) {
 	m.finishCommand(tab, m.now(), nil)
 }
 
-// recordExecCommand audits a WinRM line-mode command, where the exact command
+// recordExecCommand audits a WinRM tab command, where the exact command
 // line and exit code are known without screen extraction.
 func (m *Manager) recordExecCommand(ctx context.Context, tab *Tab, command string, result base.ExecResult) {
 	if m.commands == nil || command == "" {
