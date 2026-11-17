@@ -367,9 +367,9 @@
     "other": "Disposition à {count} volets"
   },
   "{count} 条": "{count} éléments",
-  "{count} 条仍在录制": {
-    "one": "{count} encore en cours d'enregistrement",
-    "other": "{count} encore en cours d'enregistrement"
+  "{count} 条仍在录制，将导出到开始导出时为止": {
+    "one": "{count} encore en cours d’enregistrement ; exporté jusqu’au début de l’export",
+    "other": "{count} encore en cours d’enregistrement ; exportés jusqu’au début de l’export"
   },
   "{count} 条只同步了元数据，没有内容": {
     "one": "{count} avec uniquement des métadonnées synchronisées, sans contenu",
@@ -388,6 +388,7 @@
   "{detail}（已执行，但审计记录写入失败：{auditError}）": "{detail} (exécuté, mais l'écriture de l'enregistrement d'audit a échoué : {auditError})",
   "{deviceName} · {rule}告警": "{deviceName} · alerte {rule}",
   "{deviceName} · {rule}已恢复": "{deviceName} · {rule} rétabli",
+  "{done} / {total} 条记录": "{done} / {total} enregistrements",
   "{d} 天 {h} 小时": "{d} j {h} h",
   "{d}天{h}小时": "{d} j {h} h",
   "{entryCount} 条": {
@@ -408,7 +409,6 @@
   "{failed} 个标签页未能关闭，已保留并在标签页上标出原因": "{failed} onglets n'ont pas pu être fermés ; ils sont conservés et la raison est indiquée sur l'onglet",
   "{failed} 个终端未能重新接管：{value}": "{failed} terminaux n'ont pas pu être repris : {value}",
   "{failed}/{length} 个终端结束失败": "{failed}/{length} terminaux n'ont pas pu être arrêtés",
-  "{first}，{second}": "{first}, {second}",
   "{floor} 分钟前": "il y a {floor} min",
   "{floor} 分钟前有输出": "Sortie il y a {floor} min",
   "{floor} 天": "{floor} j",
@@ -710,6 +710,10 @@
   "。{count} 个录像的部分时间戳缺失，已按固定间隔估算": {
     "one": ". Certains horodatages de {count} enregistrement sont manquants et ont été estimés à intervalle fixe",
     "other": ". Certains horodatages de {count} enregistrements sont manquants et ont été estimés à intervalle fixe"
+  },
+  "。{count} 条仍在录制，只导出到开始导出时": {
+    "one": ". {count} encore en cours d’enregistrement, exporté uniquement jusqu’au début de l’export",
+    "other": ". {count} encore en cours d’enregistrement, exportés uniquement jusqu’au début de l’export"
   },
   "。{count} 段全屏程序（如 vim、top）的画面不在文本中": {
     "one": ". {count} session de programme plein écran (comme vim ou top) n'est pas incluse dans le texte",
@@ -1905,6 +1909,7 @@
   "取消失败：": "Échec de l'annulation : ",
   "取消失败：{value}": "Échec de l'annulation : {value}",
   "取消对比": "Annuler la comparaison",
+  "取消导出": "Annuler l’export",
   "取消执行": "Annuler l'exécution",
   "取消执行「{name}」": "Annuler l’exécution de « {name} »",
   "取消星标": "Retirer des favoris",
@@ -2602,6 +2607,7 @@
   "导出范围": "Portée de l'export",
   "导出资产包": "Exporter un lot de ressources",
   "导出资产包（.nxbm）": "Exporter un lot de ressources (.nxbm)",
+  "导出进度": "Progression de l’export",
   "导航": "Navigation",
   "将 SSH 资产的远程目录挂载到本地，作为本地磁盘访问": "Monter le dossier distant d'une ressource SSH en local pour y accéder comme à un disque local",
   "将 {value} 固定为 baseline": "Définir {value} comme baseline",
@@ -2809,6 +2815,7 @@
   "已取消保存远程文件": "Enregistrement des fichiers distants annulé",
   "已取消只读：{path}": "Lecture seule retirée : {path}",
   "已取消填写变量，未开始执行": "Saisie des variables annulée ; l'exécution n'a pas commencé",
+  "已取消导出，未保存文件": "Export annulé, aucun fichier enregistré",
   "已取消接管": "Reprise de la main annulée",
   "已取消生产广播，待确认输入未发送": "Diffusion en production annulée ; la saisie en attente de confirmation n'a pas été envoyée",
   "已取消生产确认；已完成目标保留在结果中，后续目标未执行": "Confirmation de production annulée ; les cibles déjà traitées restent dans les résultats et les suivantes n'ont pas été exécutées",
@@ -3260,6 +3267,7 @@
   "当前项目暂无打开的工作区。切换项目不会断开其他工作区。": "Aucun espace de travail ouvert dans le projet actuel. Changer de projet ne déconnecte pas les autres espaces de travail.",
   "当前项目的主机状态 · 只读 · 手动刷新": "État des hôtes du projet actuel · lecture seule · actualisation manuelle",
   "当前项目（不可用）": "Projet actuel (indisponible)",
+  "录像 {done} / {total}": "Enregistrements {done} / {total}",
   "录像和纯文本": "Enregistrements et texte brut",
   "录制": "Enregistrement",
   "录制中": "Enregistrement en cours",
@@ -3963,6 +3971,7 @@
   "无法加载正则表达式引擎，未执行「{name}」：{value}": "Impossible de charger le moteur d’expressions régulières ; « {name} » n’a pas été exécuté : {value}",
   "无法加载正则表达式引擎：{value}": "Impossible de charger le moteur d’expressions régulières : {value}",
   "无法加载资产列表，最近连接暂不可用。": "Impossible de charger la liste des ressources ; les connexions récentes sont indisponibles.",
+  "无法取消导出：{value}": "Impossible d’annuler l’export : {value}",
   "无法启动 trzsz 文件传输：{value}": "Impossible de démarrer le transfert de fichiers trzsz : {value}",
   "无法启动规则：{value}": "Impossible de démarrer la règle : {value}",
   "无法在应用内打开：{reason}": "Impossible d'ouvrir dans l'application : {reason}",
@@ -4881,6 +4890,7 @@
   "正在安装…": "Installation…",
   "正在导入…": "Importation…",
   "正在导出…": "Exportation…",
+  "正在导出：{name}": "Export en cours : {name}",
   "正在建立快速跳转索引 {indexPercent}%": "Création de l'index de saut rapide {indexPercent} %",
   "正在开启调试模式…": "Activation du mode débogage…",
   "正在录制": "Enregistrement en cours",

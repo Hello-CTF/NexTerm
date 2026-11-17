@@ -364,9 +364,9 @@
     "other": "Layout mit {count} Bereichen"
   },
   "{count} 条": "{count} Einträge",
-  "{count} 条仍在录制": {
-    "one": "{count} wird noch aufgezeichnet",
-    "other": "{count} werden noch aufgezeichnet"
+  "{count} 条仍在录制，将导出到开始导出时为止": {
+    "one": "{count} wird noch aufgezeichnet; exportiert bis zum Start des Exports",
+    "other": "{count} werden noch aufgezeichnet; exportiert bis zum Start des Exports"
   },
   "{count} 条只同步了元数据，没有内容": {
     "one": "{count} nur mit synchronisierten Metadaten, ohne Inhalt",
@@ -385,6 +385,7 @@
   "{detail}（已执行，但审计记录写入失败：{auditError}）": "{detail} (ausgeführt, aber der Audit-Eintrag konnte nicht geschrieben werden: {auditError})",
   "{deviceName} · {rule}告警": "{deviceName} · {rule}-Warnung",
   "{deviceName} · {rule}已恢复": "{deviceName} · {rule} behoben",
+  "{done} / {total} 条记录": "{done} / {total} Einträge",
   "{d} 天 {h} 小时": "{d} Tg. {h} Std.",
   "{d}天{h}小时": "{d} Tg. {h} Std.",
   "{entryCount} 条": {
@@ -405,7 +406,6 @@
   "{failed} 个标签页未能关闭，已保留并在标签页上标出原因": "{failed} Tabs konnten nicht geschlossen werden; sie bleiben geöffnet, der Grund ist am Tab vermerkt",
   "{failed} 个终端未能重新接管：{value}": "{failed} Terminals konnten nicht erneut übernommen werden: {value}",
   "{failed}/{length} 个终端结束失败": "{failed}/{length} Terminals konnten nicht beendet werden",
-  "{first}，{second}": "{first}, {second}",
   "{floor} 分钟前": "vor {floor} Min.",
   "{floor} 分钟前有输出": "Ausgabe vor {floor} Min.",
   "{floor} 天": "{floor} Tg.",
@@ -710,6 +710,10 @@
   "。{count} 个录像的部分时间戳缺失，已按固定间隔估算": {
     "one": ". Bei {count} Aufzeichnung fehlen einige Zeitstempel und wurden anhand fester Intervalle geschätzt",
     "other": ". Bei {count} Aufzeichnungen fehlen einige Zeitstempel und wurden anhand fester Intervalle geschätzt"
+  },
+  "。{count} 条仍在录制，只导出到开始导出时": {
+    "one": ". {count} wird noch aufgezeichnet, nur bis zum Start des Exports exportiert",
+    "other": ". {count} werden noch aufgezeichnet, nur bis zum Start des Exports exportiert"
   },
   "。{count} 段全屏程序（如 vim、top）的画面不在文本中": {
     "one": ". {count} Vollbildprogramm-Sitzung (etwa vim oder top) ist nicht im Text enthalten",
@@ -1902,6 +1906,7 @@
   "取消失败：": "Abbruch fehlgeschlagen: ",
   "取消失败：{value}": "Abbruch fehlgeschlagen: {value}",
   "取消对比": "Vergleich abbrechen",
+  "取消导出": "Export abbrechen",
   "取消执行": "Ausführung abbrechen",
   "取消执行「{name}」": "Ausführung von „{name}“ abbrechen",
   "取消星标": "Markierung entfernen",
@@ -2596,6 +2601,7 @@
   "导出范围": "Exportbereich",
   "导出资产包": "Asset-Paket exportieren",
   "导出资产包（.nxbm）": "Asset-Paket exportieren (.nxbm)",
+  "导出进度": "Exportfortschritt",
   "导航": "Navigation",
   "将 SSH 资产的远程目录挂载到本地，作为本地磁盘访问": "Das Remote-Verzeichnis eines SSH-Assets lokal einbinden und wie einen lokalen Datenträger verwenden",
   "将 {value} 固定为 baseline": "{value} als Baseline festlegen",
@@ -2806,6 +2812,7 @@
   "已取消保存远程文件": "Speichern der Remotedateien abgebrochen",
   "已取消只读：{path}": "Schreibschutz aufgehoben: {path}",
   "已取消填写变量，未开始执行": "Ausfüllen der Variablen abgebrochen, Ausführung nicht gestartet",
+  "已取消导出，未保存文件": "Export abgebrochen, keine Datei gespeichert",
   "已取消接管": "Übernahme abgebrochen",
   "已取消生产广播，待确认输入未发送": "Produktions-Broadcast abgebrochen, die zu bestätigende Eingabe wurde nicht gesendet",
   "已取消生产确认；已完成目标保留在结果中，后续目标未执行": "Produktionsbestätigung abgebrochen; abgeschlossene Ziele bleiben in den Ergebnissen, nachfolgende Ziele wurden nicht ausgeführt",
@@ -3254,6 +3261,7 @@
   "当前项目暂无打开的工作区。切换项目不会断开其他工作区。": "Im aktuellen Projekt ist kein Arbeitsbereich geöffnet. Das Wechseln des Projekts trennt andere Arbeitsbereiche nicht.",
   "当前项目的主机状态 · 只读 · 手动刷新": "Hoststatus des aktuellen Projekts · schreibgeschützt · manuelle Aktualisierung",
   "当前项目（不可用）": "Aktuelles Projekt (nicht verfügbar)",
+  "录像 {done} / {total}": "Aufzeichnungen {done} / {total}",
   "录像和纯文本": "Aufzeichnungen und Nur Text",
   "录制": "Aufzeichnen",
   "录制中": "Aufzeichnung läuft",
@@ -3957,6 +3965,7 @@
   "无法加载正则表达式引擎，未执行「{name}」：{value}": "Die Engine für reguläre Ausdrücke konnte nicht geladen werden; „{name}“ wurde nicht ausgeführt: {value}",
   "无法加载正则表达式引擎：{value}": "Die Engine für reguläre Ausdrücke konnte nicht geladen werden: {value}",
   "无法加载资产列表，最近连接暂不可用。": "Die Asset-Liste konnte nicht geladen werden, zuletzt verwendete Verbindungen sind vorerst nicht verfügbar.",
+  "无法取消导出：{value}": "Export konnte nicht abgebrochen werden: {value}",
   "无法启动 trzsz 文件传输：{value}": "trzsz-Dateiübertragung konnte nicht gestartet werden: {value}",
   "无法启动规则：{value}": "Regel konnte nicht gestartet werden: {value}",
   "无法在应用内打开：{reason}": "Öffnen in der App nicht möglich: {reason}",
@@ -4872,6 +4881,7 @@
   "正在安装…": "Wird installiert …",
   "正在导入…": "Wird importiert …",
   "正在导出…": "Wird exportiert …",
+  "正在导出：{name}": "Wird exportiert: {name}",
   "正在建立快速跳转索引 {indexPercent}%": "Index für schnelles Springen wird erstellt: {indexPercent} %",
   "正在开启调试模式…": "Debug-Modus wird aktiviert …",
   "正在录制": "Aufzeichnung läuft",

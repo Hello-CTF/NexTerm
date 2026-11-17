@@ -364,9 +364,9 @@
     "other": "Layout with {count} panes"
   },
   "{count} 条": "{count} items",
-  "{count} 条仍在录制": {
-    "one": "{count} still recording",
-    "other": "{count} still recording"
+  "{count} 条仍在录制，将导出到开始导出时为止": {
+    "one": "{count} still recording; exported up to when the export started",
+    "other": "{count} still recording; exported up to when the export started"
   },
   "{count} 条只同步了元数据，没有内容": {
     "one": "{count} with only synced metadata and no content",
@@ -385,6 +385,7 @@
   "{detail}（已执行，但审计记录写入失败：{auditError}）": "{detail} (executed, but writing the audit record failed: {auditError})",
   "{deviceName} · {rule}告警": "{deviceName} · {rule} alert",
   "{deviceName} · {rule}已恢复": "{deviceName} · {rule} recovered",
+  "{done} / {total} 条记录": "{done} / {total} records",
   "{d} 天 {h} 小时": "{d}d {h}h",
   "{d}天{h}小时": "{d}d {h}h",
   "{entryCount} 条": {
@@ -405,7 +406,6 @@
   "{failed} 个标签页未能关闭，已保留并在标签页上标出原因": "{failed} tabs could not be closed; they were kept and the reason is shown on each tab",
   "{failed} 个终端未能重新接管：{value}": "{failed} terminals could not be taken over again: {value}",
   "{failed}/{length} 个终端结束失败": "{failed}/{length} terminals failed to end",
-  "{first}，{second}": "{first}, {second}",
   "{floor} 分钟前": "{floor} min ago",
   "{floor} 分钟前有输出": "Output {floor} min ago",
   "{floor} 天": "{floor} days",
@@ -707,6 +707,10 @@
   "。{count} 个录像的部分时间戳缺失，已按固定间隔估算": {
     "one": ". Some timestamps of {count} recording are missing and were estimated at a fixed interval",
     "other": ". Some timestamps of {count} recordings are missing and were estimated at a fixed interval"
+  },
+  "。{count} 条仍在录制，只导出到开始导出时": {
+    "one": ". {count} still recording, exported only up to when the export started",
+    "other": ". {count} still recording, exported only up to when the export started"
   },
   "。{count} 段全屏程序（如 vim、top）的画面不在文本中": {
     "one": ". {count} full-screen program session (such as vim or top) is not in the text",
@@ -1905,6 +1909,7 @@
   "取消失败：": "Cancel failed:",
   "取消失败：{value}": "Cancel failed: {value}",
   "取消对比": "Cancel comparison",
+  "取消导出": "Cancel export",
   "取消执行": "Cancel run",
   "取消执行「{name}」": "Cancel running “{name}”",
   "取消星标": "Unstar",
@@ -2602,6 +2607,7 @@
   "导出范围": "Export scope",
   "导出资产包": "Export asset bundle",
   "导出资产包（.nxbm）": "Export asset bundle (.nxbm)",
+  "导出进度": "Export progress",
   "导航": "Navigation",
   "将 SSH 资产的远程目录挂载到本地，作为本地磁盘访问": "Mount the remote directory of an SSH asset locally and access it as a local disk",
   "将 {value} 固定为 baseline": "Pin {value} as baseline",
@@ -2812,6 +2818,7 @@
   "已取消保存远程文件": "Saving remote files cancelled",
   "已取消只读：{path}": "Read-only cleared: {path}",
   "已取消填写变量，未开始执行": "Variable entry canceled; nothing was run",
+  "已取消导出，未保存文件": "Export cancelled; no file was saved",
   "已取消接管": "Take over canceled",
   "已取消生产广播，待确认输入未发送": "Production broadcast canceled; the pending input was not sent",
   "已取消生产确认；已完成目标保留在结果中，后续目标未执行": "Production confirmation canceled; completed targets are kept in the results, and later targets were not run",
@@ -3263,6 +3270,7 @@
   "当前项目暂无打开的工作区。切换项目不会断开其他工作区。": "No open workspaces in the current project. Switching projects does not disconnect other workspaces.",
   "当前项目的主机状态 · 只读 · 手动刷新": "Host status of the current project · read-only · refresh manually",
   "当前项目（不可用）": "Current project (unavailable)",
+  "录像 {done} / {total}": "Recordings {done} / {total}",
   "录像和纯文本": "Recordings and plain text",
   "录制": "Record",
   "录制中": "Recording",
@@ -3969,6 +3977,7 @@
   "无法加载正则表达式引擎，未执行「{name}」：{value}": "Could not load the regular expression engine; “{name}” was not run: {value}",
   "无法加载正则表达式引擎：{value}": "Could not load the regular expression engine: {value}",
   "无法加载资产列表，最近连接暂不可用。": "Cannot load the asset list, so recent connections are unavailable.",
+  "无法取消导出：{value}": "Could not cancel the export: {value}",
   "无法启动 trzsz 文件传输：{value}": "Could not start the trzsz file transfer: {value}",
   "无法启动规则：{value}": "Cannot start rule: {value}",
   "无法在应用内打开：{reason}": "Cannot open in the app: {reason}",
@@ -4872,6 +4881,7 @@
   "正在安装…": "Installing…",
   "正在导入…": "Importing…",
   "正在导出…": "Exporting…",
+  "正在导出：{name}": "Exporting: {name}",
   "正在建立快速跳转索引 {indexPercent}%": "Building quick-jump index {indexPercent}%",
   "正在开启调试模式…": "Turning on debug mode…",
   "正在录制": "Recording",
