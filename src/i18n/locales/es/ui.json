@@ -1482,6 +1482,7 @@
   "其他会话需要处理时弹出系统通知，单击可跳转。": "Mostrar una notificación del sistema cuando otras sesiones requieran atención; haz clic para ir a ellas.",
   "其他已授权主机": "Otros hosts autorizados",
   "其他窗口或设备": "Otras ventanas o dispositivos",
+  "其他设备正在使用此终端的尺寸，本机已停止自动调整尺寸": "Otro dispositivo está usando el tamaño de esta terminal; este dispositivo dejó de ajustarlo automáticamente",
   "其他设备的定时任务（仅在所属设备上运行）": "Tareas programadas de otros dispositivos (solo se ejecutan en el dispositivo al que pertenecen)",
   "兼容性未知，不能推断可安全继续。": "Compatibilidad desconocida; no se puede deducir que sea seguro continuar.",
   "兼容性：": "Compatibilidad:",
