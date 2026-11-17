@@ -1450,3 +1450,15 @@ func TestWinRMExecLineFileOperationsPreserveCWD(t *testing.T) {
 		}
 	}
 }
+
+func TestFSIPCErrorKeepsUnsupportedDetail(t *testing.T) {
+	err := fsIPCError("device", fmt.Errorf("%w: 设备代理版本过旧，不支持读取文件信息，请在设备上升级设备代理后重试", base.ErrUnsupported))
+	var appErr *ipc.Error
+	if !errors.As(err, &appErr) || appErr.Code != ipc.CodeUnsupported || appErr.Message != "设备代理版本过旧，不支持读取文件信息，请在设备上升级设备代理后重试" {
+		t.Fatalf("fsIPCError = %#v", err)
+	}
+	err = fsIPCError("device", base.ErrUnsupported)
+	if !errors.As(err, &appErr) || appErr.Code != ipc.CodeUnsupported || appErr.Message == "" {
+		t.Fatalf("fsIPCError(bare) = %#v", err)
+	}
+}

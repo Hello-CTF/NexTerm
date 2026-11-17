@@ -595,10 +595,16 @@ type fileModeProvider interface {
 func TargetMode(ctx context.Context, destination base.FileSystem, remotePath string) (fs.FileMode, error) {
 	if provider, ok := destination.(fileModeProvider); ok {
 		mode, err := provider.FileMode(ctx, remotePath)
-		if errors.Is(err, fs.ErrNotExist) {
+		switch {
+		case err == nil:
+			return mode.Perm(), nil
+		case errors.Is(err, fs.ErrNotExist):
 			return DefaultUploadMode, nil
+		case !errors.Is(err, base.ErrUnsupported):
+			return 0, err
 		}
-		return mode.Perm(), err
+		// A server that predates the stat request, such as an older device
+		// agent, still answers a listing of the parent.
 	}
 	parent := parentDir(remotePath)
 	if parent == "" {

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -838,6 +839,10 @@ func fsIPCError(transportKind string, err error) error {
 	if errors.Is(err, fs.ErrPermission) {
 		return ipc.WrapError(ipc.CodeForbidden, err.Error(), err).WithDetail(map[string]any{"resource": "path", "reason": "permission_denied"})
 	}
+	if detail, ok := unsupportedDetail(err); ok {
+		// The generic session wording would hide what is missing and what to upgrade.
+		return ipc.WrapError(ipc.CodeUnsupported, detail, err)
+	}
 	classified := terminalIPCError(err)
 	if errors.Is(err, session.ErrSessionNotFound) || errors.Is(err, session.ErrSessionClosed) || errors.Is(err, session.ErrDisconnected) || errors.Is(err, base.ErrDisconnected) {
 		var appErr *ipc.Error
@@ -909,4 +914,18 @@ func exportLogMaxBytes(requested int, limit int64) int {
 		return int(limit)
 	}
 	return requested
+}
+
+// unsupportedDetail returns the explanation a filesystem attached to
+// base.ErrUnsupported, such as which component to upgrade.
+func unsupportedDetail(err error) (string, bool) {
+	var appErr *ipc.Error
+	if errors.As(err, &appErr) || !errors.Is(err, base.ErrUnsupported) {
+		return "", false
+	}
+	detail, ok := strings.CutPrefix(err.Error(), base.ErrUnsupported.Error()+": ")
+	if !ok || strings.TrimSpace(detail) == "" {
+		return "", false
+	}
+	return detail, true
 }
