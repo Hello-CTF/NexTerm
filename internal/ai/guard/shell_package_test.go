@@ -23,6 +23,9 @@ func TestPackageManagerReadAndMutationClassification(t *testing.T) {
 		{command: "brew search ripgrep", risk: Safe, kind: KindNone},
 		{command: "brew info ripgrep", risk: Safe, kind: KindNone},
 		{command: "brew --version", risk: Safe, kind: KindNone},
+		{command: "brew outdated", risk: Safe, kind: KindNone},
+		{command: "brew update", risk: NeedsConfirm, kind: KindPackage},
+		{command: "brew update && brew outdated", risk: NeedsConfirm, kind: KindPackage},
 		{command: "brew install ripgrep", risk: NeedsConfirm, kind: KindPackage},
 		{command: "brew uninstall ripgrep", risk: NeedsConfirm, kind: KindPackage},
 		{command: "winget list --name Git", risk: Safe, kind: KindNone},
@@ -39,6 +42,21 @@ func TestPackageManagerReadAndMutationClassification(t *testing.T) {
 				t.Fatalf("ClassifyCommand(%q) = %+v, want risk=%s kind=%q", test.command, ruling, test.risk, test.kind)
 			}
 		})
+	}
+}
+
+func TestUnparsableCommandKeepsParserDetailOutOfTheReason(t *testing.T) {
+	t.Parallel()
+	ruling := ClassifyCommand("┌──(user㉿kali)-[~]└─$brew update", nil)
+	if ruling.Risk != Unknowable || ruling.Reason != UnparsableCommandReason {
+		t.Fatalf("ruling = %+v", ruling)
+	}
+	if ruling.Detail == "" {
+		t.Fatal("parser detail dropped")
+	}
+	keys := ClassifySendKeys("echo 'unterminated", true, nil)
+	if keys.Risk != Unknowable || keys.Reason != UnparsableCommandReason || keys.Detail == "" {
+		t.Fatalf("send_keys ruling = %+v", keys)
 	}
 }
 

@@ -39,6 +39,11 @@ type classifier struct {
 	nodes *int
 }
 
+// UnparsableCommandReason is the reason given when the shell parser rejects
+// a command: what would run cannot be determined, so the user decides. The
+// parser's message is kept in Ruling.Detail.
+const UnparsableCommandReason = "命令语法无法解析，无法判断会执行什么"
+
 func ClassifyCommand(command string, rules []string) Ruling {
 	nodes := 0
 	return classifyCommandText(command, rules, 0, &nodes)
@@ -57,7 +62,9 @@ func classifyCommandText(command string, rules []string, depth int, nodes *int) 
 	}
 	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
 	if err != nil {
-		return Worst(result, Indeterminate("命令无法可靠解析: "+err.Error()))
+		unparsed := Indeterminate(UnparsableCommandReason)
+		unparsed.Detail = err.Error()
+		return Worst(result, unparsed)
 	}
 	c := &classifier{rules: rules, depth: depth, nodes: nodes}
 	defer func() {
@@ -1906,7 +1913,7 @@ func classifyService(name string, args []string) Ruling {
 func classifyPackage(args []string) Ruling {
 	if len(args) > 0 {
 		switch args[0] {
-		case "list", "search", "info", "show", "--version", "version":
+		case "list", "search", "info", "show", "outdated", "--version", "version":
 			return Allow()
 		}
 	}

@@ -7,9 +7,9 @@ import { AgentToolCard } from "../AgentToolCard";
 import { type EnvironmentConfirmationChallenge, evaluateEnvironmentConfirmation, isManagedDeviceEnvironment, MANAGED_DEVICE_ENVIRONMENT_HINT, targetKey, environmentDisplayLabel } from "../../production/environmentConfirmation";
 import { simpleDiff, hasVisibleChange, diffLineText } from "../diff";
 import { toolLabel, extractUrls, splitUserRefs } from "./aiSidebarShared";
-import { resolutionLabel, TOOL_USER_DENIED } from "./aiConfirmLabels";
+import { confirmCommandText, resolutionLabel, TOOL_USER_DENIED } from "./aiConfirmLabels";
 import { type ToolGroup, toolGroupSummary, toolGroupFailedText } from "../toolGroups";
-import { t } from "../../../i18n";
+import { t, translateMessage } from "../../../i18n";
 
 
 export const ChatBubble = memo(function ChatBubble({
@@ -455,6 +455,23 @@ function PlanBubble({
   );
 }
 
+// The one sentence saying why the call needs the user, in the interface language. Technical context such as a parser
+// error stays behind a disclosure so it never replaces that sentence.
+function ConfirmReason({ card }: { card: ConfirmItem }) {
+  if (!card.reason && !card.reasonDetail) return null;
+  return (
+    <div className="mb-1.5 text-[10.5px] leading-relaxed text-[var(--nx-fg-warning)]">
+      {card.reason ? <div>{translateMessage(card.reason)}</div> : null}
+      {card.reasonDetail ? (
+        <details className="mt-0.5">
+          <summary className="cursor-pointer text-[var(--nx-fg-tertiary)] hover:text-neutral-400">{t("详情")}</summary>
+          <pre className="mt-0.5 whitespace-pre-wrap break-all font-mono text-neutral-500">{card.reasonDetail}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 export function ConfirmBody({ card }: { card: ConfirmItem }) {
   const pv = card.preview;
   const urls = extractUrls([...(card.commands ?? []), card.rendered].join("\n"));
@@ -478,26 +495,18 @@ export function ConfirmBody({ card }: { card: ConfirmItem }) {
           ))}
         </div>
         {urlBlock}
-        {card.reason ? (
-          <div className="mb-1.5 text-[10.5px] leading-relaxed text-[var(--nx-fg-warning)]">
-            {card.reason}
-          </div>
-        ) : null}
+        <ConfirmReason card={card} />
       </>
     );
   }
   if (!pv) {
     return (
       <>
-        <pre className="mb-1.5 max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-neutral-200">
-          {card.rendered}
+        <pre className="mb-1.5 max-h-28 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-neutral-200">
+          {confirmCommandText(card.tool, card.rendered)}
         </pre>
         {urlBlock}
-        {card.reason ? (
-          <div className="mb-1.5 text-[10.5px] leading-relaxed text-[var(--nx-fg-warning)]">
-            {card.reason}
-          </div>
-        ) : null}
+        <ConfirmReason card={card} />
       </>
     );
   }
@@ -515,11 +524,7 @@ export function ConfirmBody({ card }: { card: ConfirmItem }) {
         <DiffLines before={pv.before} after={pv.after} />
       </div>
       {urlBlock}
-      {card.reason ? (
-        <div className="mb-1.5 text-[10.5px] leading-relaxed text-[var(--nx-fg-warning)]">
-          {card.reason}
-        </div>
-      ) : null}
+      <ConfirmReason card={card} />
       <details className="mb-2">
         <summary className="cursor-pointer text-[10.5px] text-[var(--nx-fg-tertiary)] hover:text-neutral-400">
           {t("查看原始参数")}

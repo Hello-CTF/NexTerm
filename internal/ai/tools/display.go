@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -43,12 +44,23 @@ func DisplayCall(call Call) string {
 	display := call.Name
 	for _, key := range []string{"commands", "keys", "path", "container_id", "cmd", "action", "sql", "pattern", "question", "plan", "message"} {
 		if value, ok := fields[key]; ok {
-			encoded, _ := json.Marshal(value)
-			display += " " + string(encoded)
+			display += " " + displayValue(value)
 			break
 		}
 	}
 	return compactDisplay(display)
+}
+
+// displayValue renders an argument as JSON without HTML escaping, so a
+// command such as "a && b" reads as typed rather than as "a && b".
+func displayValue(value any) string {
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return ""
+	}
+	return strings.TrimSuffix(out.String(), "\n")
 }
 
 func compactDisplay(display string) string {

@@ -31,9 +31,11 @@ type Event struct {
 	Risk      string
 	Rendered  string
 	Reason    string
-	Preview   *tools.Preview
-	Question  *tools.Question
-	Terminal  *tools.CreatedTerminal
+	// ReasonDetail is the technical context of a confirmation's reason.
+	ReasonDetail string
+	Preview      *tools.Preview
+	Question     *tools.Question
+	Terminal     *tools.CreatedTerminal
 	// Handle is the permanent roster handle of the tool call's actual target
 	// tab, emitted only when that target verifiably belongs to a live roster
 	// entry; non-roster or unprovable targets omit it (unknown), never a
@@ -111,6 +113,9 @@ func (e Event) MarshalJSON() ([]byte, error) {
 	case "confirmRequired":
 		payload["id"], payload["tool"], payload["args"], payload["risk"] = e.ID, e.Tool, rawObject(e.Args), e.Risk
 		payload["rendered"], payload["reason"], payload["preview"] = e.Rendered, e.Reason, e.Preview
+		if e.ReasonDetail != "" {
+			payload["reasonDetail"] = e.ReasonDetail
+		}
 		if len(e.Commands) != 0 {
 			payload["commands"] = e.Commands
 		}

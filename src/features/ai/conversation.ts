@@ -77,6 +77,9 @@ export type ChatItem =
       tool: string;
       rendered: string;
       reason?: string;
+      // reasonDetail is technical context for reason, such as a shell parser
+      // error; the card shows it only on request.
+      reasonDetail?: string;
       preview?: FilePreviewItem | null;
       nonce: string;
       risk?: string;
@@ -773,6 +776,7 @@ export function applyAiEvent(
             tool: ev.tool as string,
             rendered: ev.rendered as string,
             reason: (ev.reason as string) || "",
+            ...(typeof ev.reasonDetail === "string" && ev.reasonDetail !== "" ? { reasonDetail: ev.reasonDetail } : {}),
             preview: (ev.preview as FilePreviewItem | null) ?? null,
             nonce: confirmationNonceOf(ev),
             risk: typeof ev.risk === "string" ? ev.risk : undefined,

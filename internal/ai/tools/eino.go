@@ -338,6 +338,9 @@ type Interaction struct {
 	Risk     string
 	Rendered string
 	Reason   string
+	// Detail is technical context for Reason (such as a parser error) that
+	// the card shows only on request.
+	Detail   string
 	Preview  *Preview
 	Question *Question
 
@@ -888,8 +891,7 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 	if err := e.Registry.bindExecutionTarget(ctx, e.JobID, e.Scope, &call); err != nil {
 		return Fail(err), nil
 	}
-	terminalInput := ""
-	cursor := 0
+	var terminalInput TerminalInput
 	isolatedTarget := false
 	ruling := guard.ClassifyTool(call.Name, call.Args, e.Permission)
 	if call.Name == "shell_history" {
@@ -939,8 +941,8 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		if err != nil {
 			return Fail(err), nil
 		}
-		terminalInput, cursor = TerminalInputCursor(screen)
-		ruling = guard.Worst(ruling, guard.ClassifySendKeysWithCursor(input.Keys, terminalInput, cursor, input.Enter, e.Permission.DangerRules))
+		terminalInput = ReadTerminalInput(screen)
+		ruling = guard.Worst(ruling, ClassifyTerminalKeys(input.Keys, input.Enter, terminalInput, e.Permission.DangerRules))
 	}
 	memory := e.Memory
 	forcedConfirm := call.Name == "shell_history" && e.Registry.remoteAsset(ctx, e.Scope)
@@ -959,6 +961,7 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 			decision.Action = guard.ActionAsk
 		}
 		ruling.Reason = reason
+		ruling.Detail = ""
 		decision.Ruling.Reason = reason
 		decision.Reason = reason
 	}
@@ -976,9 +979,10 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		resource := resourceForCall(call)
 		rendered := DisplayCall(call)
 		if call.Name == "send_keys" {
-			rendered = DisplaySendKeys(call, terminalInput, cursor)
+			pending, cursor := terminalInput.DisplayInput()
+			rendered = DisplaySendKeys(call, pending, cursor)
 		}
-		info := Interaction{Kind: "confirm", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Risk: ruling.Risk.String(), Rendered: rendered, Reason: ruling.Reason, Preview: preparation.Preview}
+		info := Interaction{Kind: "confirm", CallID: call.ID, Tool: call.Name, Args: string(call.Args), Risk: ruling.Risk.String(), Rendered: rendered, Reason: ruling.Reason, Detail: ruling.Detail, Preview: preparation.Preview}
 		if ruling.Risk == guard.NeedsConfirm && guard.RuleActionSupported(resource.Action) {
 			info.RulePattern = persistentRulePattern(resource)
 			if call.Name == "exec_commands" {
@@ -994,7 +998,7 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		if ruling.Risk == guard.NeedsConfirm && guard.RuleActionSupported(resource.Action) && !forcedConfirm && !isolatedTarget && !decision.Production && e.grantDeviceID(ctx) != "" {
 			info.PermanentScope = guard.PermanentScope(ruling, resource)
 		}
-		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), MemoryPrograms: ruling.Programs, TerminalInput: terminalInput, TerminalCursor: cursor, Info: info, AuthorizationID: GuardAuthorizationID(decision), Authorization: decision.Authorization, Target: call.Target, Resource: resource, IsolatedTarget: isolatedTarget}
+		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), MemoryPrograms: ruling.Programs, TerminalInput: terminalInput.Text, TerminalCursor: terminalInput.Cursor, Info: info, AuthorizationID: GuardAuthorizationID(decision), Authorization: decision.Authorization, Target: call.Target, Resource: resource, IsolatedTarget: isolatedTarget}
 		if forcedConfirm || isolatedTarget {
 			state.MemoryKind = ""
 			state.MemoryKinds = nil

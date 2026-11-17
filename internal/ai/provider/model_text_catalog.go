@@ -790,6 +790,9 @@ var modelStaticText = map[string]string{
 	"（记忆库为空）":    "(memory store is empty)",
 	"ids 不能为空":   "ids cannot be empty",
 
+	"未识别出终端提示符，无法确认当前行已有的文字是否会随回车一起执行；本次发送的按键已单独检查": "no shell prompt was recognized, so it cannot be confirmed whether text already on the current line would run with Enter; the keys sent were checked on their own",
+	"命令语法无法解析，无法判断会执行什么":                            "the command syntax cannot be parsed, so what it would run cannot be determined",
+
 	"命中自定义危险规则":                      "matched a custom danger rule",
 	"SQL 引号或注释未闭合，无法安全分析":            "SQL quotes or comments are unclosed; cannot analyze safely",
 	"空 SQL 或无有效语句":                   "empty SQL or no valid statement",

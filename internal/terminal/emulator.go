@@ -57,14 +57,17 @@ func (e *Emulator) Snapshot() Snapshot {
 	text := e.scr.text()
 	row, col := e.scr.cursor()
 	cols, rows := e.scr.size()
+	prompt, input := e.scr.promptMarks()
 	return Snapshot{
-		Text:      text,
-		Lines:     splitScreenLines(text),
-		CursorRow: row,
-		CursorCol: col,
-		Cols:      cols,
-		Rows:      rows,
-		AltScreen: e.scr.altScreen(),
-		Title:     e.scr.title,
+		Text:        text,
+		Lines:       splitScreenLines(text),
+		CursorRow:   row,
+		CursorCol:   col,
+		Cols:        cols,
+		Rows:        rows,
+		AltScreen:   e.scr.altScreen(),
+		Title:       e.scr.title,
+		PromptStart: prompt,
+		InputStart:  input,
 	}
 }

@@ -53,7 +53,7 @@ func (s *sessionTerminal) Snapshot(ctx context.Context, tabID string) (Screen, e
 		seq = 0
 	}
 	mode, modeErr := s.manager.TerminalModeStateFor(ctx, tabID)
-	return Screen{Text: snapshot.Text, Tail: tail, CursorRow: snapshot.CursorRow, CursorCol: snapshot.CursorCol, Cols: snapshot.Cols, Rows: snapshot.Rows, IdleMS: idle, Seq: seq, AltScreen: snapshot.AltScreen, BracketedPaste: modeErr == nil && mode.BracketedPaste}, nil
+	return Screen{Text: snapshot.Text, Tail: tail, CursorRow: snapshot.CursorRow, CursorCol: snapshot.CursorCol, Cols: snapshot.Cols, Rows: snapshot.Rows, IdleMS: idle, Seq: seq, AltScreen: snapshot.AltScreen, BracketedPaste: modeErr == nil && mode.BracketedPaste, PromptStart: snapshot.PromptStart, InputStart: snapshot.InputStart}, nil
 }
 
 func (s *sessionTerminal) Write(ctx context.Context, tabID string, data []byte) error {
@@ -85,7 +85,7 @@ func (s *sessionTerminal) WaitSnapshot(ctx context.Context, tabID string) (Scree
 	if snapshot.LastOutputMsAgo <= math.MaxInt64 {
 		idle = int64(snapshot.LastOutputMsAgo)
 	}
-	return Screen{Text: snapshot.Text, Tail: tail, CursorRow: snapshot.CursorRow, CursorCol: snapshot.CursorCol, Cols: snapshot.Cols, Rows: snapshot.Rows, IdleMS: idle, Seq: seq, AltScreen: snapshot.AltScreen}, nil
+	return Screen{Text: snapshot.Text, Tail: tail, CursorRow: snapshot.CursorRow, CursorCol: snapshot.CursorCol, Cols: snapshot.Cols, Rows: snapshot.Rows, IdleMS: idle, Seq: seq, AltScreen: snapshot.AltScreen, PromptStart: snapshot.PromptStart, InputStart: snapshot.InputStart}, nil
 }
 
 func (s *sessionTerminal) CommandState(ctx context.Context, tabID string) (CommandState, error) {

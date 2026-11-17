@@ -50,6 +50,18 @@ type Snapshot struct {
 	// Title is the latest OSC 0/2 dynamic window title reported by the
 	// application; it is empty until the application sets one.
 	Title string `json:"title,omitempty"`
+	// PromptStart and InputStart are the visible OSC 133 A and B marks of
+	// the current shell prompt, unset when the shell sent none. They are
+	// backend-only input-boundary hints and are not sent to clients.
+	PromptStart ScreenMark `json:"-"`
+	InputStart  ScreenMark `json:"-"`
+}
+
+// ScreenMark is a cell position on the visible screen.
+type ScreenMark struct {
+	Row int
+	Col int
+	Set bool
 }
 
 type RecordingState string
@@ -741,6 +753,7 @@ func (t *Tab) Snapshot() Snapshot {
 	cols, rows := t.scr.size()
 	alt := t.scr.altScreen()
 	title := t.scr.title
+	prompt, input := t.scr.promptMarks()
 	t.mu.Unlock()
 	return Snapshot{
 		Text:            text,
@@ -752,6 +765,8 @@ func (t *Tab) Snapshot() Snapshot {
 		AltScreen:       alt,
 		LastOutputMsAgo: uint64(t.LastOutputAgo().Milliseconds()),
 		Title:           title,
+		PromptStart:     prompt,
+		InputStart:      input,
 	}
 }
 

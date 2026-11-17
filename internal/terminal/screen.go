@@ -101,6 +101,12 @@ type row struct {
 	cells []cell
 	hi    int
 	marks [][]rune
+	// prompt and input are the cell column plus one at which an OSC 133 A
+	// (prompt start) or B (prompt end, input start) mark was received on
+	// this row; 0 means none. They move with the row when it scrolls and
+	// are dropped when the row is reset.
+	prompt int
+	input  int
 }
 
 func newRow(cols int) *row {
@@ -113,6 +119,8 @@ func (r *row) reset() {
 	clear(r.cells[:min(r.hi, len(r.cells))])
 	r.hi = 0
 	r.marks = r.marks[:0]
+	r.prompt = 0
+	r.input = 0
 }
 
 // combAt returns the combining runes of the cell at index i.
@@ -169,6 +177,8 @@ func (r *row) resize(cols int) {
 	copy(cells, r.cells)
 	r.cells = cells
 	r.hi = min(r.hi, cols)
+	r.prompt = min(r.prompt, cols+1)
+	r.input = min(r.input, cols+1)
 	r.normalizeWide()
 }
 
@@ -325,10 +335,14 @@ func newScreen(cols, rows, history int) *screen {
 	return s
 }
 
-// osc tracks dynamic window titles. OSC 0 sets the icon name and window
-// title; OSC 2 sets the window title. The data still carries the "N;"
-// command prefix.
+// osc tracks dynamic window titles and shell-integration prompt marks.
+// OSC 0 sets the icon name and window title; OSC 2 sets the window title.
+// The data still carries the "N;" command prefix.
 func (s *screen) osc(cmd int, data []byte) {
+	if cmd == 133 {
+		s.promptMark(data)
+		return
+	}
 	if cmd != 0 && cmd != 2 {
 		return
 	}
@@ -337,6 +351,59 @@ func (s *screen) osc(cmd int, data []byte) {
 		return
 	}
 	s.title = strings.ToValidUTF8(string(rest), "�")
+}
+
+// promptMark records where the shell said its prompt starts (OSC 133;A) and
+// where the prompt ends and typed input begins (OSC 133;B), so the input line
+// can be told apart from prompt decoration. C (command output starts) and D
+// (command finished) end the input line and drop both marks.
+func (s *screen) promptMark(data []byte) {
+	_, rest, found := bytes.Cut(data, []byte(";"))
+	if !found || len(rest) == 0 {
+		return
+	}
+	if len(rest) > 1 && rest[1] != ';' {
+		return
+	}
+	col := s.cur.c + 1
+	if s.cur.wrapPending {
+		// The next printed cell lands on the following row; a column past the
+		// row's last cell says the input starts after this row.
+		col = s.cols + 1
+	}
+	switch rest[0] {
+	case 'A':
+		s.clearPromptMarks()
+		s.grid.rows[s.cur.r].prompt = col
+	case 'B':
+		for _, r := range s.grid.rows {
+			r.input = 0
+		}
+		s.grid.rows[s.cur.r].input = col
+	case 'C', 'D':
+		s.clearPromptMarks()
+	}
+}
+
+func (s *screen) clearPromptMarks() {
+	for _, r := range s.grid.rows {
+		r.prompt = 0
+		r.input = 0
+	}
+}
+
+// promptMarks returns the prompt-start and input-start marks still visible
+// on the grid.
+func (s *screen) promptMarks() (prompt, input ScreenMark) {
+	for index, r := range s.grid.rows {
+		if r.prompt > 0 {
+			prompt = ScreenMark{Row: index, Col: r.prompt - 1, Set: true}
+		}
+		if r.input > 0 {
+			input = ScreenMark{Row: index, Col: r.input - 1, Set: true}
+		}
+	}
+	return prompt, input
 }
 
 func (s *screen) write(p []byte) {

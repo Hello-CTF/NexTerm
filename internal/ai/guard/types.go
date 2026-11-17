@@ -74,6 +74,9 @@ type Ruling struct {
 	Kinds    []Kind   `json:"kinds,omitempty"`
 	Programs []string `json:"programs,omitempty"`
 	Reason   string   `json:"reason"`
+	// Detail is optional technical context for Reason, such as the shell
+	// parser's error; Reason stays a plain sentence a user can act on.
+	Detail string `json:"detail,omitempty"`
 	// CustomRule marks a hit on the user's own interception rules, which keep
 	// asking even in full access mode.
 	CustomRule bool `json:"customRule,omitempty"`

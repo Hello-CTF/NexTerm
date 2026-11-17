@@ -49,6 +49,13 @@ export function confirmTitle(risk: string | undefined): string {
   return t("需要你确认");
 }
 
+// confirmCommandText is what the approval card shows as the action: the rendered call without the tool name the card
+// already names in its badge, so "send_keys brew update && brew outdated <enter>" reads as the keys themselves.
+export function confirmCommandText(tool: string, rendered: string): string {
+  const prefix = `${tool} `;
+  return tool && rendered.startsWith(prefix) ? rendered.slice(prefix.length) : rendered;
+}
+
 export function toolLabel(tool: string): string {
   switch (tool) {
     case "exec_commands":

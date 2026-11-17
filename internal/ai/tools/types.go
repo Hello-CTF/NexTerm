@@ -14,6 +14,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/db"
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -282,6 +283,10 @@ type Screen struct {
 	Seq            uint64
 	AltScreen      bool
 	BracketedPaste bool
+	// PromptStart and InputStart are the shell-integration (OSC 133 A/B)
+	// marks of the current prompt, when the shell sent them.
+	PromptStart terminal.ScreenMark
+	InputStart  terminal.ScreenMark
 }
 
 type Container struct {

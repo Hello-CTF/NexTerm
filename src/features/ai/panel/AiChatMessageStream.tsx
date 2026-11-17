@@ -7,6 +7,7 @@ import { CONFIRM_ACTION_LABELS, CONFIRM_ALWAYS_BLOCK_LABEL } from "./aiConfirmLa
 import { ChatBubble, ConfirmBody, ProductionEnvironmentChallenge, ToolGroupSummary } from "./AiMessageBubbles";
 import { type ToolGroup, groupToolRuns, pendingConfirmCallIds, toolNeedsAttention } from "../toolGroups";
 import type { AiChatCtx } from "./aiChatCtx";
+import type { ChatItem, ConfirmItem } from "../conversation";
 import { continuableOutcomeId, useContinueRun } from "./continueRun";
 import { t as tr } from "../../../i18n";
 
@@ -36,6 +37,16 @@ function NoModelHint({ onConfigure }: { onConfigure: () => void }) {
       </button>
     </div>
   );
+}
+
+// While the approval card is open it is the only place a pending call appears: the card names the tool, shows the
+// action and the reason, and holds the decision. The call's own bubble and its "waiting" record return once the card
+// is resolved, carrying the result and the decision. A roster agent's tool card holds its own approval actions, so it
+// stays.
+function shownByConfirmCard(item: ChatItem, card: ConfirmItem | null): boolean {
+  if (!card) return false;
+  if (item.role === "confirm") return item.id === card.id;
+  return item.role === "tool" && card.callId !== "" && item.callId === card.callId && item.attempt === card.attempt && item.summary === undefined;
 }
 
 export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
@@ -114,10 +125,12 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
             const group = groupAt.get(index);
             const expanded = group ? expandedGroups.has(group.key) : true;
             const showSummary = group !== undefined && index === group.start;
+            const agentToolCall = item.role === "tool" ? agentToolCallFor(item) : null;
             const showItem =
-              expanded ||
-              index === activeMatchIndex ||
-              (item.role === "tool" && toolNeedsAttention(item, pendingConfirms));
+              !(agentToolCall === null && shownByConfirmCard(item, confirmCard)) &&
+              (expanded ||
+                index === activeMatchIndex ||
+                (item.role === "tool" && toolNeedsAttention(item, pendingConfirms)));
             if (!showItem && !showSummary) {
               return (
                 <div
@@ -137,7 +150,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                 onRetry={handleRetryRun}
                 onContinue={!busy && item.id === continuableId ? continueRun : undefined}
                 onEdit={handleEditResend}
-                agentToolCall={item.role === "tool" ? agentToolCallFor(item) : null}
+                agentToolCall={agentToolCall}
                 onAgentApproval={submitAgentApproval}
                 agentApprovalBusy={submittingCardId !== null}
               />
