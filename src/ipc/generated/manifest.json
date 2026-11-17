@@ -2369,6 +2369,12 @@
       "channel": false,
       "stream": "none"
     },
+    "transcript_export_archive": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "transcript_export_cast": {
       "scope": "transcript",
       "nested": false,

@@ -103,20 +103,24 @@ func (s *terminalCommandService) exportTranscriptText(ctx context.Context, input
 // transcriptTextLocation resolves the viewer's zone. Only browser mode sends one; the server binary embeds the zone database
 // (cmd/nexterm-server), and a zone this build cannot load falls back to the reported offset.
 func transcriptTextLocation(input transcriptExportTextRequest) (*time.Location, error) {
-	if input.TimeZone != "" && len(input.TimeZone) <= maxTimeZoneNameBytes {
-		if location, err := time.LoadLocation(input.TimeZone); err == nil {
+	return viewerLocation(input.TimeZone, input.UTCOffsetMinutes)
+}
+
+func viewerLocation(timeZone string, utcOffsetMinutes *int) (*time.Location, error) {
+	if timeZone != "" && len(timeZone) <= maxTimeZoneNameBytes {
+		if location, err := time.LoadLocation(timeZone); err == nil {
 			return location, nil
 		}
 	}
-	if input.UTCOffsetMinutes != nil {
-		offset := *input.UTCOffsetMinutes
+	if utcOffsetMinutes != nil {
+		offset := *utcOffsetMinutes
 		if offset < -maxUTCOffsetMinutes || offset > maxUTCOffsetMinutes {
 			return nil, ipc.BadParam(errors.New("时区偏移超出范围"))
 		}
 		return termtext.FixedOffset(offset), nil
 	}
-	if input.TimeZone != "" {
-		return nil, ipc.BadParam(fmt.Errorf("无法识别时区：%s", truncateForError(input.TimeZone)))
+	if timeZone != "" {
+		return nil, ipc.BadParam(fmt.Errorf("无法识别时区：%s", truncateForError(timeZone)))
 	}
 	return time.Local, nil
 }

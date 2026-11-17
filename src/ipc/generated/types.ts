@@ -3607,6 +3607,11 @@ export type TerminalWriteRequest = {
   broadcast?: TerminalBroadcastWriteOptions | null;
 };
 
+export type TranscriptArchiveSkipped = {
+  contentOmitted: number;
+  active: number;
+};
+
 export type TranscriptChunkDTO = {
   seq: number;
   tabId: string;
@@ -3617,6 +3622,32 @@ export type TranscriptChunkDTO = {
 
 export type TranscriptCutoffRequest = {
   endedBefore: number;
+};
+
+export type TranscriptExportArchiveRequest = {
+  path?: string;
+  format?: string;
+  assetId?: string;
+  startedFrom?: number;
+  startedBefore?: number;
+  starredOnly?: boolean;
+  content?: string;
+  timestamps?: boolean;
+  timeZone?: string;
+  utcOffsetMinutes?: number | null;
+  dryRun?: boolean;
+};
+
+export type TranscriptExportArchiveResult = {
+  path: string;
+  matched: number;
+  exported: number;
+  skipped: TranscriptArchiveSkipped;
+  files: number;
+  bytes: number;
+  estimatedBytes: number;
+  fullScreenSegments: number;
+  timingEstimated: number;
 };
 
 export type TranscriptExportCastRequest = {

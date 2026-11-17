@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   transcriptExportCast: vi.fn(),
   transcriptExportText: vi.fn(),
   transcriptStar: vi.fn(),
+  transcriptExportArchive: vi.fn(),
+  addTab: vi.fn(),
   pickSavePath: vi.fn(),
   finishSave: vi.fn(),
   ask: vi.fn(),
@@ -36,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   uiState: {
     pushToast: null as unknown,
     updateTab: null as unknown,
+    addTab: null as unknown,
     workspaces: [] as { id: string; assetId?: string }[],
     activeWorkspaceId: null as string | null,
   },
@@ -53,6 +56,7 @@ vi.mock("../../ipc/commands", () => ({
     exportCast: mocks.transcriptExportCast,
     exportText: mocks.transcriptExportText,
     star: mocks.transcriptStar,
+    exportArchive: mocks.transcriptExportArchive,
   },
   sessionApi: {},
   terminalApi: {},
@@ -72,6 +76,7 @@ vi.mock("../../ui/clipboard", () => ({ copyText: mocks.copyText }));
 vi.mock("../../app/store", () => {
   mocks.uiState.pushToast = mocks.toast;
   mocks.uiState.updateTab = mocks.updateTab;
+  mocks.uiState.addTab = mocks.addTab;
   const useUi = (selector: (state: typeof mocks.uiState) => unknown) => selector(mocks.uiState);
   useUi.getState = () => mocks.uiState;
   return { useUi };
@@ -789,6 +794,12 @@ describe("TranscriptHistoryPanel asciicast export", () => {
     await waitFor(() => expect(mocks.finishSave).toHaveBeenCalled());
     const name = mocks.pickSavePath.mock.calls[0][0] as string;
     expect(name).toMatch(/\.cast$/);
+    // The name carries the local start time and the end of the transcript id, so each transcript saves under its own name.
+    const started = new Date(summary().startedAt);
+    const pad = (value: number) => String(value).padStart(2, "0");
+    const stamp = `${started.getFullYear()}-${pad(started.getMonth() + 1)}-${pad(started.getDate())}-` +
+      `${pad(started.getHours())}${pad(started.getMinutes())}${pad(started.getSeconds())}`;
+    expect(name).toBe(`当前设备-${stamp}-000001.cast`);
     expect(name).not.toMatch(/[\\/:*?"<>|]/);
     expect(mocks.transcriptExportCast).toHaveBeenCalledWith(summary().id, "/tmp/out.cast");
     expect(mocks.finishSave).toHaveBeenCalledWith("/tmp/out.cast", name);
@@ -860,7 +871,7 @@ describe("TranscriptHistoryPanel text export", () => {
     click(menuItem("纯文本")!);
     await waitFor(() => expect(mocks.finishSave).toHaveBeenCalled());
     const name = mocks.pickSavePath.mock.calls[0][0] as string;
-    expect(name).toMatch(/\.txt$/);
+    expect(name).toMatch(/-000001\.txt$/);
     expect(name).not.toMatch(/[\\/:*?"<>|]/);
     expect(mocks.transcriptExportText).toHaveBeenCalledWith(summary().id, "/tmp/out.txt", {
       timestamps: false,
@@ -1114,5 +1125,113 @@ describe("transcriptText", () => {
     expect(text).toBe("plain");
     text += decoder.flush();
     expect(text).toBe("plain");
+  });
+});
+
+describe("TranscriptHistoryPanel batch export and global history", () => {
+  const archiveResult = (overrides: Record<string, unknown> = {}) => ({
+    path: "",
+    matched: 4,
+    exported: 2,
+    skipped: { contentOmitted: 1, active: 1 },
+    files: 2,
+    bytes: 0,
+    estimatedBytes: 2048,
+    fullScreenSegments: 0,
+    timingEstimated: 0,
+    ...overrides,
+  });
+  const dialog = () => document.querySelector<HTMLElement>('[data-testid="transcript-archive-dialog"]');
+  const button = (scope: ParentNode, text: string) =>
+    Array.from(scope.querySelectorAll<HTMLButtonElement>("button")).find((candidate) => candidate.textContent?.trim() === text);
+  const lastDryRun = () => {
+    const calls = mocks.transcriptExportArchive.mock.calls.filter(([request]) => request.dryRun);
+    return calls[calls.length - 1]?.[0] as Record<string, unknown> | undefined;
+  };
+
+  async function openDialog(props: Record<string, unknown>) {
+    mocks.transcriptList.mockResolvedValue([summary()]);
+    mounted = mount(createElement(TranscriptHistoryPanel, { workspaceId: "ws-1", assetId: ASSET.id, ...props }));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
+    click(button(mounted.container, "批量导出")!);
+    await flushUntil(() => (dialog()?.textContent ?? "").includes("匹配 4 条记录"));
+  }
+
+  beforeEach(() => {
+    mocks.transcriptExportArchive.mockImplementation(async (request: { dryRun?: boolean }) =>
+      archiveResult(request.dryRun ? {} : { path: "/tmp/history.zip", bytes: 900 }),
+    );
+  });
+
+  it("opens the global history with this host from a host workspace tab", async () => {
+    mounted = mount(createElement(TranscriptHistoryPanel, { workspaceId: "ws-1", assetId: ASSET.id, fixedHost: true }));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("该主机暂无终端历史"));
+    const jump = button(mounted.container, "全部历史")!;
+    expect(jump.title).toContain("工具工作区");
+    click(jump);
+    expect(mocks.addTab).toHaveBeenCalledWith(expect.objectContaining({ id: "history", kind: "history", assetId: ASSET.id, closable: true }));
+  });
+
+  it("does not offer the global history button in the global tab", async () => {
+    mounted = mount(createElement(TranscriptHistoryPanel, { workspaceId: "ws-tools", assetId: ASSET.id }));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("该主机暂无终端历史"));
+    expect(button(mounted.container, "全部历史")).toBeUndefined();
+  });
+
+  it("offers all hosts only in the global tab and counts the selected host by default", async () => {
+    await openDialog({});
+    expect(dialog()!.querySelector('button[aria-label="导出范围"]')).not.toBeNull();
+    expect(lastDryRun()).toMatchObject({ assetId: ASSET.id, format: "zip", content: "cast", dryRun: true });
+    chooseSelectOption(document.body, "导出范围", "全部主机");
+    await waitFor(() => expect(lastDryRun()).not.toHaveProperty("assetId"));
+    mounted!.unmount();
+    mounted = undefined;
+    document.body.replaceChildren();
+    await openDialog({ fixedHost: true });
+    expect(dialog()!.querySelector('button[aria-label="导出范围"]')).toBeNull();
+    expect(lastDryRun()).toMatchObject({ assetId: ASSET.id });
+  });
+
+  it("sets the range from the quick picks and shows what will be skipped", async () => {
+    await openDialog({ fixedHost: true });
+    expect(dialog()!.textContent).toContain("将跳过 2 条");
+    click(button(dialog()!, "最近 30 天")!);
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
+    const pad = (value: number) => String(value).padStart(2, "0");
+    const fromInput = dialog()!.querySelector<HTMLInputElement>('input[aria-label="开始日期"]')!;
+    expect(fromInput.value).toBe(`${from.getFullYear()}-${pad(from.getMonth() + 1)}-${pad(from.getDate())}`);
+    await waitFor(() => expect(lastDryRun()).toMatchObject({
+      startedFrom: from.getTime(),
+      startedBefore: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime(),
+    }));
+    click(button(dialog()!, "全部")!);
+    await waitFor(() => {
+      expect(lastDryRun()).not.toHaveProperty("startedFrom");
+      expect(lastDryRun()).not.toHaveProperty("startedBefore");
+    });
+    expect(fromInput.value).toBe("");
+  });
+
+  it("exports the archive and reports the skipped transcripts", async () => {
+    mocks.pickSavePath.mockResolvedValue("/tmp/history.zip");
+    mocks.finishSave.mockResolvedValue("/tmp/history.zip");
+    await openDialog({ fixedHost: true });
+    chooseSelectOption(document.body, "压缩格式", "tar.gz");
+    await waitFor(() => expect(lastDryRun()).toMatchObject({ format: "tar.gz" }));
+    click(button(dialog()!, "导出")!);
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalled());
+    const name = mocks.pickSavePath.mock.calls[0][0] as string;
+    expect(name).toMatch(/^nexterm-history-当前设备-\d{8}-\d{8}\.tar\.gz$/);
+    expect(mocks.transcriptExportArchive).toHaveBeenCalledWith(expect.objectContaining({ path: "/tmp/history.zip", format: "tar.gz", assetId: ASSET.id }));
+    expect(mocks.transcriptExportArchive.mock.calls.find(([request]) => request.path)?.[0]).not.toHaveProperty("dryRun");
+    expect(mocks.finishSave).toHaveBeenCalledWith("/tmp/history.zip", name);
+    const [kind, message] = mocks.toast.mock.calls[0] as [string, string];
+    expect(kind).toBe("success");
+    expect(message).toContain("已导出 2 条记录");
+    expect(message).toContain("已跳过 2 条");
+    expect(message).toContain("1 条只同步了元数据");
+    expect(message).toContain("1 条仍在录制");
+    await waitFor(() => expect(dialog()).toBeNull());
   });
 });

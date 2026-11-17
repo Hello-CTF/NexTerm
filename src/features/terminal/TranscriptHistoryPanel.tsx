@@ -14,9 +14,11 @@ import { describeError } from "../../ui/errorText";
 import { Select } from "../../ui/Select";
 import {
   IconAlert,
+  IconArchive,
   IconArrowLeft,
   IconClock,
   IconCopy,
+  IconGlobe,
   IconHistory,
   IconRefresh,
   IconSearch,
@@ -32,9 +34,10 @@ import {
   type TranscriptDecoder,
 } from "./transcriptText";
 import { TranscriptReplayView } from "./TranscriptReplayView";
+import { TranscriptArchiveDialog } from "./TranscriptArchiveDialog";
+import { exportFileName, viewerTimeZone } from "./transcriptExport";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
-import { WEB } from "../../ipc/env";
 import { useTranscriptFocus } from "./transcriptFocus";
 import { t } from "../../i18n";
 
@@ -59,23 +62,6 @@ interface HostOption {
 function hostLabel(host: HostOption): string {
   const suffix = host.deleted ? t("（已删除）") : "";
   return `${host.name}${suffix}`;
-}
-
-// The browser-mode backend runs elsewhere, so timestamps need the viewer's zone; the desktop backend's local zone is the viewer's.
-function viewerTimeZone(): { timeZone?: string; utcOffsetMinutes?: number } {
-  if (!WEB) return {};
-  let timeZone: string | undefined;
-  try {
-    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
-  } catch {
-    timeZone = undefined;
-  }
-  return { timeZone, utcOffsetMinutes: -new Date().getTimezoneOffset() };
-}
-
-function exportFileName(summary: TranscriptSummary, extension: string): string {
-  const day = new Date(summary.startedAt).toISOString().slice(0, 10);
-  return `${summary.assetName}-${day}.${extension}`.replace(/[\\/:*?"<>|]/g, "_");
 }
 
 function badgeClass(summary: TranscriptSummary): string {
@@ -133,6 +119,7 @@ export function TranscriptHistoryPanel({
   const [searchError, setSearchError] = useState<string | null>(null);
   const [syncToggleError, setSyncToggleError] = useState<string | null>(null);
   const [exportMenu, setExportMenu] = useState<ContextMenuState | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   // Lists every starred transcript of the host instead of the most recent ones.
   const [starredOnly, setStarredOnly] = useState(false);
   const [viewMode, setViewMode] = useState<"text" | "replay">("text");
@@ -590,6 +577,16 @@ export function TranscriptHistoryPanel({
 
   const hostOptions = hosts ?? [];
   const sessionList = sessions ?? [];
+  // A fixed-host panel does not load the host list; its transcripts carry the host name.
+  const currentHostName = hostOptions.find((host) => host.assetId === assetId)?.name
+    ?? sessionList.find((summary) => summary.assetName)?.assetName
+    ?? "";
+
+  // Opens (or switches) the tools workspace history tab with this host preselected.
+  const openGlobalHistory = () => {
+    if (!assetId) return;
+    useUi.getState().addTab({ id: "history", kind: "history", title: t("终端历史"), assetId, closable: true });
+  };
 
   return (
     <div className="nx-pane" data-testid="transcript-history">
@@ -628,6 +625,26 @@ export function TranscriptHistoryPanel({
           <IconRefresh size={13} />
           {t("刷新")}
         </button>
+        <button
+          className="nx-btn nx-btn-ghost"
+          disabled={fixedHost && !assetId}
+          title={t("把一段时间内的记录打包成 zip 或 tar.gz 导出")}
+          onClick={() => setArchiveOpen(true)}
+        >
+          <IconArchive size={13} />
+          {t("批量导出")}
+        </button>
+        {fixedHost && (
+          <button
+            className="nx-btn nx-btn-ghost"
+            disabled={!assetId}
+            title={t("在工具工作区打开全局终端历史")}
+            onClick={openGlobalHistory}
+          >
+            <IconGlobe size={13} />
+            {t("全部历史")}
+          </button>
+        )}
       </div>
 
       {hostsError && (
@@ -1016,6 +1033,14 @@ export function TranscriptHistoryPanel({
         </div>
       </div>
       <ContextMenu state={exportMenu} onClose={() => setExportMenu(null)} />
+      {archiveOpen && (
+        <TranscriptArchiveDialog
+          assetId={assetId}
+          hostName={currentHostName}
+          allowAllHosts={!fixedHost}
+          onClose={() => setArchiveOpen(false)}
+        />
+      )}
     </div>
   );
 }

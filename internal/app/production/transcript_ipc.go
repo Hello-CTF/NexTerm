@@ -223,6 +223,11 @@ func (s *terminalCommandService) registerTranscripts(dispatcher *ipc.Dispatcher)
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "transcript_export_archive", func(ctx context.Context, _ *ipc.Call, input transcriptExportArchiveRequest) (transcriptExportArchiveResult, error) {
+				return s.exportTranscriptArchive(ctx, input)
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "transcript_delete", func(ctx context.Context, _ *ipc.Call, input transcriptIDRequest) (any, error) {
 				if err := store.EnsureID(input.ID); err != nil {
 					return nil, err
@@ -272,12 +277,7 @@ func (s *terminalCommandService) assetDeleted(ctx context.Context, assetID strin
 }
 
 func (s *terminalCommandService) transcriptSummary(ctx context.Context, row store.TranscriptRow, assetDeleted bool) transcriptSummaryDTO {
-	active := false
-	if row.EndedAt == nil {
-		if _, err := s.sessions.Session(row.SessionID); err == nil {
-			active = true
-		}
-	}
+	active := s.transcriptActive(row)
 	return transcriptSummaryDTO{
 		ID:             row.ID,
 		SessionID:      row.SessionID,

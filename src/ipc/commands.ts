@@ -882,6 +882,9 @@ export const transcriptApi = {
   // (IANA name, offset as fallback); without it the backend formats them in its own local zone.
   exportText: (id: string, path: string, options: { timestamps: boolean; timeZone?: string; utcOffsetMinutes?: number }) =>
     call("transcript_export_text", { id, path, ...options }) as Promise<import("./generated/types").TranscriptExportTextResult>,
+  // Packs the transcripts the filter selects into one zip or tar.gz archive; dryRun only counts them.
+  exportArchive: (request: import("./generated/types").TranscriptExportArchiveRequest) =>
+    call("transcript_export_archive", request),
   star: (id: string, starred: boolean) => call("transcript_star", { id, starred }) as unknown as Promise<void>,
   // What a purge of the transcripts that ended before endedBefore (ms) would delete, plus overall usage.
   usage: (endedBefore: number) => call("transcript_usage", { endedBefore }),
