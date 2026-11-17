@@ -83,6 +83,8 @@ const PANE_KINDS = new Set<PaneKind>([
   "background",
   "history",
   "hostHistory",
+  "aiWorkbench",
+  "hostAiHistory",
   "execBatch",
   "host",
   "remote",

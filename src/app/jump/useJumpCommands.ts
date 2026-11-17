@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useUi, nextTabId, hostHistoryTab, openTerminalTab, requestKillTab, reconnectWorkspaceConnection, workspaceConnectionState, workspaceNeedsReconnect, type Workspace, useSessionList, useWorkspaceList } from "../store";
+import { useUi, nextTabId, hostHistoryTab, hostAiHistoryTab, aiWorkbenchTab, openTerminalTab, requestKillTab, reconnectWorkspaceConnection, workspaceConnectionState, workspaceNeedsReconnect, type Workspace, useSessionList, useWorkspaceList } from "../store";
 import { formatBinding, useKeybindings, type KeybindingActionId } from "../keybindings";
 import { sessionApi, type Asset } from "../../ipc/commands";
 import type { SnippetDto } from "../../ipc/types";
@@ -22,6 +22,7 @@ import { canSaveLayoutTemplate, layoutTemplatePanes, useLayoutTemplates } from "
 import { openLayoutTemplate, saveWorkspaceAsLayoutTemplate } from "../layoutTemplateOpen";
 import {
   IconActivity,
+  IconBot,
   IconClock,
   IconCommand,
   IconCopy,
@@ -29,7 +30,6 @@ import {
   IconEdit,
   IconEye,
   IconEyeOff,
-  IconHistory,
   IconLock,
   IconLayers,
   IconMergeH,
@@ -37,6 +37,7 @@ import {
   IconNetwork,
   IconRefresh,
   IconSettings,
+  IconShieldCheck,
   IconSplitH,
   IconSplitV,
   IconTerminal,
@@ -358,6 +359,26 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         },
       },
       {
+        id: "ai-workbench",
+        label: t("打开 AI 工作台"),
+        hint: t("回看 AI 对话、运行记录和确认记录"),
+        icon: IconBot,
+        run: () => {
+          const current = useUi.getState();
+          const active =
+            current.workspaces.find((item) => item.id === current.activeWorkspaceId) ??
+            current.workspaces[current.workspaces.length - 1];
+          addTab(hostAiHistoryTab(active) ?? aiWorkbenchTab());
+        },
+      },
+      {
+        id: "ai-workbench-global",
+        label: t("打开全局 AI 工作台"),
+        hint: t("筛选全部主机的 AI 对话"),
+        icon: IconBot,
+        run: () => addTab(aiWorkbenchTab()),
+      },
+      {
         id: "refresh-status",
         label: t("刷新会话列表与凭据库状态"),
         icon: IconRefresh,
@@ -390,7 +411,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         id: "audit",
         label: t("查看审计日志"),
         hint: t("用户和 AI 的操作记录"),
-        icon: IconHistory,
+        icon: IconShieldCheck,
         run: () => addTab({ id: "audit", kind: "audit", title: t("审计日志"), closable: true }),
       },
       {

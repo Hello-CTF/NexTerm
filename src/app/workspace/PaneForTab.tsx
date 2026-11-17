@@ -11,6 +11,7 @@ import { isMultiHostLogTabId } from "../../features/logs/logTailTab";
 import { isFleetHealthTabId } from "../../features/fleet/fleetHealthTab";
 import { Lazy } from "../../ui/LazyBoundary";
 import {
+  AiWorkbenchView,
   AuditView,
   BackgroundSessions,
   CredentialsPanel,
@@ -20,6 +21,7 @@ import {
   FileEditor,
   FleetHealthPanel,
   ForwardPanel,
+  HostAiHistoryPanel,
   HostDetailView,
   LogViewer,
   MountPanel,
@@ -273,6 +275,18 @@ export const PaneForTab = memo(function PaneForTab({
             workspaceId={workspaceId}
             assetId={tab.assetId}
           />
+        </Lazy>
+      );
+    case "hostAiHistory":
+      return (
+        <Lazy>
+          <HostAiHistoryPanel visible={active} assetId={tab.assetId} />
+        </Lazy>
+      );
+    case "aiWorkbench":
+      return (
+        <Lazy>
+          <AiWorkbenchView visible={active} assetId={tab.assetId} />
         </Lazy>
       );
     case "credentials":

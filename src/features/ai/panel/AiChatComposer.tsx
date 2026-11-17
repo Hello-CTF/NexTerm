@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useUi } from "../../../app/store";
-import { IconList, IconEdit, IconAlert, IconLoader, IconClose, IconImage, IconKey, IconMonitor } from "../../../ui/icons";
+import { IconList, IconEdit, IconAlert, IconLoader, IconClose, IconImage, IconKey, IconMonitor, IconDownload } from "../../../ui/icons";
+import { exportConversationMarkdown } from "../workbench/workbenchShared";
 import { ProductionWriteRiskNotice } from "../../production/ProductionWarning";
 import { DESKTOP } from "../../../ipc/env";
 import { isImeKeyEvent } from "../../../ui/DialogHost";
@@ -22,6 +23,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
   const { planMode, editing, editSubmitting, input, submitEditResend, setEditing, activeRun, stop, follow, syncNotice, activeGeneration, activeRunRef, resyncRun, busy, hitlWaiting, conv, aiScopeProduction, refs, setRefs, images, setImages, slashMenuOpen, slashItems, slashEmptyText, slashIndex, setSlashIndex, modelQuery, skillOptions, atOpen, atItems, atIndex, setAtIndex, pickRef, inputRef, sessionId, onInputChange, onPaste, setAtOpen, steer, send, setModelPanelOpen, imageInputRef, onPickImages, conversationRuns, perm, permState, permOpen, permError, setPermOpen, tabId, bindings, reclaimKeyLabel, runTakeover, modelPanelOpen, setInput } = ctx;
   // A prompt queued elsewhere (the jump palette's "ask AI" row) prefills the visible composer; it is never sent.
   const pendingPrompt = useUi((s) => s.aiPendingPrompt);
+  const dockTitle = useUi((s) => s.aiBoards[ctx.boardKey]?.tabs.find((tab) => tab.id === ctx.tabKey)?.title ?? "");
   useEffect(() => {
     if (pendingPrompt === null) return;
     const text = useUi.getState().takeAiPendingPrompt();
@@ -48,6 +50,18 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
       : t("AI 权限与模式：读取中（选择以设置）");
   // Rarely used or experimental actions live here; with no terminal tab the
   // takeover entry is omitted instead of shown disabled.
+  const conversationId = ctx.conversationId;
+  const exportItems: ComposerMoreItem[] = conversationId
+    ? [
+        {
+          key: "export",
+          label: t("导出当前会话"),
+          icon: <IconDownload size={12} />,
+          title: t("将当前会话导出为 Markdown 文件"),
+          run: () => void exportConversationMarkdown({ id: conversationId, title: dockTitle }),
+        },
+      ]
+    : [];
   const moreItems: ComposerMoreItem[] = tabId
     ? [
         {
@@ -369,7 +383,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
               runs={conversationRuns}
               loadSummary={() => modelApi.usageSummary()}
             />
-            <ComposerMoreMenu items={moreItems} />
+            <ComposerMoreMenu items={[...moreItems, ...exportItems]} />
             {busy ? (
               <button
                 className="nx-send-btn nx-send-btn-stop"

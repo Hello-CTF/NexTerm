@@ -1745,10 +1745,13 @@ func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
 		"ai_chat",
 		"ai_circuit_status",
 		"ai_confirm",
+		"ai_conversation_approvals",
 		"ai_conversation_compact",
 		"ai_conversation_create",
 		"ai_conversation_delete",
+		"ai_conversation_export",
 		"ai_conversation_list",
+		"ai_conversation_overview",
 		"ai_conversation_retitle",
 		"ai_edit_resend",
 		"ai_get_permission",
@@ -1845,8 +1848,8 @@ func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("remaining legacy commands = %v, want %v", got, want)
 	}
-	if len(got) != 78 || aiMemory != 55 || sessionTerminal != 22 || appInfo != 1 {
-		t.Fatalf("legacy categories = total:%d AI/memory:%d session/terminal:%d app_info:%d, want 78/55/22/1", len(got), aiMemory, sessionTerminal, appInfo)
+	if len(got) != 81 || aiMemory != 58 || sessionTerminal != 22 || appInfo != 1 {
+		t.Fatalf("legacy categories = total:%d AI/memory:%d session/terminal:%d app_info:%d, want 81/58/22/1", len(got), aiMemory, sessionTerminal, appInfo)
 	}
 	if scopes := deferredScopes(); !reflect.DeepEqual(scopes, []string{"memory-owner", "ai-owner"}) {
 		t.Fatalf("deferred scopes = %v, want only memory-owner and ai-owner", scopes)

@@ -4,6 +4,8 @@ import {
   openTerminalTab,
   nextTabId,
   hostHistoryTab,
+  hostAiHistoryTab,
+  aiWorkbenchTab,
   connectAsset,
   dbKindOf,
   isSessionReconnectPending,
@@ -196,6 +198,11 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     );
   }, [ws]);
 
+  // Like the history entry: a host workspace opens its own AI history, anywhere else the global AI workbench.
+  const openAiWorkbench = useCallback(() => {
+    useUi.getState().addTab(hostAiHistoryTab(ws) ?? aiWorkbenchTab());
+  }, [ws]);
+
   const openNewTerminal = useCallback(async () => {
     const epoch = useUi.getState().workspaceRuntimeEpoch;
     const workspaceId = ws?.id;
@@ -288,10 +295,11 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
       openVaultProtection: leaving(openVaultProtection),
       openBackground: leaving(openBackground),
       openHistory: leaving(openHistory),
+      openAiWorkbench: leaving(openAiWorkbench),
       openNewTerminal: leaving(openNewTerminal),
     };
   }, [openLocalTerminal, openLogs, openMount, openForward, openDocker, openDatabase, openAudit, openDevices,
-    openSettings, openSyncSettings, openVaultProtection, openBackground, openHistory, openNewTerminal]);
+    openSettings, openSyncSettings, openVaultProtection, openBackground, openHistory, openAiWorkbench, openNewTerminal]);
 
   return {
     needSession,

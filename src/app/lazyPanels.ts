@@ -15,6 +15,9 @@ export const BackgroundSessions = lazy(() =>
 export const TranscriptHistoryPanel = lazy(() =>
   import("../features/terminal/TranscriptHistoryPanel").then((m) => ({ default: m.TranscriptHistoryPanel })),
 );
+const loadAiWorkbench = () => import("../features/ai/workbench/AiWorkbenchView");
+export const AiWorkbenchView = lazy(() => loadAiWorkbench().then((m) => ({ default: m.AiWorkbenchView })));
+export const HostAiHistoryPanel = lazy(() => loadAiWorkbench().then((m) => ({ default: m.HostAiHistoryPanel })));
 const loadFileTree = () => import("../features/files/FileTree");
 export const FileTree = lazy(() => loadFileTree().then((m) => ({ default: m.FileTree })));
 export const MountPanel = lazy(() => import("../features/files/MountPanel").then((m) => ({ default: m.MountPanel })));

@@ -63,6 +63,8 @@ export {
   migrateToolTabs,
   nextTabId,
   hostHistoryTab,
+  hostAiHistoryTab,
+  aiWorkbenchTab,
   pruneBroadcastToWorkspaces,
 } from "./store/model";
 export {

@@ -46,6 +46,28 @@ export type ContainerSummaryDto = import("./generated/types").ContainerSummary;
 
 export type ConversationDto = { id: string, title: string, scope: JsonValue, createdAt: number, updatedAt: number, };
 
+// AI workbench: conversation states derived from the conversation's chat runs.
+export type AiConversationStatus = "running" | "interrupted" | "completed" | "failed" | "idle";
+
+export type AiConversationFilter = { ids?: string[], assetId?: string, unlinked?: boolean, status?: AiConversationStatus,
+query?: string, updatedFrom?: number, updatedBefore?: number, };
+
+export type AiConversationSummaryDto = { id: string, title: string, assetId: string, status: AiConversationStatus,
+runCount: number, lastRunAt: number, createdAt: number, updatedAt: number, };
+
+export type AiConversationOverviewDto = { items: AiConversationSummaryDto[], total: number,
+hosts: { assetId: string, count: number }[], };
+
+export type AiConversationApprovalDto = { runId: string, callId: string, kind: "confirm" | "question", tool?: string,
+rendered?: string, risk?: string, question?: string, decision: string, requestedAt: number, resolvedAt: number | null, };
+
+export type AiConversationExportRequest = AiConversationFilter & { path?: string, format?: "zip" | "tar.gz" | "md",
+includeJson?: boolean, labels?: Record<string, string>, hostNames?: Record<string, string>, timeZone?: string,
+utcOffsetMinutes?: number, dryRun?: boolean, };
+
+export type AiConversationExportResult = { path: string, matched: number, exported: number,
+skipped: { running: number }, files: number, bytes: number, };
+
 export type CredentialMetaDto = { id: string, name: string, kind: string, cipher: string, kekHint: string, createdAt: number, updatedAt: number, };
 
 export type DigestEntry = { id: string, name: string, kind: string, host: string | null, username: string | null, updatedAt: number, deletedAt: number | null, 

@@ -8,12 +8,12 @@ import { deviceIdOfHost, isHostAssetKind, openHostDetail } from "../../features/
 import { hostToolsSupported } from "../../features/explorer/assetKindFields";
 import {
   IconActivity,
+  IconBot,
   IconBox,
   IconClock,
   IconDashboard,
   IconDatabase,
   IconDrive,
-  IconHistory,
   IconInfo,
   IconKey,
   IconList,
@@ -21,6 +21,7 @@ import {
   IconNetwork,
   IconServer,
   IconSettings,
+  IconShieldCheck,
   Logo,
 } from "../../ui/icons";
 import { type OverlayDock } from "./useOverlayDocks";
@@ -66,7 +67,7 @@ export function AppRail({
   const hostTools = hasHost && hostToolsSupported(workspace?.assetKind);
   // The sidebar shows the file tree in a host workspace, so neither panel button is highlighted there.
   const railActive = resolveLeftView(workspace, leftMode, leftOverride);
-  const { openBackground, openHistory, openDocker, openDatabase, openMount, openForward, openLogs } = actions;
+  const { openBackground, openHistory, openAiWorkbench, openDocker, openDatabase, openMount, openForward, openLogs } = actions;
   const hostAssetId = workspace?.assetId ?? "";
   const hasHostDetail = hasHost && hostAssetId !== "" &&
     (isHostAssetKind(workspace?.assetKind ?? "") || deviceIdOfHost(hostAssetId) !== null);
@@ -136,6 +137,13 @@ export function AppRail({
       icon: IconClock,
       onClick: openHistory,
     },
+    {
+      key: "ai-workbench",
+      label: t("AI 工作台"),
+      hint: hasHost && workspace?.assetId ? t("查看当前主机的 AI 对话记录") : t("查看和筛选全部 AI 对话记录"),
+      icon: IconBot,
+      onClick: openAiWorkbench,
+    },
     ...(hostTools
       ? [
           {
@@ -189,7 +197,7 @@ export function AppRail({
 
   const railBottom = [
     { key: "devices", label: t("设备管理"), hint: t("管理已接入的设备并打开远程终端"), icon: IconMonitor, onClick: actions.openDevices },
-    { key: "audit", label: t("审计日志"), hint: t("查看用户和 AI 的操作记录"), icon: IconHistory, onClick: actions.openAudit },
+    { key: "audit", label: t("审计日志"), hint: t("查看用户和 AI 的操作记录"), icon: IconShieldCheck, onClick: actions.openAudit },
     { key: "settings", label: t("设置"), hint: t("外观、快捷键、AI、凭据库与账号同步"), icon: IconSettings, onClick: actions.openSettings },
   ];
 

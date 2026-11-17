@@ -29,6 +29,7 @@ const TOOL_TAB_KINDS = new Set<PaneKind>([
   "audit",
   "devices",
   "history",
+  "aiWorkbench",
   "execBatch",
   "host",
 ]);
@@ -69,6 +70,27 @@ export function hostHistoryTab(
     assetId: workspace.assetId,
     closable: true,
   };
+}
+
+// The AI history tab of one host workspace, listing only that host's conversations; null selects the global
+// AI workbench in the tools workspace.
+export function hostAiHistoryTab(
+  workspace: { kind: string; sessionId?: string; assetId?: string } | null | undefined,
+): AppTab | null {
+  if (workspace?.kind !== "session" || !workspace.sessionId || !workspace.assetId) return null;
+  return {
+    id: `ai-history-${workspace.sessionId}`,
+    kind: "hostAiHistory",
+    title: tr("AI 工作台"),
+    sessionId: workspace.sessionId,
+    assetId: workspace.assetId,
+    closable: true,
+  };
+}
+
+// The global AI workbench tool tab; an assetId preselects that host in its filter.
+export function aiWorkbenchTab(assetId?: string): AppTab {
+  return { id: "aiWorkbench", kind: "aiWorkbench", title: tr("AI 工作台"), closable: true, ...(assetId ? { assetId } : {}) };
 }
 
 export const DB_KIND_LABEL: Record<DbKind, string> = {

@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   aiSidebarProps: [] as { sessionId?: string }[],
   backgroundProps: [] as { workspaceId?: string; sessionId?: string }[],
   historyProps: [] as { workspaceId?: string; assetId?: string }[],
+  aiWorkbenchProps: [] as { kind: string; assetId?: string }[],
   terminalPaneProps: [] as { storeTabId: string }[],
   renameTab: vi.fn(),
   listLive: vi.fn(async () => [] as unknown[]),
@@ -121,6 +122,16 @@ vi.mock("../features/terminal/BackgroundSessions", () => ({
 vi.mock("../features/terminal/TranscriptHistoryPanel", () => ({
   TranscriptHistoryPanel: (props: { workspaceId?: string; assetId?: string }) => {
     mocks.historyProps.push(props);
+    return null;
+  },
+}));
+vi.mock("../features/ai/workbench/AiWorkbenchView", () => ({
+  AiWorkbenchView: (props: { assetId?: string }) => {
+    mocks.aiWorkbenchProps.push({ kind: "global", assetId: props.assetId });
+    return null;
+  },
+  HostAiHistoryPanel: (props: { assetId?: string }) => {
+    mocks.aiWorkbenchProps.push({ kind: "host", assetId: props.assetId });
     return null;
   },
 }));
@@ -255,6 +266,7 @@ beforeEach(() => {
   mocks.aiSidebarProps.length = 0;
   mocks.backgroundProps.length = 0;
   mocks.historyProps.length = 0;
+  mocks.aiWorkbenchProps.length = 0;
   mocks.terminalPaneProps.length = 0;
   resetUnreadTabs();
   mocks.assetList.mockResolvedValue([]);
@@ -694,6 +706,48 @@ describe("App workspace actions", () => {
     expect(histories[0]).toMatchObject({ sessionId: "s2", assetId: "asset-2" });
     expect(allTabs().filter((tab) => tab.kind === "history")).toHaveLength(0);
     expect(mocks.historyProps[mocks.historyProps.length - 1]).toMatchObject({ assetId: "asset-2" });
+  });
+
+  it("opens the AI workbench scoped to the active host workspace", async () => {
+    const tools = nonHostWorkspace("tools");
+    const host = hostWorkspace("ws-b", "s2", "asset-2");
+    useUi.setState({ sessions: [sessionOf("s2")], workspaces: [tools, host], activeWorkspaceId: host.id });
+    mounted = mountApp();
+    await flush();
+
+    await clickRail("AI 工作台");
+    await clickRail("AI 工作台");
+
+    const hostTabs = useUi.getState().workspaces.find((w) => w.id === host.id)!.panes.flatMap((p) => p.tabs);
+    const scoped = hostTabs.filter((tab) => tab.kind === "hostAiHistory");
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0]).toMatchObject({ sessionId: "s2", assetId: "asset-2" });
+    expect(allTabs().some((tab) => tab.kind === "aiWorkbench")).toBe(false);
+    await flush();
+    expect(mocks.aiWorkbenchProps[mocks.aiWorkbenchProps.length - 1]).toEqual({ kind: "host", assetId: "asset-2" });
+  });
+
+  it("opens the global AI workbench in the tools workspace outside a host workspace", async () => {
+    const tools = nonHostWorkspace("tools");
+    useUi.setState({ workspaces: [tools], activeWorkspaceId: tools.id });
+    mounted = mountApp();
+    await flush();
+
+    await clickRail("AI 工作台");
+
+    const toolsTabs = useUi.getState().workspaces.find((w) => w.kind === "tools")!.panes.flatMap((p) => p.tabs);
+    expect(toolsTabs.filter((tab) => tab.kind === "aiWorkbench")).toHaveLength(1);
+    expect(allTabs().some((tab) => tab.kind === "hostAiHistory")).toBe(false);
+    await flush();
+    expect(mocks.aiWorkbenchProps[mocks.aiWorkbenchProps.length - 1]).toEqual({ kind: "global", assetId: undefined });
+  });
+
+  it("gives terminal history, the audit log and the AI workbench distinct rail icons", async () => {
+    mounted = mountApp();
+    await flush();
+    const icons = ["终端历史", "审计日志", "AI 工作台"].map((label) => railButton(label).querySelector("svg")?.innerHTML ?? "");
+    expect(icons.every((icon) => icon !== "")).toBe(true);
+    expect(new Set(icons).size).toBe(3);
   });
 
   it("a single database asset uses the standard connectAsset flow", async () => {

@@ -39,6 +39,11 @@ export const ipcContractManifest = {
       channel: true,
       stream: "json",
     },
+    "ai_conversation_approvals": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
     "ai_conversation_compact": {
       nested: false,
       channel: false,
@@ -54,7 +59,17 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "ai_conversation_export": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
     "ai_conversation_list": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
+    "ai_conversation_overview": {
       nested: false,
       channel: false,
       stream: "none",
@@ -3283,10 +3298,13 @@ export const ipcContractManifest = {
     "ai_chat",
     "ai_circuit_status",
     "ai_confirm",
+    "ai_conversation_approvals",
     "ai_conversation_compact",
     "ai_conversation_create",
     "ai_conversation_delete",
+    "ai_conversation_export",
     "ai_conversation_list",
+    "ai_conversation_overview",
     "ai_conversation_retitle",
     "ai_edit_resend",
     "ai_get_permission",

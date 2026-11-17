@@ -1686,6 +1686,12 @@ export const aiApi = {
     call<import("./types").ConversationDto>("ai_conversation_create", { title }),
   messages: (conversationId: string) =>
     call<import("./types").MessageDto[]>("ai_messages", { conversationId }),
+  conversationOverview: (request: import("./types").AiConversationFilter & { offset?: number; limit?: number }) =>
+    call<import("./types").AiConversationOverviewDto>("ai_conversation_overview", request),
+  conversationApprovals: (conversationId: string) =>
+    call<import("./types").AiConversationApprovalDto[] | null>("ai_conversation_approvals", { conversationId }).then((v) => v ?? []),
+  conversationExport: (request: import("./types").AiConversationExportRequest) =>
+    call<import("./types").AiConversationExportResult>("ai_conversation_export", request),
 };
 
 import type { AiUsageSummaryRow, ModelProfile, ModelProfilesView, ProviderTestResult } from "./types";

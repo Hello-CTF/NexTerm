@@ -1,9 +1,14 @@
-import { IconSearch, IconClock, IconHistory, IconChevronUp, IconChevronDown, IconClose, IconRefresh, IconTrash } from "../../../ui/icons";
+import { useState } from "react";
+import { IconSearch, IconClock, IconHistory, IconChevronUp, IconChevronDown, IconClose, IconRefresh, IconTrash, IconDownload } from "../../../ui/icons";
+import { ConversationArchiveDialog } from "../workbench/ConversationArchiveDialog";
 import type { AiChatCtx } from "./aiChatCtx";
 import { t } from "../../../i18n";
 
 export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
   const { searchOpen, setSearchOpen, backgroundTaskTotal, tasksOpen, setTasksOpen, historyOpen, toggleHistory, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, loadConversations, conversations, openConversation, runStatusByConv, deleteConversation } = ctx;
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  // The export starts from this workspace's host, like the workspace's AI history; the dialog can widen it.
+  const hostAssetId = ctx.activeWorkspace?.kind === "session" ? ctx.activeWorkspace.assetId ?? null : null;
   return (
     <>
       <div className="nx-panel-head flex h-[32px] shrink-0 items-center gap-1 border-b border-neutral-800/60 px-2 [@media(max-height:480px)]:h-7">
@@ -98,6 +103,17 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
 
       {historyOpen && (
         <div className="max-h-[40%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-1.5">
+          <div className="flex justify-end px-1 pb-1">
+            <button
+              type="button"
+              className="nx-btn nx-btn-ghost nx-btn-xs"
+              title={t("批量导出 AI 会话")}
+              onClick={() => setArchiveOpen(true)}
+            >
+              <IconDownload size={11} />
+              {t("导出…")}
+            </button>
+          </div>
           {historyStatus === "loading" ? (
             <div className="nx-hint px-2 py-3 text-center text-[11.5px]">{t("正在加载历史会话…")}</div>
           ) : historyStatus === "error" ? (
@@ -146,6 +162,14 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
             ))
           )}
         </div>
+      )}
+      {archiveOpen && (
+        <ConversationArchiveDialog
+          assetId={hostAssetId}
+          hostName={hostAssetId ? ctx.activeWorkspace?.title || hostAssetId : ""}
+          allowAllHosts
+          onClose={() => setArchiveOpen(false)}
+        />
       )}
     </>
   );

@@ -288,7 +288,10 @@ func productionModules(services ProductionServices) []Module {
 				if services.Agent != nil {
 					runs = services.Agent
 				}
-				return registerAICommandsGuarded(dispatcher, services.Profiles, services.Store, runs, productionScopeValidator(&services))
+				if err := registerAICommandsGuarded(dispatcher, services.Profiles, services.Store, runs, productionScopeValidator(&services)); err != nil {
+					return err
+				}
+				return registerAIWorkbenchCommands(dispatcher, services.Store, services.stagedBlobs)
 			},
 		})
 	}

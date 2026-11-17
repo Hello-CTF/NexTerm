@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+import { deleteConversationGuarded } from "../workbench/workbenchShared";
 import { setChatModelChoice } from "../chatModelChoice";
 import type { AgentRosterEntry } from "../agentTypes";
 import { useUi, nextTabId, type TakeoverState } from "../../../app/store";
@@ -7,7 +8,7 @@ import { describeError } from "../../../ui/errorText";
 import { aiTabBusyIds, aiTabRunControls, setAiTabBusy, clearAiTabRun, aiRunBlocksStart, type AiRunSlot, isCurrentAiRun, bindAiRunJob, createAiRun, registerAiRunGeneration, finishAiRunSpawn, settleAiRun } from "../runOwnership";
 import { RUN_RESTORE_LIMIT } from "../runRestore";
 import type { AiRunDto } from "../../../ipc/types";
-import { ask, promptText, askChoice } from "../../../ui/dialogs";
+import { promptText, askChoice } from "../../../ui/dialogs";
 import { withTakeoverPaused, registerTakeoverResumeHandler, takeoverPaused } from "../../../app/TakeoverBanner";
 import { createAiChannel, disposeChannel } from "../../../ipc/events";
 import { runStatusOf, type SlashItem, type RefChip, readAsDataUrl, type AiChatBase } from "./aiSidebarShared";
@@ -259,37 +260,12 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       pushToast("info", t("AI 正在回答，请先停止当前回答再删除当前会话"));
       return;
     }
-    try {
-      const runs = await aiApi.runs(c.id, 20);
-      const inFlight = runStatusOf(Array.isArray(runs) ? runs : []);
-      if (inFlight) {
-        pushToast(
-          "info",
-          inFlight === "running"
-            ? t("此会话中 AI 正在工作，请等待结束或先停止，再删除")
-            : t("此会话中有被中断的 AI 任务，请先打开会话处理，再删除"),
-        );
-        return;
-      }
-    } catch (e) {
-      // Deleting removes the run records too, so an unchecked conversation is kept.
-      pushToast("error", t("无法确认此会话中是否有 AI 任务正在运行，暂未删除，请稍后重试：{value}", { value: describeError(e) }));
-      return;
-    }
-    const ok = await ask(t("确定要删除会话「{value}」吗？消息记录、运行记录和定时任务将一并清除，不可恢复。", { value: c.title || t("（未命名会话）") }), {
-      kind: "warning",
-    });
-    if (!ok) return;
-    if (blocksReset(c.id)) {
+    const deleted = await deleteConversationGuarded(c, () => {
+      if (!blocksReset(c.id)) return true;
       pushToast("info", t("AI 正在回答，请先停止当前回答再删除当前会话"));
-      return;
-    }
-    try {
-      await aiApi.conversationDelete(c.id);
-    } catch (e) {
-      pushToast("error", t("未能删除会话：{value}", { value: describeError(e) }));
-      return;
-    }
+      return false;
+    });
+    if (!deleted) return;
     setConversations((prev) => prev.filter((it) => it.id !== c.id));
     setRunStatusByConv((prev) => {
       const next = { ...prev };

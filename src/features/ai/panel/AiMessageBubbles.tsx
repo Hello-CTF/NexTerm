@@ -23,6 +23,7 @@ export const ChatBubble = memo(function ChatBubble({
   agentToolCall,
   onAgentApproval,
   agentApprovalBusy,
+  readOnly = false,
 }: {
   item: ChatItem;
   streaming: boolean;
@@ -35,12 +36,14 @@ export const ChatBubble = memo(function ChatBubble({
   agentToolCall: AgentToolCall | null;
   onAgentApproval: (requestId: string, decision: AgentApprovalDecision) => void;
   agentApprovalBusy: boolean;
+  // readOnly shows a saved conversation without its actions (edit, retry, plan approval), as in the AI workbench.
+  readOnly?: boolean;
 }) {
   if (item.role === "user") {
     const { refs, body } = splitUserRefs(item.text);
     return (
       <div className="group/user relative ml-10 rounded-[10px] rounded-br-[3px] border border-blue-500/25 bg-blue-500/20 px-3 py-2 text-[12.3px] leading-relaxed text-[var(--nx-fg-on-tint)]">
-        {item.messageId ? (
+        {item.messageId && !readOnly ? (
           <button
             type="button"
             className="absolute right-1.5 top-1.5 rounded p-0.5 text-[var(--nx-fg-soft)] opacity-0 transition-opacity hover:text-neutral-100 focus:opacity-100 group-hover/user:opacity-100 pointer-coarse:opacity-100"
@@ -141,7 +144,7 @@ export const ChatBubble = memo(function ChatBubble({
         >
           <IconAlert size={12} className="mt-0.5 shrink-0 text-red-300" />
           <span className="whitespace-pre-wrap">{t("本次回答失败：{text}", { text: item.text })}</span>
-          {item.retryable ? (
+          {item.retryable && !readOnly ? (
             <button
               className="nx-btn nx-btn-outline nx-btn-xs ml-auto shrink-0"
               title={t("使用同一条消息重新回答")}
@@ -167,7 +170,7 @@ export const ChatBubble = memo(function ChatBubble({
   }
   if (item.role === "diff") return <DiffBubble item={item} />;
   if (item.role === "plan") {
-    return <PlanBubble item={item} approved={planApproved} onApprove={onApprovePlan} />;
+    return <PlanBubble item={item} approved={planApproved} onApprove={onApprovePlan} readOnly={readOnly} />;
   }
   if (item.role === "tool") {
     // A tool call with a verified roster handle renders the reviewed agent
@@ -430,10 +433,12 @@ function PlanBubble({
   item,
   approved,
   onApprove,
+  readOnly,
 }: {
   item: Extract<ChatItem, { role: "plan" }>;
   approved: boolean;
   onApprove: () => void;
+  readOnly: boolean;
 }) {
   return (
     <div className="rounded-lg border border-blue-500/30 bg-blue-500/[0.07] px-2.5 py-2 text-[11.5px]">
@@ -445,7 +450,7 @@ function PlanBubble({
       <div className="max-h-72 overflow-y-auto">
         <Markdown text={item.text} className="text-neutral-300" />
       </div>
-      {!approved && (
+      {!approved && !readOnly && (
         <button className="nx-btn nx-btn-outline nx-btn-xs mt-2" onClick={onApprove}>
           <IconPlay size={11} />
           {t("批准并执行方案")}
