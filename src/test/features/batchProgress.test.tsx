@@ -108,7 +108,7 @@ function progressElement(
   api: BatchProgressApi,
   options: {
     batchId?: string;
-    original?: { command: string; timeoutMs?: number; maxConcurrent?: number };
+    original?: { command: string; shell?: string; timeoutMs?: number; maxConcurrent?: number };
     onConfirmationRequired?: (detail: unknown) => void;
     onRerunStart?: (batchId: string) => void;
     pollIntervalMs?: number;
@@ -226,6 +226,25 @@ describe("BatchProgressPanel", () => {
     ]);
     expect(onRerunStart).toHaveBeenCalledWith("batch-2");
     expect(mounted.container.textContent).toContain("fixed");
+  });
+
+  it("reruns with the batch's shell and keeps POSIX reruns unchanged", async () => {
+    const api = fakeApi();
+    mounted = mount(progressElement(api, { original: { command: "Get-Date", shell: "powershell", timeoutMs: 30000, maxConcurrent: 4 } }));
+    await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(mounted.container, "重新执行失败目标");
+    await flush();
+    const request = (api.rerun as ReturnType<typeof vi.fn>).mock.calls[0][0] as BatchRerunRequest;
+    expect(request).toMatchObject({ command: "Get-Date", shell: "powershell" });
+    mounted.unmount();
+
+    const posixApi = fakeApi();
+    mounted = mount(progressElement(posixApi, { original: { command: "uptime", shell: "posix" } }));
+    await flushUntil(() => mounted?.container.textContent?.includes("重新执行失败目标") ?? false);
+    clickButton(mounted.container, "重新执行失败目标");
+    await flush();
+    const posixRequest = (posixApi.rerun as ReturnType<typeof vi.fn>).mock.calls[0][0] as BatchRerunRequest;
+    expect(posixRequest).not.toHaveProperty("shell");
   });
 
   it("switches to the rerun batch before the rerun resolves and renders the returned final batch", async () => {

@@ -107,6 +107,7 @@ type auditPayload struct {
 	OwnerID       string `json:"ownerId,omitempty"`
 	BatchID       string `json:"batchId"`
 	Command       string `json:"command,omitempty"`
+	Shell         Shell  `json:"shell"`
 	CommandHash   string `json:"commandHash,omitempty"`
 	TargetSetHash string `json:"targetSetHash,omitempty"`
 	Environment   string `json:"environment,omitempty"`
@@ -147,6 +148,7 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 	if err != nil {
 		return Batch{}, err
 	}
+	request.Shell, _ = NormalizeShell(request.Shell)
 	if s.resolver == nil {
 		return Batch{}, fmt.Errorf("%w: no session resolver", ErrUnsupported)
 	}
@@ -208,7 +210,35 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 		}
 		return Batch{}, preflightErr
 	}
-	challenge := newProductionChallenge(request.BatchID, ownerID, request.Command, targets, classification)
+	plans := planTargets(runCtx, request.Shell, PowerShellTargetsAllowed(ctx), targets, request.Command, concurrency)
+	if runCtx.Err() != nil {
+		return s.finishWithHistory(runCtx, ownerID, request, started, targets, canceledResults(request.SessionIDs, targets), classification.production()), nil
+	}
+	runnable := make([]int, 0, len(targets))
+	runnableTargets := make([]Target, 0, len(targets))
+	for index, plan := range plans {
+		if plan.skip == "" {
+			runnable = append(runnable, index)
+			runnableTargets = append(runnableTargets, targets[index])
+		}
+	}
+	if len(runnable) != len(targets) {
+		// Skipped targets receive nothing, so only the targets that run are confirmed.
+		classification, err = s.classifyProductionTargets(ctx, ownerID, runnableTargets)
+		if err != nil {
+			return Batch{}, fmt.Errorf("classify production targets: %w", err)
+		}
+	}
+	results := make([]Result, len(targets))
+	for index, plan := range plans {
+		if plan.skip != "" {
+			results[index] = skippedResult(targets[index], plan.skip)
+		}
+	}
+	if len(runnable) == 0 {
+		return s.finishWithHistory(runCtx, ownerID, request, started, targets, results, false), nil
+	}
+	challenge := newProductionChallenge(request.BatchID, ownerID, request.Shell, request.Command, runnableTargets, classification)
 	if err := validateProductionConfirmation(request.ProductionConfirmation, challenge); err != nil {
 		return Batch{}, err
 	}
@@ -217,20 +247,24 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 	}
 	s.startHistory(runCtx, ownerID, request, started, targets, classification.production())
 	tracker := NewProgressTracker(request.BatchID, request.SessionIDs)
+	for index, plan := range plans {
+		if plan.skip != "" {
+			_ = tracker.Finish(targets[index].SessionID, results[index], started)
+		}
+	}
 	// Publish the fully constructed tracker under the service mutex so
 	// progress readers never observe it mid-construction.
 	s.mu.Lock()
 	active.progress = tracker
 	s.mu.Unlock()
 
-	results := make([]Result, len(targets))
-	jobs := make(chan int, len(targets))
-	for index := range targets {
+	jobs := make(chan int, len(runnable))
+	for _, index := range runnable {
 		jobs <- index
 	}
 	close(jobs)
-	if concurrency > len(targets) {
-		concurrency = len(targets)
+	if concurrency > len(runnable) {
+		concurrency = len(runnable)
 	}
 	var workers sync.WaitGroup
 	for range concurrency {
@@ -246,7 +280,7 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 				}
 				results[index] = func() Result {
 					defer active.executions.Done()
-					result, err := ExecuteTargetStreamCaptured(runCtx, tracker, target, request.Command, TargetStreamOptions{
+					result, err := ExecuteTargetStreamCaptured(runCtx, tracker, target, plans[index].command, TargetStreamOptions{
 						Timeout: timeout, Now: s.now, OutputLimit: s.outputLimit,
 						Interactor: request.Interactor,
 						OnAnswered: func(record AnswerRecord) { s.auditInput(ctx, ownerID, request, record) },
@@ -707,7 +741,7 @@ func (s *Service) audit(ctx context.Context, ownerID string, request Request, re
 	}
 	duration := result.DurationMS
 	payload := auditPayload{
-		BatchID: request.BatchID, Command: request.Command, Status: result.Status,
+		BatchID: request.BatchID, Command: request.Command, Shell: request.Shell, Status: result.Status,
 		Error: result.Error, Truncated: result.Truncated,
 	}
 	if challenge != nil {
@@ -760,7 +794,7 @@ type inputAuditPayload struct {
 
 func (s *Service) finishedBatch(request Request, started time.Time, results []Result) Batch {
 	return Batch{
-		BatchID: request.BatchID, Command: request.Command,
+		BatchID: request.BatchID, Command: request.Command, Shell: request.Shell,
 		StartedAt: started.UnixMilli(), FinishedAt: s.now().UnixMilli(), Results: results,
 	}
 }
@@ -776,6 +810,13 @@ func canceledResults(sessionIDs []string, targets []Target) []Result {
 		results[index] = canceledResult(target)
 	}
 	return results
+}
+
+func skippedResult(target Target, reason string) Result {
+	return Result{
+		SessionID: target.SessionID, SessionName: target.SessionName, AssetID: target.AssetID,
+		Status: StatusSkipped, Error: reason, environment: target.Environment,
+	}
 }
 
 func canceledResult(target Target) Result {
@@ -842,6 +883,9 @@ func validateRequest(request Request) (time.Duration, int, error) {
 			return 0, 0, fmt.Errorf("%w: duplicate sessionId %s", ErrInvalid, sessionID)
 		}
 		seen[sessionID] = struct{}{}
+	}
+	if _, err := NormalizeShell(request.Shell); err != nil {
+		return 0, 0, err
 	}
 	if strings.TrimSpace(request.Command) == "" || len(request.Command) > MaxCommandBytes || strings.ContainsAny(request.Command, "\r\n\x00") {
 		return 0, 0, fmt.Errorf("%w: command must be one non-empty line of at most %d bytes", ErrInvalid, MaxCommandBytes)

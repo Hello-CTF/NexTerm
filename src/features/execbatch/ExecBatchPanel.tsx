@@ -4,12 +4,15 @@ import { useWorkspaceList, type Workspace } from "../../app/store";
 import { assetApi, type Asset, type SessionInfo } from "../../ipc/commands";
 import {
   createExecBatchId,
+  EXEC_BATCH_SHELLS,
   execBatchApi,
   targetSetApi,
   type ExecBatch,
   type ExecBatchRequest,
   type ExecBatchResult,
+  type ExecBatchShell,
   type ExecBatchStatus,
+  type TargetCapability,
 } from "../../ipc/execBatchApi";
 import { getProductionChallenge, type ExecBatchProductionChallenge } from "../production/productionChallenge";
 import { useAuth } from "../auth/store";
@@ -63,14 +66,19 @@ function assetEnvCount(asset: Asset | undefined): number {
   return env && typeof env === "object" && !Array.isArray(env) ? Object.keys(env).length : 0;
 }
 
+// The tools other than batch execution send POSIX commands, so they keep to SSH hosts and managed devices.
+const POSIX_TOOL_KINDS: readonly string[] = ["ssh", "device"];
+const EXEC_TARGET_KINDS: readonly string[] = ["ssh", "device", "winrm", "local"];
+
 function collectTargets(
   sessions: readonly SessionInfo[],
   assets: readonly Asset[],
   workspaces: readonly Workspace[],
+  kinds: readonly string[] = POSIX_TOOL_KINDS,
 ): TargetSetPickerTarget[] {
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
   return sessions
-    .filter((session) => (session.kind === "ssh" || session.kind === "device") && session.status === "connected")
+    .filter((session) => kinds.includes(session.kind) && session.status === "connected")
     .map((session) => {
       const asset = session.assetId ? assetsById.get(session.assetId) : undefined;
       const sources = workspaces.filter((workspace) => workspaceIncludesSession(workspace, session.id));
@@ -81,7 +89,13 @@ function collectTargets(
         id: session.id,
         label: asset?.name.trim() || session.name,
         sessionName: session.name,
-        endpoint: host ? `${username ? `${username}@` : ""}${host}` : session.kind === "device" ? t("受管设备 · 执行前需确认") : null,
+        endpoint: host
+          ? `${username ? `${username}@` : ""}${host}`
+          : session.kind === "device"
+            ? t("受管设备 · 执行前需确认")
+            : session.kind === "local"
+              ? t("本地会话")
+              : null,
         tags: assetTagValues(asset?.tags ?? ""),
         workspaceNames: [...new Set(sources.map((workspace) => workspace.title || workspace.id))],
         envCount: assetEnvCount(asset),
@@ -95,11 +109,47 @@ const STATUS_LABELS: Record<ExecBatchStatus, string> = {
   transport_error: t("传输错误"),
   timeout: t("超时"),
   canceled: t("已取消"),
+  skipped: t("已跳过"),
 };
+
+const SHELL_LABELS: Record<ExecBatchShell, string> = {
+  posix: "POSIX shell",
+  powershell: "PowerShell",
+  cmd: "cmd",
+};
+
+const SHELL_PLACEHOLDERS: Record<ExecBatchShell, string> = {
+  posix: t("例如：uname -a"),
+  powershell: t("例如：Get-CimInstance Win32_OperatingSystem | Select-Object Caption"),
+  cmd: t("例如：ver"),
+};
+
+const PLATFORM_LABELS: Record<string, string> = {
+  posix: "POSIX",
+  windows: "Windows",
+  unknown: t("平台未知"),
+};
+
+function shellSupportFor(capability: TargetCapability | undefined, shell: ExecBatchShell) {
+  return capability?.shells.find((support) => support.shell === shell);
+}
+
+// shellBadge marks each target with its platform and whether it runs the chosen shell; targets that cannot are
+// skipped by the backend and say so here before anything runs.
+function shellBadge(capability: TargetCapability | undefined, shell: ExecBatchShell): TargetSetPickerTarget["badge"] {
+  if (!capability) return undefined;
+  if (capability.error) return { label: t("不可用"), tone: "skip", title: capability.error };
+  const support = shellSupportFor(capability, shell);
+  const platform = PLATFORM_LABELS[capability.platform] ?? capability.platform;
+  if (support?.support === "unsupported") return { label: t("{platform} · 将跳过", { platform }), tone: "skip", title: support.reason };
+  if (support?.support === "detect") return { label: t("{platform} · 执行前检测", { platform }), tone: "warn", title: support.reason };
+  return { label: platform, tone: "ok" };
+}
 
 function statusClass(status: ExecBatchStatus): string {
   if (status === "success") return "text-green-300";
   if (status === "canceled") return "text-neutral-400";
+  if (status === "skipped") return "text-amber-300";
   if (status === "timeout") return "text-amber-300";
   return "text-red-300";
 }
@@ -111,6 +161,12 @@ function resultSummary(results: ExecBatchResult[]): string {
     .filter((status) => counts.has(status))
     .map((status) => `${STATUS_LABELS[status]} ${counts.get(status)}`)
     .join(" · ");
+}
+
+// shellCommandText names a non-POSIX shell next to the command the production confirmation shows.
+function shellCommandText(shell: string | undefined, command: string): string {
+  if (!shell || shell === "posix") return command;
+  return `[${SHELL_LABELS[shell as ExecBatchShell] ?? shell}] ${command}`;
 }
 
 function ResultOutput({ result }: { result: ExecBatchResult }) {
@@ -141,9 +197,26 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
     () => collectTargets(sessions, assetsQuery.data ?? [], workspaces),
     [sessions, assetsQuery.data, workspaces],
   );
+  const execTargetBase = useMemo(
+    () => collectTargets(sessions, assetsQuery.data ?? [], workspaces, EXEC_TARGET_KINDS),
+    [sessions, assetsQuery.data, workspaces],
+  );
+  const execTargetIds = useMemo(() => execTargetBase.map((target) => target.id).sort(), [execTargetBase]);
+  const shellsQuery = useQuery({
+    queryKey: ["exec-batch-target-shells", execTargetIds],
+    queryFn: () => execBatchApi.targetShells(execTargetIds),
+    enabled: execTargetIds.length > 0,
+    retry: false,
+  });
+  const capabilitiesById = useMemo(
+    () => new Map((shellsQuery.data ?? []).map((capability) => [capability.sessionId, capability])),
+    [shellsQuery.data],
+  );
   const [view, setView] = useState<"execute" | "drift" | "services" | "finder">("execute");
   const [selected, setSelected] = useState<string[]>([]);
   const [command, setCommand] = useState("");
+  const [shell, setShell] = useState<ExecBatchShell>("posix");
+  const shellChosenRef = useRef(false);
   const [concurrency, setConcurrency] = useState("4");
   const [timeoutSeconds, setTimeoutSeconds] = useState("30");
   const [runningId, setRunningId] = useState<string | null>(null);
@@ -169,17 +242,22 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
   // drop in-flight responses from the previous owner.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const targetSetsApi = useMemo(() => ({ ...targetSetApi }), [accountID]);
-  const availableIds = useMemo(() => targets.map((target) => target.id), [targets]);
+  const execTargets = useMemo(
+    () => execTargetBase.map((target) => ({ ...target, badge: shellBadge(capabilitiesById.get(target.id), shell) })),
+    [execTargetBase, capabilitiesById, shell],
+  );
+  const availableIds = useMemo(() => execTargets.map((target) => target.id), [execTargets]);
   const progressBatchId = runningId ?? rerunId ?? batch?.batchId ?? null;
   const progressCommand = batch && batch.command !== PER_TARGET_COMMANDS ? batch.command : command;
+  const progressShell = batch?.shell || shell;
 
   useEffect(() => {
-    const available = new Set(targets.map((target) => target.id));
+    const available = new Set(execTargetBase.map((target) => target.id));
     setSelected((current) => {
       const next = current.filter((id) => available.has(id));
       return next.length === current.length ? current : next;
     });
-  }, [targets]);
+  }, [execTargetBase]);
 
   useEffect(
     () => () => {
@@ -191,8 +269,27 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
     [],
   );
 
-  const selectedIds = targets.filter((target) => selected.includes(target.id)).map((target) => target.id);
+  const selectedIds = execTargets.filter((target) => selected.includes(target.id)).map((target) => target.id);
+  const selectedKey = selectedIds.join("\u0000");
   const running = runningId !== null;
+
+  // Until the user picks a shell, a selection made only of Windows targets defaults to PowerShell.
+  useEffect(() => {
+    if (shellChosenRef.current || running) return;
+    const ids = selectedKey ? selectedKey.split("\u0000") : [];
+    const platforms = ids.map((id) => capabilitiesById.get(id)?.platform);
+    const allWindows = platforms.length > 0 && platforms.every((platform) => platform === "windows");
+    setShell(allWindows ? "powershell" : "posix");
+  }, [selectedKey, capabilitiesById, running]);
+
+  const skippedTargets = selectedIds.flatMap((id) => {
+    const capability = capabilitiesById.get(id);
+    const support = shellSupportFor(capability, shell);
+    if (capability?.error) return [{ id, reason: capability.error }];
+    return support?.support === "unsupported" ? [{ id, reason: support.reason ?? "" }] : [];
+  });
+  const detectCount = selectedIds.filter((id) => shellSupportFor(capabilitiesById.get(id), shell)?.support === "detect").length;
+  const targetLabels = new Map(execTargets.map((target) => [target.id, target.label]));
 
   const runExecute = async (request: ExecBatchRequest) => {
     if (activeRef.current) return;
@@ -266,7 +363,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
       return;
     }
     if (selectedIds.length === 0) {
-      setError(t("请至少选择一个已连接的 SSH 或受管设备会话"));
+      setError(t("请至少选择一个已连接的会话"));
       return;
     }
     if (selectedIds.length > MAX_TARGETS) {
@@ -282,6 +379,8 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
       return;
     }
 
+    // POSIX is the backend default, so a POSIX request keeps its original shape.
+    const shellField = shell === "posix" ? {} : { shell };
     let analysis: ReturnType<typeof analyzeSnippetTemplate>;
     try {
       analysis = analyzeSnippetTemplate(command);
@@ -294,6 +393,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
         batchId: createExecBatchId(),
         sessionIds: selectedIds,
         command,
+        ...shellField,
         timeoutMs: timeout * 1000,
         maxConcurrent,
       });
@@ -306,7 +406,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
 
     const values = await promptForValues(t("填写批量执行变量"), analysis.variables);
     if (values === null || activeRef.current) return;
-    const targetsById = new Map(targets.map((target) => [target.id, target]));
+    const targetsById = new Map(execTargets.map((target) => [target.id, target]));
     const sessionsById = new Map(sessions.map((session) => [session.id, session]));
     const assetsById = new Map((assetsQuery.data ?? []).map((asset) => [asset.id, asset]));
     const renderTargets = selectedIds.map((id) => {
@@ -331,6 +431,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
         batchId: createExecBatchId(),
         sessionIds,
         command: renderedCommand,
+        ...shellField,
         timeoutMs: timeout * 1000,
         maxConcurrent,
       }));
@@ -429,7 +530,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
       <div className="nx-toolbar nx-wrap-toolbar flex-wrap">
         <IconServer size={14} className="text-neutral-500" />
         <h2 className="nx-toolbar-title">{t("多主机工具")}</h2>
-        <span className="nx-hint">{t("只能对当前已连接的 SSH 主机和受管设备执行。受管设备无环境标记，执行前需要确认。")}</span>
+        <span className="nx-hint">{t("只能对当前已连接的会话执行；批量执行也支持 WinRM 与本地会话。受管设备无环境标记，执行前需要确认。")}</span>
         <span className="nx-spacer" />
         <div className="nx-toolbar-views contents">
         <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "execute"} disabled={running || prompting} onClick={() => setView("execute")}>{t("批量执行")}</button>
@@ -473,7 +574,8 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
           disabled={running}
         />
         <TargetSetPicker
-          targets={targets}
+          targets={execTargets}
+          emptyMessage={t("没有已连接的 SSH、受管设备、WinRM 或本地会话。请先手动连接目标，批量执行不会自动连接。")}
           selectedIds={selectedIds}
           onChange={setSelected}
           disabled={running}
@@ -485,13 +587,51 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
           }
         />
 
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-neutral-500" role="group" aria-label={t("命令 shell")}>
+          <span>{t("Shell")}</span>
+          {EXEC_BATCH_SHELLS.map((value) => (
+            <button
+              key={value}
+              type="button"
+              className="nx-btn nx-btn-sm"
+              aria-pressed={shell === value}
+              disabled={running}
+              onClick={() => {
+                shellChosenRef.current = true;
+                setShell(value);
+                discardProductionConfirmation();
+              }}
+            >
+              {SHELL_LABELS[value]}
+            </button>
+          ))}
+          {shellsQuery.isError && (
+            <span className="text-amber-300">{t("未能读取目标平台：{value}", { value: describeError(shellsQuery.error) })}</span>
+          )}
+        </div>
+        {(skippedTargets.length > 0 || detectCount > 0) && (
+          <div className="flex flex-col gap-0.5 text-[11px] text-amber-300" data-testid="exec-batch-skip-preview" role="status">
+            {skippedTargets.length > 0 && (
+              <span>{t("将跳过 {count} 个目标，不会执行：", { count: skippedTargets.length })}</span>
+            )}
+            {skippedTargets.map((target) => (
+              <span key={target.id} className="truncate pl-2" title={target.reason}>
+                {t("{label}：{reason}", { label: targetLabels.get(target.id) ?? target.id, reason: target.reason })}
+              </span>
+            ))}
+            {detectCount > 0 && (
+              <span>{t("{count} 个 SSH 目标将在执行前检测是否为 Windows，不是则跳过", { count: detectCount })}</span>
+            )}
+          </div>
+        )}
+
         <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
           {t("命令")}
           <input
             className="nx-input font-mono text-xs"
             value={command}
             disabled={running}
-            placeholder={t("例如：uname -a")}
+            placeholder={SHELL_PLACEHOLDERS[shell]}
             aria-label={t("批量执行命令")}
             onChange={(event) => {
               setCommand(event.target.value);
@@ -534,7 +674,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
               {canceling ? t("正在取消…") : t("取消本批次")}
             </button>
           ) : (
-            <button type="submit" className="nx-btn nx-btn-primary" disabled={targets.length === 0}>
+            <button type="submit" className="nx-btn nx-btn-primary" disabled={execTargets.length === 0}>
               <IconPlay size={13} />
               {t("执行")}
             </button>
@@ -570,6 +710,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
             pollIntervalMs={progressPollIntervalMs}
             original={{
               command: progressCommand,
+              shell: progressShell,
               timeoutMs: Number(timeoutSeconds) * 1000,
               maxConcurrent: Number(concurrency),
             }}
@@ -587,7 +728,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
           key={`${productionConfirmation.challenge.targetSetHash}:${productionConfirmation.challenge.commandHash}`}
           challenge={productionConfirmation.challenge}
           contentHash={productionConfirmation.challenge.commandHash}
-          command={productionConfirmation.request.command}
+          command={shellCommandText(productionConfirmation.request.shell, productionConfirmation.request.command)}
           onCancel={discardProductionConfirmation}
           onConfirm={confirmProduction}
         />
@@ -598,7 +739,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
           key={`rerun:${rerunConfirmation.challenge.targetSetHash}:${rerunConfirmation.challenge.commandHash}`}
           challenge={rerunConfirmation.challenge}
           contentHash={rerunConfirmation.challenge.commandHash}
-          command={rerunConfirmation.request.command}
+          command={shellCommandText(rerunConfirmation.request.shell, rerunConfirmation.request.command)}
           onCancel={() => setRerunConfirmation(null)}
           onConfirm={confirmRerunProduction}
         />
@@ -609,6 +750,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
           <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-[11px]">
             <span className="font-medium text-neutral-300">{t("结果矩阵")}</span>
             <span className="nx-hint">{resultSummary(batch.results)}</span>
+            <span className="nx-badge">{SHELL_LABELS[(batch.shell || "posix") as ExecBatchShell] ?? batch.shell}</span>
             <span className="nx-spacer" />
             <span className="nx-hint" title={batch.batchId}>
               {t("批次 {slice}", { slice: batch.batchId.slice(0, 8) })}
@@ -644,7 +786,11 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
                     </td>
                     <td data-label={t("耗时")} className="nx-mono">{result.durationMs} ms</td>
                     <td>
-                      {result.error && <div className="mb-1 whitespace-pre-wrap break-all text-red-300">{result.error}</div>}
+                      {result.error && (
+                        <div className={`mb-1 whitespace-pre-wrap break-all ${result.status === "skipped" ? "text-amber-300" : "text-red-300"}`}>
+                          {result.error}
+                        </div>
+                      )}
                       <ResultOutput result={result} />
                     </td>
                   </tr>

@@ -42,6 +42,7 @@ export interface BatchProgressSnapshot {
     succeeded: number;
     failed: number;
     canceled: number;
+    skipped?: number;
     finishedAt?: number;
     droppedEvents?: number;
   };
@@ -56,6 +57,7 @@ export interface BatchRerunResult {
 export interface BatchRerunRequest {
   batchId: string;
   command: string;
+  shell?: string;
   timeoutMs?: number;
   maxConcurrent?: number;
   results: BatchRerunResult[];
@@ -100,7 +102,7 @@ export interface BatchProgressHandle {
 export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
   api: BatchProgressApi;
   batchId: string;
-  original: { command: string; timeoutMs?: number; maxConcurrent?: number };
+  original: { command: string; shell?: string; timeoutMs?: number; maxConcurrent?: number };
   onConfirmationRequired?: (detail: unknown, request: BatchRerunRequest) => void;
   onRerunStart?: (batchId: string) => void;
   onFinished?: (batchId: string) => void;
@@ -311,6 +313,7 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
     rerunWith({
       batchId: newBatchId(),
       command: original.command,
+      ...(original.shell && original.shell !== "posix" ? { shell: original.shell } : {}),
       timeoutMs: original.timeoutMs,
       maxConcurrent: original.maxConcurrent,
       results: snapshot.targets.map((target) => ({ sessionId: target.sessionId, status: target.status ?? "" })),
@@ -350,6 +353,9 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
             <span>
               {t("成功 {succeeded} · 失败 {failed} · 取消 {canceled} / 共{value}{total}", { succeeded: snapshot.batch.succeeded, failed: snapshot.batch.failed, canceled: snapshot.batch.canceled, value: " ", total: snapshot.batch.total })}
             </span>
+            {(snapshot.batch.skipped ?? 0) > 0 && (
+              <span className="text-amber-300">{t("跳过 {skipped}", { skipped: snapshot.batch.skipped ?? 0 })}</span>
+            )}
             {snapshot.batch.phase === "running" && (
               <button type="button" className="nx-link" disabled={busy} onClick={cancel}>
                 {t("取消执行")}

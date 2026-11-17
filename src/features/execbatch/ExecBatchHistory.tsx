@@ -27,7 +27,10 @@ const TARGET_STATUS_LABELS: Record<ExecBatchStatus, string> = {
   transport_error: t("传输错误"),
   timeout: t("超时"),
   canceled: t("已取消"),
+  skipped: t("已跳过"),
 };
+
+const SHELL_LABELS: Record<string, string> = { posix: "POSIX shell", powershell: "PowerShell", cmd: "cmd" };
 
 const ERROR_KIND_LABELS: Record<string, string> = {
   remote_exit: t("远端非零退出"),
@@ -35,6 +38,7 @@ const ERROR_KIND_LABELS: Record<string, string> = {
   canceled: t("取消"),
   exit_status_missing: t("缺少退出状态"),
   transport: t("传输错误"),
+  shell_unsupported: t("不支持所选 shell，未执行"),
 };
 
 function formatTime(value: number | null): string {
@@ -44,7 +48,7 @@ function formatTime(value: number | null): string {
 function statusClass(status: string): string {
   if (status === "success") return "text-green-300";
   if (status === "canceled" || status === "running") return "text-neutral-400";
-  if (status === "timeout") return "text-amber-300";
+  if (status === "timeout" || status === "skipped") return "text-amber-300";
   return "text-red-300";
 }
 
@@ -55,6 +59,7 @@ function HistoryMatrix({ batch, results }: { batch: ExecBatchRow; results: ExecB
         <span className="font-medium text-neutral-300">{t("历史结果汇总")}</span>
         <span className="nx-hint" title={batch.id}>{t("批次 {slice}", { slice: batch.id.slice(0, 8) })}</span>
         <span className="nx-hint">{t("命令摘要 {slice}…", { slice: batch.commandHash.slice(0, 12) })}</span>
+        <span className="nx-badge">{SHELL_LABELS[batch.shell || "posix"] ?? batch.shell}</span>
       </div>
       <div className="overflow-x-auto">
         <table className="nx-table nx-table-cards nx-table-fixed min-w-[720px]">

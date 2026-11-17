@@ -82,7 +82,7 @@ func TestExecBatchIPCPreflightEnforcesOwnerKindAndConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	localSession, err := manager.ConnectFor(ownerA, session.Asset{ID: "asset-local", Name: "local", Kind: session.KindLocal})
+	telnetSession, err := manager.ConnectFor(ownerA, session.Asset{ID: "asset-telnet", Name: "telnet", Kind: session.KindTelnet})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,10 +99,10 @@ func TestExecBatchIPCPreflightEnforcesOwnerKindAndConnection(t *testing.T) {
 		t.Fatalf("other-owner preflight = %+v", response)
 	}
 	response = dispatchExecBatchTest(dispatcher, ownerA, "exec_batch_execute", execbatch.Request{
-		BatchID: "local-target", SessionIDs: []string{localSession.ID}, Command: "hostname",
+		BatchID: "telnet-target", SessionIDs: []string{telnetSession.ID}, Command: "hostname",
 	})
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("local target preflight = %+v", response)
+		t.Fatalf("telnet target preflight = %+v", response)
 	}
 	if err := manager.DisconnectFor(ownerA, sshSession.ID); err != nil {
 		t.Fatal(err)

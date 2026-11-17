@@ -39,6 +39,8 @@ const (
 	StatusTransportError Status = "transport_error"
 	StatusTimeout        Status = "timeout"
 	StatusCanceled       Status = "canceled"
+	// StatusSkipped marks a target that cannot run the batch's shell; nothing was sent to it.
+	StatusSkipped Status = "skipped"
 )
 
 type RunbookMetadata struct {
@@ -53,9 +55,11 @@ type RunbookMetadata struct {
 }
 
 type Request struct {
-	BatchID                string                  `json:"batchId"`
-	SessionIDs             []string                `json:"sessionIds"`
-	Command                string                  `json:"command"`
+	BatchID    string   `json:"batchId"`
+	SessionIDs []string `json:"sessionIds"`
+	Command    string   `json:"command"`
+	// Shell is the language Command is written in; empty means posix.
+	Shell                  Shell                   `json:"shell,omitempty"`
 	TimeoutMS              int64                   `json:"timeoutMs,omitempty"`
 	MaxConcurrent          int                     `json:"maxConcurrent,omitempty"`
 	ProductionConfirmation *ProductionConfirmation `json:"productionConfirmation,omitempty"`
@@ -73,6 +77,8 @@ type Target struct {
 	Environment string
 	Transport   base.Transport
 	Generation  uint64
+	// Exec is how Transport runs a command string; the zero value is a POSIX shell.
+	Exec TargetExec
 }
 
 type Resolver interface {
@@ -105,6 +111,7 @@ type Result struct {
 type Batch struct {
 	BatchID    string   `json:"batchId"`
 	Command    string   `json:"command"`
+	Shell      Shell    `json:"shell,omitempty"`
 	StartedAt  int64    `json:"startedAt"`
 	FinishedAt int64    `json:"finishedAt"`
 	Results    []Result `json:"results"`

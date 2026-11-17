@@ -882,6 +882,12 @@
       "channel": false,
       "stream": "none"
     },
+    "exec_batch_target_shells": {
+      "scope": "exec-batch",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "exec_batch_test_login": {
       "scope": "exec-batch",
       "nested": true,

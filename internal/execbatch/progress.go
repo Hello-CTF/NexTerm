@@ -39,8 +39,8 @@ type TargetProgress struct {
 }
 
 // BatchProgress rolls up the per-target states of one batch. Failed counts
-// finished targets that neither succeeded nor were canceled, matching the
-// history batch status semantics.
+// finished targets that neither succeeded, were canceled nor were skipped,
+// matching the history batch status semantics.
 type BatchProgress struct {
 	BatchID       string        `json:"batchId"`
 	Phase         ProgressPhase `json:"phase"`
@@ -50,6 +50,7 @@ type BatchProgress struct {
 	Succeeded     int           `json:"succeeded"`
 	Failed        int           `json:"failed"`
 	Canceled      int           `json:"canceled"`
+	Skipped       int           `json:"skipped"`
 	FinishedAt    int64         `json:"finishedAt,omitempty"`
 	DroppedEvents int64         `json:"droppedEvents,omitempty"`
 }
@@ -252,6 +253,8 @@ func (t *ProgressTracker) batchProgressLocked() BatchProgress {
 			progress.Succeeded++
 		case phase.Status == StatusCanceled:
 			progress.Canceled++
+		case phase.Status == StatusSkipped:
+			progress.Skipped++
 		default:
 			progress.Failed++
 		}

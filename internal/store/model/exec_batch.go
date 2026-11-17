@@ -5,18 +5,20 @@ type ExecBatchRow struct {
 	ID            string `gorm:"column:id;size:128;primaryKey" json:"id"`
 	CommandHash   string `gorm:"column:command_hash;size:64;not null" json:"commandHash"`
 	TargetSetHash string `gorm:"column:target_set_hash;size:64;not null" json:"targetSetHash"`
-	Status        string `gorm:"column:status;size:32;not null" json:"status"`
-	TargetCount   int32  `gorm:"column:target_count;not null" json:"targetCount"`
-	Production    bool   `gorm:"column:production;not null;default:0" json:"production"`
-	StartedAt     int64  `gorm:"column:started_at;not null;index:idx_exec_batch_owner_started,priority:2,sort:desc;index:idx_exec_batch_retention,priority:2,sort:desc" json:"startedAt"`
-	FinishedAt    *int64 `gorm:"column:finished_at;index:idx_exec_batch_retention,priority:1,sort:desc,where:finished_at IS NOT NULL" json:"finishedAt"`
-	RunbookID     string `gorm:"column:runbook_id;size:128;not null;default:'';index:idx_exec_batch_runbook_run,priority:1" json:"runbookId,omitempty"`
-	RunID         string `gorm:"column:run_id;size:128;not null;default:'';index:idx_exec_batch_runbook_run,priority:2" json:"runId,omitempty"`
-	StepNumber    int32  `gorm:"column:step_number;not null;default:0" json:"stepNumber,omitempty"`
-	StepCount     int32  `gorm:"column:step_count;not null;default:0" json:"stepCount,omitempty"`
-	GroupNumber   int32  `gorm:"column:group_number;not null;default:0" json:"groupNumber,omitempty"`
-	GroupCount    int32  `gorm:"column:group_count;not null;default:0" json:"groupCount,omitempty"`
-	SyncOptIn     bool   `gorm:"column:sync_opt_in;not null;default:0" json:"syncOptIn"`
+	// Shell is the command language of the batch: posix, powershell or cmd. Rows from before the column read as posix.
+	Shell       string `gorm:"column:shell;size:16;not null;default:'posix'" json:"shell,omitempty"`
+	Status      string `gorm:"column:status;size:32;not null" json:"status"`
+	TargetCount int32  `gorm:"column:target_count;not null" json:"targetCount"`
+	Production  bool   `gorm:"column:production;not null;default:0" json:"production"`
+	StartedAt   int64  `gorm:"column:started_at;not null;index:idx_exec_batch_owner_started,priority:2,sort:desc;index:idx_exec_batch_retention,priority:2,sort:desc" json:"startedAt"`
+	FinishedAt  *int64 `gorm:"column:finished_at;index:idx_exec_batch_retention,priority:1,sort:desc,where:finished_at IS NOT NULL" json:"finishedAt"`
+	RunbookID   string `gorm:"column:runbook_id;size:128;not null;default:'';index:idx_exec_batch_runbook_run,priority:1" json:"runbookId,omitempty"`
+	RunID       string `gorm:"column:run_id;size:128;not null;default:'';index:idx_exec_batch_runbook_run,priority:2" json:"runId,omitempty"`
+	StepNumber  int32  `gorm:"column:step_number;not null;default:0" json:"stepNumber,omitempty"`
+	StepCount   int32  `gorm:"column:step_count;not null;default:0" json:"stepCount,omitempty"`
+	GroupNumber int32  `gorm:"column:group_number;not null;default:0" json:"groupNumber,omitempty"`
+	GroupCount  int32  `gorm:"column:group_count;not null;default:0" json:"groupCount,omitempty"`
+	SyncOptIn   bool   `gorm:"column:sync_opt_in;not null;default:0" json:"syncOptIn"`
 	// RunbookVersion is the persisted template revision a run started from; 0 for ad-hoc runbooks.
 	RunbookVersion int32 `gorm:"column:runbook_version;not null;default:0" json:"runbookVersion,omitempty"`
 }

@@ -9,7 +9,8 @@ import (
 // RerunEligible reports whether a finished target status qualifies for a
 // failed-target-only rerun. Successful targets are not rerun, and canceled
 // targets are excluded on purpose: cancellation is a deliberate user action,
-// not a failure to retry.
+// not a failure to retry. Skipped targets cannot run the batch's shell, so a
+// rerun would only skip them again.
 func RerunEligible(status Status) bool {
 	switch status {
 	case StatusExitError, StatusTransportError, StatusTimeout:
@@ -33,7 +34,7 @@ func SelectRerunTargets(results []Result) []string {
 }
 
 // RerunRequest builds the rerun Request for the failed targets of a finished
-// batch, preserving the command, timeout, and concurrency of the original
+// batch, preserving the command, shell, timeout, and concurrency of the original
 // request plus the caller's production confirmation, which must be fresh:
 // the new batch ID and failed-only target set change the challenge hashes,
 // so the original batch's confirmation never validates here. Runbook
@@ -51,6 +52,7 @@ func RerunRequest(original Request, results []Result, newBatchID string) (Reques
 		BatchID:                newBatchID,
 		SessionIDs:             sessionIDs,
 		Command:                original.Command,
+		Shell:                  original.Shell,
 		TimeoutMS:              original.TimeoutMS,
 		MaxConcurrent:          original.MaxConcurrent,
 		ProductionConfirmation: original.ProductionConfirmation,

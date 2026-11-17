@@ -32,6 +32,7 @@ type execBatchRerunResult struct {
 type execBatchRerunRequest struct {
 	BatchID                string                            `json:"batchId"`
 	Command                string                            `json:"command"`
+	Shell                  execbatch.Shell                   `json:"shell,omitempty"`
 	TimeoutMS              int64                             `json:"timeoutMs,omitempty"`
 	MaxConcurrent          int                               `json:"maxConcurrent,omitempty"`
 	Results                []execBatchRerunResult            `json:"results"`
@@ -66,7 +67,7 @@ func registerExecBatchProgressCommands(dispatcher *ipc.Dispatcher, batches execB
 			results[index] = execbatch.Result{SessionID: result.SessionID, Status: execbatch.Status(result.Status)}
 		}
 		original := execbatch.Request{
-			Command: input.Command, TimeoutMS: input.TimeoutMS, MaxConcurrent: input.MaxConcurrent,
+			Command: input.Command, Shell: input.Shell, TimeoutMS: input.TimeoutMS, MaxConcurrent: input.MaxConcurrent,
 			ProductionConfirmation: input.ProductionConfirmation,
 		}
 		batch, err := batches.Rerun(ctx, ipc.OwnerID(ctx), original, results, input.BatchID)

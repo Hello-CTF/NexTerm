@@ -84,6 +84,7 @@ type productionConfirmationAuditPayload struct {
 	BatchID           string               `json:"batchId"`
 	TargetSetHash     string               `json:"targetSetHash"`
 	CommandHash       string               `json:"commandHash"`
+	Shell             Shell                `json:"shell"`
 	EnvironmentNames  []string             `json:"environmentNames"`
 	ConfirmedAt       int64                `json:"confirmedAt"`
 	ProductionTargets []ConfirmationTarget `json:"productionTargets"`
@@ -137,7 +138,7 @@ func (s *Service) classifyProductionTargets(ctx context.Context, ownerID string,
 
 // newProductionChallenge binds the confirmed target set, owner, and command
 // into the challenge hashes from the single batch classification.
-func newProductionChallenge(batchID, ownerID, command string, targets []Target, classification *productionClassification) *productionChallenge {
+func newProductionChallenge(batchID, ownerID string, shell Shell, command string, targets []Target, classification *productionClassification) *productionChallenge {
 	if !classification.production() {
 		return nil
 	}
@@ -160,7 +161,7 @@ func newProductionChallenge(batchID, ownerID, command string, targets []Target, 
 		Targets []ConfirmationTarget `json:"targets"`
 	}{BatchID: batchID, OwnerID: ownerID, Targets: allTargets})
 	return &productionChallenge{
-		batchID: batchID, targetSetHash: digest("target-set-v2", canonical), commandHash: commandDigest(command),
+		batchID: batchID, targetSetHash: digest("target-set-v2", canonical), commandHash: shellCommandDigest(shell, command),
 		requiredEnvironmentNames: append([]string(nil), classification.requiredEnvironmentNames...),
 		productionTargets:        append([]ConfirmationTarget(nil), classification.productionTargets...),
 	}
@@ -198,7 +199,7 @@ func (s *Service) auditProductionConfirmation(ctx context.Context, ownerID strin
 		Source: "user", Kind: "exec_batch_production_confirmation",
 		Payload: productionConfirmationAuditPayload{
 			OwnerID: ownerID, BatchID: request.BatchID, TargetSetHash: challenge.targetSetHash,
-			CommandHash: challenge.commandHash, EnvironmentNames: append([]string(nil), challenge.requiredEnvironmentNames...),
+			CommandHash: challenge.commandHash, Shell: request.Shell, EnvironmentNames: append([]string(nil), challenge.requiredEnvironmentNames...),
 			ConfirmedAt:       s.now().UnixMilli(),
 			ProductionTargets: append([]ConfirmationTarget(nil), challenge.productionTargets...),
 		},
@@ -211,6 +212,15 @@ func execAuditContext(ctx context.Context, ownerID string) context.Context {
 
 func commandDigest(command string) string {
 	return digest("command-v1", []byte(command))
+}
+
+// shellCommandDigest binds the shell into the command hash, so a confirmation given for one shell never
+// authorizes the same text under another. POSIX keeps the original digest.
+func shellCommandDigest(shell Shell, command string) string {
+	if shell == "" || shell == ShellPOSIX {
+		return commandDigest(command)
+	}
+	return digest("command-shell-v1", []byte(string(shell)+"\x00"+command))
 }
 
 func digest(domain string, value []byte) string {

@@ -28,6 +28,15 @@ const (
 	ExecBatchErrorCanceled         = "canceled"
 	ExecBatchErrorExitStatusAbsent = "exit_status_missing"
 	ExecBatchErrorTransport        = "transport"
+	// ExecBatchErrorShellUnsupported marks a skipped target that cannot run the batch's shell.
+	ExecBatchErrorShellUnsupported = "shell_unsupported"
+)
+
+// Exec batch shells; a row without a shell is posix.
+const (
+	ExecBatchShellPOSIX      = "posix"
+	ExecBatchShellPowerShell = "powershell"
+	ExecBatchShellCmd        = "cmd"
 )
 
 const (
@@ -44,6 +53,7 @@ type ExecBatchHistoryItem struct {
 	ID             string `json:"id"`
 	CommandHash    string `json:"commandHash"`
 	TargetSetHash  string `json:"targetSetHash"`
+	Shell          string `json:"shell,omitempty"`
 	Status         string `json:"status"`
 	TargetCount    int32  `json:"targetCount"`
 	Production     bool   `json:"production"`
@@ -77,13 +87,16 @@ func (s *Store) ExecBatchHistorySave(ctx context.Context, row ExecBatchRow, resu
 		return badParam(err)
 	}
 	row.OwnerID = ipc.OwnerID(ctx)
+	if row.Shell == "" {
+		row.Shell = ExecBatchShellPOSIX
+	}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		queries := query.Use(tx)
 		batch := queries.ExecBatchRow
 		if err := batch.WithContext(ctx).Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
-				"command_hash", "target_set_hash", "status", "target_count", "production", "started_at", "finished_at",
+				"command_hash", "target_set_hash", "shell", "status", "target_count", "production", "started_at", "finished_at",
 				"runbook_id", "run_id", "step_number", "step_count", "group_number", "group_count",
 			}),
 		}).Create(&row); err != nil {
@@ -158,7 +171,7 @@ func execBatchHistoryItem(row ExecBatchRow) ExecBatchHistoryItem {
 		scope = ExecBatchHistoryScopeOwnerless
 	}
 	return ExecBatchHistoryItem{
-		ID: row.ID, CommandHash: row.CommandHash, TargetSetHash: row.TargetSetHash,
+		ID: row.ID, CommandHash: row.CommandHash, TargetSetHash: row.TargetSetHash, Shell: execBatchShell(row.Shell),
 		Status: row.Status, TargetCount: row.TargetCount, Production: row.Production,
 		StartedAt: row.StartedAt, FinishedAt: row.FinishedAt,
 		RunbookID: row.RunbookID, RunID: row.RunID, StepNumber: row.StepNumber, StepCount: row.StepCount,
@@ -207,7 +220,15 @@ func (s *Store) ExecBatchHistoryGet(ctx context.Context, batchID string, scopes 
 		Scan(&results); err != nil {
 		return ExecBatchHistory{}, dbError(err)
 	}
+	row.Shell = execBatchShell(row.Shell)
 	return ExecBatchHistory{Batch: *row, Results: results}, nil
+}
+
+func execBatchShell(shell string) string {
+	if shell == "" {
+		return ExecBatchShellPOSIX
+	}
+	return shell
 }
 
 func execBatchHistoryOwnerConditions(ctx context.Context, table string) []gen.Condition {
@@ -246,6 +267,11 @@ func validateExecBatchHistory(row ExecBatchRow, results []ExecBatchResultRow) er
 			return fmt.Errorf("invalid runbook history command group")
 		}
 	}
+	switch row.Shell {
+	case "", ExecBatchShellPOSIX, ExecBatchShellPowerShell, ExecBatchShellCmd:
+	default:
+		return fmt.Errorf("invalid exec batch shell")
+	}
 	switch row.Status {
 	case ExecBatchStatusRunning:
 		if row.FinishedAt != nil || len(results) != 0 {
@@ -273,13 +299,13 @@ func validateExecBatchHistory(row ExecBatchRow, results []ExecBatchResultRow) er
 		positions[result.Position] = struct{}{}
 		sessions[result.SessionID] = struct{}{}
 		switch result.Status {
-		case "success", "exit_error", "transport_error", "timeout", "canceled":
+		case "success", "exit_error", "transport_error", "timeout", "canceled", "skipped":
 		default:
 			return fmt.Errorf("invalid exec batch result status")
 		}
 		switch result.ErrorKind {
 		case "", ExecBatchErrorRemoteExit, ExecBatchErrorDeadlineExceeded, ExecBatchErrorCanceled,
-			ExecBatchErrorExitStatusAbsent, ExecBatchErrorTransport:
+			ExecBatchErrorExitStatusAbsent, ExecBatchErrorTransport, ExecBatchErrorShellUnsupported:
 		default:
 			return fmt.Errorf("invalid exec batch error kind")
 		}

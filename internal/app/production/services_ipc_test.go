@@ -174,8 +174,9 @@ func TestServicesIPCWindowsListChecksOwnerAndKeepsGenericBatchesPOSIXOnly(t *tes
 	if len(listed.Hosts) != 1 || listed.Hosts[0].Platform != hostservices.PlatformWindows || listed.Hosts[0].FailureKind != "" {
 		t.Fatalf("services_list = %+v", listed)
 	}
-	response = dispatchExecBatchTest(dispatcher, ownerA, "exec_batch_execute", execbatch.Request{BatchID: "generic", SessionIDs: []string{winrm.ID}, Command: "hostname"})
-	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("generic batch on WinRM = %+v", response)
+	// A generic batch defaults to POSIX, so the WinRM target is reported as skipped and receives nothing.
+	generic := decodeExecBatchTest[execbatch.Batch](t, dispatchExecBatchTest(dispatcher, ownerA, "exec_batch_execute", execbatch.Request{BatchID: "generic", SessionIDs: []string{winrm.ID}, Command: "hostname"}))
+	if len(generic.Results) != 1 || generic.Results[0].Status != execbatch.StatusSkipped || generic.Results[0].Error == "" {
+		t.Fatalf("generic batch on WinRM = %+v", generic)
 	}
 }

@@ -1101,6 +1101,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.execBatchRerunRequest", ts: "ExecBatchRerunRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/execbatch.Batch", ts: "ExecBatch" },
     },
+    "exec_batch_target_shells": {
+      scope: "exec-batch",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.execBatchTargetShellsRequest", ts: "ExecBatchTargetShellsRequest" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/execbatch.TargetCapability", ts: "TargetCapability[]" },
+    },
     "exec_batch_test_login": {
       scope: "exec-batch",
       nested: true,
@@ -3846,6 +3854,10 @@ export interface IPCCommandTypeMap {
   "exec_batch_rerun": {
     input: contractTypes.ExecBatchRerunRequest;
     output: contractTypes.ExecBatch;
+  };
+  "exec_batch_target_shells": {
+    input: contractTypes.ExecBatchTargetShellsRequest;
+    output: contractTypes.TargetCapability[];
   };
   "exec_batch_test_login": {
     input: contractTypes.AssetProbeBatchRequest;

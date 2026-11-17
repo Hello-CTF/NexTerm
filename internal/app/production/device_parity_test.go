@@ -51,15 +51,36 @@ func TestExecBatchResolverMarksDeviceAsUnknownEnvironment(t *testing.T) {
 	}
 }
 
-func TestExecBatchResolverRejectsWindowsDevicesInPlainLanguage(t *testing.T) {
+func TestExecBatchResolverMarksWindowsDevicesAsPowerShell(t *testing.T) {
 	ctx := ipcWithUser("owner-a")
 	rig, sessionID := newDeviceSessionRig(t, "windows")
-	_, err := execBatchResolver{sessions: rig.manager}.Resolve(ctx, sessionID)
-	if !errors.Is(err, execbatch.ErrUnsupported) {
-		t.Fatalf("windows device err = %v, want ErrUnsupported", err)
+	target, err := execBatchResolver{sessions: rig.manager}.Resolve(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("windows device err = %v", err)
 	}
-	if strings.Contains(err.Error(), "unsupported") || !strings.Contains(err.Error(), "Windows 设备") {
-		t.Fatalf("message should be Chinese only: %q", err.Error())
+	if target.Exec != execbatch.ExecPowerShellCommand {
+		t.Fatalf("windows device exec = %q, want powershell -Command", target.Exec)
+	}
+	linux, linuxSession := newDeviceSessionRig(t, "linux")
+	target, err = execBatchResolver{sessions: linux.manager}.Resolve(ctx, linuxSession)
+	if err != nil || target.Exec != execbatch.ExecPOSIX {
+		t.Fatalf("linux device exec = %q, %v", target.Exec, err)
+	}
+}
+
+func TestExecBatchSkipsWindowsDeviceForPOSIXInPlainLanguage(t *testing.T) {
+	ctx := ipcWithUser("owner-a")
+	rig, sessionID := newDeviceSessionRig(t, "windows")
+	batches := execbatch.New(execbatch.Config{Resolver: execBatchResolver{sessions: rig.manager}})
+	batch, err := batches.Execute(ctx, "owner-a", execbatch.Request{BatchID: "win-posix", SessionIDs: []string{sessionID}, Command: "uname -a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Results) != 1 || batch.Results[0].Status != execbatch.StatusSkipped {
+		t.Fatalf("results = %+v, want one skipped target", batch.Results)
+	}
+	if reason := batch.Results[0].Error; strings.Contains(reason, "unsupported") || !strings.Contains(reason, "Windows") || !strings.Contains(reason, "PowerShell") {
+		t.Fatalf("skip reason should name the alternative shells in Chinese: %q", reason)
 	}
 }
 

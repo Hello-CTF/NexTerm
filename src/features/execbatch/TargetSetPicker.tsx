@@ -12,7 +12,11 @@ export interface TargetSetPickerTarget {
   envCount: number;
   /** The asset record marks the host as Windows (WinRM, or SSH with a PowerShell shell). */
   windows?: boolean;
+  /** A short marker shown next to the label, such as whether the target runs the chosen shell. */
+  badge?: { label: string; tone: "ok" | "warn" | "skip"; title?: string };
 }
+
+const BADGE_TONES = { ok: "nx-badge", warn: "nx-badge nx-badge-amber", skip: "nx-badge nx-badge-red" } as const;
 
 export function filterTargetSet(
   targets: readonly TargetSetPickerTarget[],
@@ -125,6 +129,11 @@ export function TargetSetPicker({
                     <span className="truncate font-medium text-neutral-200" title={target.label}>
                       {target.label}
                     </span>
+                    {target.badge && (
+                      <span className={`${BADGE_TONES[target.badge.tone]} shrink-0`} title={target.badge.title} data-testid="target-shell-badge">
+                        {target.badge.label}
+                      </span>
+                    )}
                     {target.envCount > 0 && (
                       <span className="nx-badge nx-badge-amber shrink-0" title={t("{envCount} 个环境变量", { envCount: target.envCount })}>
                         env {target.envCount}

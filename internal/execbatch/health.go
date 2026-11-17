@@ -158,6 +158,11 @@ func (s *Service) probeHealthTarget(ctx context.Context, batchID string, target 
 		return result
 	}
 	resolved.SessionID = target.SessionID
+	if support := shellSupport(resolved.Exec, ShellPOSIX); support.Support == ShellUnsupported {
+		// The probe is a POSIX script; Windows targets keep the error status they had when the resolver refused them.
+		result.Error = support.Reason
+		return result
+	}
 	if ctx.Err() != nil {
 		result.Status = StatusCanceled
 		result.Error = ctx.Err().Error()

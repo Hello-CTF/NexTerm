@@ -65,6 +65,7 @@ const TARGET_STATUS_LABELS: Record<ExecBatchStatus, string> = {
   transport_error: t("连接出错"),
   timeout: t("超时"),
   canceled: t("已取消"),
+  skipped: t("已跳过"),
 };
 
 function terminalRun(status: string): boolean {

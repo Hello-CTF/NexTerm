@@ -385,6 +385,7 @@ export type BatchProgress = {
   succeeded: number;
   failed: number;
   canceled: number;
+  skipped: number;
   finishedAt?: number;
   droppedEvents?: number;
 };
@@ -1114,6 +1115,7 @@ export type Environment = {
 export type ExecBatch = {
   batchId: string;
   command: string;
+  shell?: string;
   startedAt: number;
   finishedAt: number;
   results: ExecBatchResult[];
@@ -1183,6 +1185,7 @@ export type ExecBatchHistoryItem = {
   id: string;
   commandHash: string;
   targetSetHash: string;
+  shell?: string;
   status: string;
   targetCount: number;
   production: boolean;
@@ -1231,6 +1234,7 @@ export type ExecBatchRequest = {
   batchId: string;
   sessionIds: string[];
   command: string;
+  shell?: string;
   timeoutMs?: number;
   maxConcurrent?: number;
   productionConfirmation?: ProductionConfirmation | null;
@@ -1240,6 +1244,7 @@ export type ExecBatchRequest = {
 export type ExecBatchRerunRequest = {
   batchId: string;
   command: string;
+  shell?: string;
   timeoutMs?: number;
   maxConcurrent?: number;
   results: ExecBatchRerunResult[];
@@ -1285,6 +1290,7 @@ export type ExecBatchRow = {
   id: string;
   commandHash: string;
   targetSetHash: string;
+  shell?: string;
   status: string;
   targetCount: number;
   production: boolean;
@@ -1307,6 +1313,10 @@ export type ExecBatchRunHistory = {
   reachedStep: number;
   stepCount: number;
   batches: ExecBatchHistory[];
+};
+
+export type ExecBatchTargetShellsRequest = {
+  sessionIds: string[];
 };
 
 export type ExecTargetSet = {
@@ -3047,6 +3057,12 @@ export type ShellProfile = {
   args: string[];
 };
 
+export type ShellSupport = {
+  shell: string;
+  support: string;
+  reason?: string;
+};
+
 export type SkippedNewerEntry = {
   kind: string;
   id: string;
@@ -3477,6 +3493,13 @@ export type TableIndex = {
 export type TablesRequest = {
   connId: string;
   schema?: string;
+};
+
+export type TargetCapability = {
+  sessionId: string;
+  platform: string;
+  shells: ShellSupport[];
+  error?: string;
 };
 
 export type TargetOutputSnapshot = {

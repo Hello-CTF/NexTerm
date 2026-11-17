@@ -2,14 +2,17 @@ package production
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/device"
 )
 
@@ -20,6 +23,10 @@ type execBatchIPCService struct {
 
 type execBatchCancelRequest struct {
 	BatchID string `json:"batchId"`
+}
+
+type execBatchTargetShellsRequest struct {
+	SessionIDs []string `json:"sessionIds"`
 }
 
 type execBatchHistoryGetRequest struct {
@@ -100,6 +107,16 @@ func (s *execBatchIPCService) register(dispatcher *ipc.Dispatcher) error {
 	}); err != nil {
 		return err
 	}
+	if err := ipc.Register(dispatcher, "exec_batch_target_shells", func(ctx context.Context, _ *ipc.Call, input execBatchTargetShellsRequest) ([]execbatch.TargetCapability, error) {
+		ctx = productionSessionRequestContext(ctx)
+		capabilities, err := s.batches.TargetCapabilities(ctx, input.SessionIDs)
+		if err != nil {
+			return nil, execBatchIPCError(err)
+		}
+		return capabilities, nil
+	}); err != nil {
+		return err
+	}
 	if err := ipc.Register(dispatcher, "exec_batch_history_list", func(ctx context.Context, _ *ipc.Call, input store.ExecBatchHistoryQuery) (store.ExecBatchHistoryPage, error) {
 		if s.history == nil {
 			return store.ExecBatchHistoryPage{}, ipc.NewError(ipc.CodeUnsupported, "批量执行历史不可用")
@@ -130,9 +147,9 @@ func (r execBatchResolver) Resolve(ctx context.Context, sessionID string) (execb
 		return execbatch.Target{}, err
 	}
 	info := connected.Info()
-	powerShell := execbatch.PowerShellTargetsAllowed(ctx)
-	psKind := powerShell && (info.Kind == session.KindWinRM || info.Kind == session.KindLocal)
-	if info.Kind != session.KindSSH && info.Kind != session.KindDevice && !psKind {
+	switch info.Kind {
+	case session.KindSSH, session.KindDevice, session.KindWinRM, session.KindLocal:
+	default:
 		return execbatch.Target{}, fmt.Errorf("%w: %s is %s", execbatch.ErrUnsupported, sessionID, info.Kind)
 	}
 	if info.Status != session.StatusConnected {
@@ -148,9 +165,7 @@ func (r execBatchResolver) Resolve(ctx context.Context, sessionID string) (execb
 	target := execbatch.Target{
 		SessionID: info.ID, SessionName: info.Name, AssetID: info.AssetID,
 		Transport: transport, Generation: transport.Generation(),
-	}
-	if deviceTransport, ok := transport.(*device.Transport); ok && deviceTransport.Platform() == "windows" && !powerShell {
-		return execbatch.Target{}, unsupportedReason{message: "Windows 设备暂不支持批量执行（命令按 POSIX shell 编写），请改用终端手动操作", sentinel: execbatch.ErrUnsupported}
+		Exec: execBatchTargetExec(info.Kind, connected.Asset(), transport, runtime.GOOS),
 	}
 	if info.Kind == session.KindDevice {
 		// Devices have no asset row or environment tag; the unknown environment is classified as
@@ -173,6 +188,43 @@ func (r execBatchResolver) Resolve(ctx context.Context, sessionID string) (execb
 		target.Hostname = *asset.Host
 	}
 	return target, nil
+}
+
+// execBatchTargetExec tells the batch how a session's exec channel runs a command string: the shell its
+// transport starts, and for SSH whether the host is known to be Windows OpenSSH.
+func execBatchTargetExec(kind string, asset session.Asset, transport base.Transport, goos string) execbatch.TargetExec {
+	switch kind {
+	case session.KindWinRM:
+		return execbatch.ExecPowerShellScript
+	case session.KindLocal:
+		if goos == "windows" {
+			return execbatch.ExecPowerShellCommand
+		}
+		return execbatch.ExecPOSIX
+	case session.KindDevice:
+		// Device agents report their GOOS; Windows agents run commands through powershell.exe -Command.
+		if deviceTransport, ok := transport.(*device.Transport); ok && deviceTransport.Platform() == "windows" {
+			return execbatch.ExecPowerShellCommand
+		}
+		return execbatch.ExecPOSIX
+	}
+	var options struct {
+		Shell string `json:"shell"`
+	}
+	if raw, err := json.Marshal(asset.Options); err == nil {
+		_ = json.Unmarshal(raw, &options)
+	}
+	if windowsShell(options.Shell) {
+		return execbatch.ExecWindowsSSH
+	}
+	// A file browser probe of a Windows OpenSSH host leaves its default shell behind; nothing is probed here.
+	if detector, ok := transport.(interface{ DetectedShell() string }); ok {
+		switch session.ClassifyShellProgram(detector.DetectedShell()) {
+		case session.ShellPowerShell, session.ShellCmd:
+			return execbatch.ExecWindowsSSH
+		}
+	}
+	return execbatch.ExecSSH
 }
 
 func execBatchIPCError(err error) error {

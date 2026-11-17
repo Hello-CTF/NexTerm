@@ -12,9 +12,11 @@ import type {
   ExecBatchHealthRequest,
   ExecBatchHealthResult,
   ExecBatchHealthTarget,
+  TargetCapability,
 } from "./generated/types";
 
 export type {
+  TargetCapability,
   ExecBatch,
   ExecBatchCancelResult,
   ExecBatchHistory,
@@ -31,6 +33,8 @@ export type {
 export type { ExecBatchHistoryItem, ExecBatchResultRow, ExecBatchRow } from "./generated/types";
 export type ExecBatchStatus = ExecBatchResult["status"];
 export type ExecBatchHistoryScope = "self" | "ownerless";
+export type ExecBatchShell = "posix" | "powershell" | "cmd";
+export const EXEC_BATCH_SHELLS: readonly ExecBatchShell[] = ["posix", "powershell", "cmd"];
 
 export interface ExecBatchConfirmationTarget {
   sessionId: string;
@@ -108,6 +112,7 @@ export const execBatchApi = {
       batchId: request.batchId,
       sessionIds: request.sessionIds,
       command: request.command,
+      ...(request.shell !== undefined && request.shell !== "posix" ? { shell: request.shell } : {}),
       timeoutMs: request.timeoutMs,
       maxConcurrent: request.maxConcurrent,
       ...(request.productionConfirmation !== undefined
@@ -115,6 +120,8 @@ export const execBatchApi = {
         : {}),
     }),
   cancel: (batchId: string) => call("exec_batch_cancel", { batchId }),
+  // Reports which shells each session can run; SSH hosts of unknown platform are probed only when a batch runs.
+  targetShells: (sessionIds: string[]) => call("exec_batch_target_shells", { sessionIds }),
   healthProbe: (request: ExecBatchHealthRequest) => call("exec_batch_health_probe", request),
   healthCancel: (batchId: string) => call("exec_batch_health_cancel", { batchId }),
   historyList: (query: ExecBatchHistoryQuery = {}) =>

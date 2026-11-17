@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { useUi, type Workspace } from "../../app/store";
 import type { Asset, SessionInfo } from "../../ipc/commands";
-import type { ExecBatch } from "../../ipc/execBatchApi";
+import type { ExecBatch, TargetCapability } from "../../ipc/execBatchApi";
 import {
   click,
   clickButton,
@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   cancel: vi.fn(),
   createId: vi.fn(),
   assetList: vi.fn(),
+  targetShells: vi.fn(),
 }));
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -68,7 +69,7 @@ vi.mock("../../ipc/execBatchApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/execBatchApi")>();
   return {
     ...actual,
-    execBatchApi: { execute: mocks.execute, cancel: mocks.cancel },
+    execBatchApi: { execute: mocks.execute, cancel: mocks.cancel, targetShells: mocks.targetShells },
     createExecBatchId: mocks.createId,
   };
 });
@@ -129,6 +130,26 @@ const sessions = [
   session("s7", "docker-online", "docker"),
 ];
 
+function capability(sessionId: string, platform: string, supports: Record<string, string>): TargetCapability {
+  return {
+    sessionId,
+    platform,
+    shells: Object.entries(supports).map(([shell, support]) => ({
+      shell,
+      support,
+      ...(support === "supported" ? {} : { reason: `${shell} ${support} on ${sessionId}` }),
+    })),
+  };
+}
+
+function posixCapability(sessionId: string): TargetCapability {
+  return capability(sessionId, "posix", { posix: "supported", powershell: "unsupported", cmd: "unsupported" });
+}
+
+function windowsCapability(sessionId: string): TargetCapability {
+  return capability(sessionId, "windows", { posix: "unsupported", powershell: "supported", cmd: "supported" });
+}
+
 function mountPanel(nextSessions: SessionInfo[] = sessions): MountedView {
   return mountWithClient(createElement(ExecBatchPanel, { sessions: nextSessions }));
 }
@@ -169,6 +190,7 @@ beforeEach(() => {
   mocks.createId.mockReturnValue("batch-ui-test");
   mocks.cancel.mockResolvedValue({ batchId: "batch-ui-test", canceled: true });
   mocks.assetList.mockResolvedValue([]);
+  mocks.targetShells.mockImplementation((ids: string[]) => Promise.resolve(ids.map((id) => posixCapability(id))));
 });
 
 afterEach(() => {
@@ -177,7 +199,7 @@ afterEach(() => {
 });
 
 describe("ExecBatchPanel", () => {
-  it("offers only connected SSH and managed-device targets and renders distinct result states", async () => {
+  it("offers only connected SSH, managed-device and local targets and renders distinct result states", async () => {
     const batch: ExecBatch = {
       batchId: "batch-ui-test",
       command: "hostname",
@@ -210,14 +232,14 @@ describe("ExecBatchPanel", () => {
     mocks.execute.mockResolvedValue(batch);
     mounted = mountPanel();
     await flush();
-    expect(visibleTargetIds()).toEqual(["s1", "s2", "s5", "s6"]);
+    expect(visibleTargetIds()).toEqual(["s1", "s2", "s4", "s5", "s6"]);
     expect(text()).toContain("device-online");
     expect(text()).toContain("受管设备 · 执行前需确认");
     expect(text()).toContain("ssh-one");
     expect(text()).toContain("ssh-two");
     expect(text()).toContain("ssh-three");
     expect(text()).not.toContain("ssh-offline");
-    expect(text()).not.toContain("local-online");
+    expect(text()).toContain("local-online");
     expect(text()).not.toContain("docker-online");
 
     setInputValue(commandInput(), "hostname");
@@ -718,4 +740,77 @@ describe("ExecBatchPanel", () => {
     expect(document.body.textContent).not.toContain("填写批量执行变量");
     expect(mocks.execute).not.toHaveBeenCalled();
   });
+
+  it("preselects PowerShell for Windows targets, lists skipped targets and sends the chosen shell", async () => {
+    const winSessions = [session("w1", "win-one", "winrm"), session("w2", "win-two", "device"), session("l1", "linux-one", "ssh")];
+    mocks.targetShells.mockResolvedValue([windowsCapability("w1"), windowsCapability("w2"), posixCapability("l1")]);
+    mocks.execute.mockResolvedValue({
+      batchId: "batch-ui-test",
+      command: "Get-Date",
+      shell: "powershell",
+      startedAt: 1,
+      finishedAt: 2,
+      results: [
+        { sessionId: "w1", sessionName: "win-one", status: "success", stdout: "today", stderr: "", exitCode: 0, durationMs: 3, truncated: false },
+        { sessionId: "l1", sessionName: "linux-one", status: "skipped", stdout: "", stderr: "", exitCode: null, error: "目标不是 Windows", durationMs: 0, truncated: false },
+      ],
+    } satisfies ExecBatch);
+    mounted = mountPanel(winSessions);
+    await flushUntil(() => mocks.targetShells.mock.calls.length > 0 && text().includes("Windows"));
+    expect(mocks.targetShells).toHaveBeenCalledWith(["l1", "w1", "w2"]);
+
+    click(targetCheckbox("w1"));
+    click(targetCheckbox("w2"));
+    await flushUntil(() => shellButton("PowerShell").getAttribute("aria-pressed") === "true");
+    expect(skipPreview()).toBeNull();
+
+    click(targetCheckbox("l1"));
+    await flushUntil(() => shellButton("POSIX shell").getAttribute("aria-pressed") === "true");
+    expect(skipPreview()?.textContent).toContain("将跳过 2 个目标");
+    expect(skipPreview()?.textContent).toContain("win-one");
+
+    click(shellButton("PowerShell"));
+    await flushUntil(() => skipPreview()?.textContent?.includes("linux-one") === true);
+    expect(skipPreview()?.textContent).toContain("将跳过 1 个目标");
+    expect(skipPreview()?.textContent).not.toContain("win-one");
+    const badges = [...panel().container.querySelectorAll('[data-testid="target-shell-badge"]')].map((badge) => badge.textContent);
+    expect(badges).toContain("POSIX · 将跳过");
+
+    setInputValue(commandInput(), "Get-Date");
+    clickButton(panel().container, "执行");
+    await flushUntil(() => text().includes("结果矩阵"));
+    expect(mocks.execute).toHaveBeenCalledWith({
+      batchId: "batch-ui-test",
+      sessionIds: ["w1", "w2", "l1"],
+      command: "Get-Date",
+      shell: "powershell",
+      timeoutMs: 30000,
+      maxConcurrent: 4,
+    });
+    expect(text()).toContain("已跳过");
+    expect(text()).toContain("目标不是 Windows");
+  });
+
+  it("keeps the user's shell choice when the selection changes", async () => {
+    const winSessions = [session("w1", "win-one", "winrm"), session("l1", "linux-one", "ssh")];
+    mocks.targetShells.mockResolvedValue([windowsCapability("w1"), posixCapability("l1")]);
+    mounted = mountPanel(winSessions);
+    await flush();
+    await flushUntil(() => text().includes("Windows"));
+    click(shellButton("cmd"));
+    click(targetCheckbox("w1"));
+    await flush();
+    expect(shellButton("cmd").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  function shellButton(label: string): HTMLButtonElement {
+    const group = mounted?.container.querySelector('[role="group"][aria-label="命令 shell"]');
+    const button = [...(group?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((candidate) => candidate.textContent?.trim() === label);
+    if (!button) throw new Error(`shell button not found: ${label}`);
+    return button;
+  }
+
+  function skipPreview(): HTMLElement | null {
+    return mounted?.container.querySelector<HTMLElement>('[data-testid="exec-batch-skip-preview"]') ?? null;
+  }
 });

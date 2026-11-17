@@ -31,6 +31,7 @@ func newExecBatchRow(db *gorm.DB, opts ...gen.DOOption) execBatchRow {
 	_execBatchRow.ID = field.NewString(tableName, "id")
 	_execBatchRow.CommandHash = field.NewString(tableName, "command_hash")
 	_execBatchRow.TargetSetHash = field.NewString(tableName, "target_set_hash")
+	_execBatchRow.Shell = field.NewString(tableName, "shell")
 	_execBatchRow.Status = field.NewString(tableName, "status")
 	_execBatchRow.TargetCount = field.NewInt32(tableName, "target_count")
 	_execBatchRow.Production = field.NewBool(tableName, "production")
@@ -58,6 +59,7 @@ type execBatchRow struct {
 	ID             field.String
 	CommandHash    field.String
 	TargetSetHash  field.String
+	Shell          field.String
 	Status         field.String
 	TargetCount    field.Int32
 	Production     field.Bool
@@ -91,6 +93,7 @@ func (e *execBatchRow) updateTableName(table string) *execBatchRow {
 	e.ID = field.NewString(table, "id")
 	e.CommandHash = field.NewString(table, "command_hash")
 	e.TargetSetHash = field.NewString(table, "target_set_hash")
+	e.Shell = field.NewString(table, "shell")
 	e.Status = field.NewString(table, "status")
 	e.TargetCount = field.NewInt32(table, "target_count")
 	e.Production = field.NewBool(table, "production")
@@ -132,11 +135,12 @@ func (e *execBatchRow) GetFieldByName(fieldName string) (field.OrderExpr, bool) 
 }
 
 func (e *execBatchRow) fillFieldMap() {
-	e.fieldMap = make(map[string]field.Expr, 17)
+	e.fieldMap = make(map[string]field.Expr, 18)
 	e.fieldMap["owner_id"] = e.OwnerID
 	e.fieldMap["id"] = e.ID
 	e.fieldMap["command_hash"] = e.CommandHash
 	e.fieldMap["target_set_hash"] = e.TargetSetHash
+	e.fieldMap["shell"] = e.Shell
 	e.fieldMap["status"] = e.Status
 	e.fieldMap["target_count"] = e.TargetCount
 	e.fieldMap["production"] = e.Production

@@ -367,6 +367,10 @@ func (r *Registry) execCommandsBatch(ctx context.Context, jobID string, call Cal
 				fmt.Fprintf(&modelFooter, "\n[timeout after %ds; may still be running; exit code unknown]\n", args.Timeout)
 				timedOutAssets = append(timedOutAssets, result.AssetID)
 				timedOutIndex = index
+			} else if result.Status == execbatch.StatusSkipped {
+				// The target cannot run a POSIX command (a Windows host); nothing was sent to it.
+				fmt.Fprintf(&footer, "\n[已跳过，未执行: %s]\n", result.Error)
+				fmt.Fprintf(&modelFooter, "\n[skipped, not run: %s]\n", result.Error)
 			} else if result.Error != "" {
 				fmt.Fprintf(&footer, "\n[执行失败: %s]\n", result.Error)
 				fmt.Fprintf(&modelFooter, "\n[execution failed: %s]\n", result.Error)

@@ -44,8 +44,8 @@ func (s *Service) saveHistory(ctx context.Context, ownerID string, row store.Exe
 
 func historyBatchRow(ownerID string, request Request, started time.Time, targets []Target, status string, finishedAt *int64, production bool) store.ExecBatchRow {
 	row := store.ExecBatchRow{
-		ID: request.BatchID, CommandHash: commandDigest(request.Command), TargetSetHash: historyTargetSetHash(request.BatchID, ownerID, targets),
-		Status: status, TargetCount: int32(len(targets)), Production: production,
+		ID: request.BatchID, CommandHash: shellCommandDigest(request.Shell, request.Command), TargetSetHash: historyTargetSetHash(request.BatchID, ownerID, targets),
+		Shell: string(shellOrPOSIX(request.Shell)), Status: status, TargetCount: int32(len(targets)), Production: production,
 		StartedAt: started.UnixMilli(), FinishedAt: finishedAt,
 	}
 	if request.Runbook != nil {
@@ -84,17 +84,30 @@ func historyTargetSetHash(batchID, ownerID string, targets []Target) string {
 	return digest("target-set-v2", canonical)
 }
 
+func shellOrPOSIX(shell Shell) Shell {
+	if shell == "" {
+		return ShellPOSIX
+	}
+	return shell
+}
+
+// historyBatchStatus ignores skipped targets unless nothing ran at all; the result rows keep each skip visible.
 func historyBatchStatus(results []Result) string {
 	failed := false
+	ran := false
 	for _, result := range results {
 		if result.Status == StatusCanceled {
 			return store.ExecBatchStatusCanceled
 		}
+		if result.Status == StatusSkipped {
+			continue
+		}
+		ran = true
 		if result.Status != StatusSuccess {
 			failed = true
 		}
 	}
-	if failed {
+	if failed || (!ran && len(results) > 0) {
 		return store.ExecBatchStatusFailed
 	}
 	return store.ExecBatchStatusSuccess
@@ -136,6 +149,8 @@ func historyErrorKind(result Result) string {
 		return store.ExecBatchErrorDeadlineExceeded
 	case StatusCanceled:
 		return store.ExecBatchErrorCanceled
+	case StatusSkipped:
+		return store.ExecBatchErrorShellUnsupported
 	case StatusTransportError:
 		if result.Error == base.ErrExitStatusMissing.Error() {
 			return store.ExecBatchErrorExitStatusAbsent
