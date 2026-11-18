@@ -267,3 +267,13 @@ func mergedEnv(overrides []string) []string {
 	}
 	return environment
 }
+
+// environmentHas reports whether environment sets name, compared the way this platform compares keys.
+func environmentHas(environment []string, name string) bool {
+	for _, entry := range environment {
+		if key, _, found := strings.Cut(entry, "="); found && envKeyEqual(key, name) {
+			return true
+		}
+	}
+	return false
+}

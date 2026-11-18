@@ -17,6 +17,9 @@ type CreateDefaults struct {
 	Shell func(request string) (path string, login bool)
 	// Path reports the PATH of the user's login environment; empty disables it.
 	Path func() string
+	// Env reports KEY=VALUE entries every new session gets unless the request sets the key itself, such as the
+	// SSH_CONNECTION of the connection the client came through: a long-lived helper only knows whoever started it.
+	Env func() []string
 }
 
 // StreamFilter rewrites the client-to-helper byte stream of a bridge. It understands only the frame
@@ -27,6 +30,8 @@ type CreateDefaults struct {
 // frame is an ordinary one that every helper version honors.
 type StreamFilter struct {
 	defaults CreateDefaults
+	// forwardHello passes hello frames through untouched; such a filter never intercepts a replacement.
+	forwardHello bool
 
 	header  [5]byte
 	headerN int
@@ -41,6 +46,12 @@ type StreamFilter struct {
 // NewStreamFilter returns a filter that applies defaults to create frames.
 func NewStreamFilter(defaults CreateDefaults) *StreamFilter {
 	return &StreamFilter{defaults: defaults}
+}
+
+// NewCreateEnvFilter returns a filter that only adds env to create frames; every other frame, hello included,
+// passes through unchanged.
+func NewCreateEnvFilter(env []string) *StreamFilter {
+	return &StreamFilter{defaults: CreateDefaults{Env: func() []string { return env }}, forwardHello: true}
 }
 
 // Filter consumes the next bytes of the stream and returns the bytes to forward to the helper. When the
@@ -70,7 +81,7 @@ func (f *StreamFilter) Filter(data []byte) (forward []byte, replaceToken string)
 			}
 			f.kind = frameType(f.header[4])
 			f.remain = int(length)
-			f.capture = f.kind == frameCreate || f.kind == frameHello
+			f.capture = f.kind == frameCreate || (f.kind == frameHello && !f.forwardHello)
 			f.buffer = f.buffer[:0]
 			if !f.capture {
 				forward = append(forward, f.header[:]...)
@@ -175,6 +186,16 @@ func (f *StreamFilter) applyCreateDefaults(payload []byte) []byte {
 	if f.defaults.Path != nil && environmentValue(env, "PATH") == "" {
 		if path := f.defaults.Path(); path != "" && !strings.ContainsAny(path, "\x00") {
 			env = append(env, "PATH="+path)
+			changed = true
+		}
+	}
+	if f.defaults.Env != nil {
+		for _, entry := range f.defaults.Env() {
+			key, _, found := strings.Cut(entry, "=")
+			if !found || key == "" || strings.ContainsRune(entry, 0) || environmentHas(env, key) {
+				continue
+			}
+			env = append(env, entry)
 			changed = true
 		}
 	}

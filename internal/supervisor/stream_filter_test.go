@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 const staleDigest = "0123456789abcdef"
@@ -314,5 +316,68 @@ func TestEnsureHelperBuildWithoutHelperIsQuiet(t *testing.T) {
 	build, err := ensureHelperBuild(context.Background(), HelperConfig{StateDir: t.TempDir()}, RuntimeMetadata{SHA256: strings.Repeat("a", 64)})
 	if err != nil || build.Replaced || build.Stale {
 		t.Fatalf("no helper: %+v, %v", build, err)
+	}
+}
+
+func TestCreateEnvFilterAddsConnectionEnvTheClientDidNotSet(t *testing.T) {
+	env := []string{"SSH_CONNECTION=10.0.0.5 51000 10.0.0.9 22", "SSH_CLIENT=10.0.0.5 51000 22"}
+
+	forward, _ := NewCreateEnvFilter(env).Filter(createFrame(t, map[string]any{"id": "a", "env": []string{"TERM=xterm-256color"}}))
+	msg := readCreate(t, forward)
+	if environmentValue(msg.Env, "SSH_CONNECTION") != "10.0.0.5 51000 10.0.0.9 22" || environmentValue(msg.Env, "SSH_CLIENT") != "10.0.0.5 51000 22" {
+		t.Fatalf("terminal create env = %v, want the connection variables", msg.Env)
+	}
+	if environmentValue(msg.Env, "TERM") != "xterm-256color" || len(msg.Command) != 0 {
+		t.Fatalf("an env-only filter changed more than env: %+v", msg)
+	}
+
+	// One-shot execs get them too, as sshd gives them to every session.
+	forward, _ = NewCreateEnvFilter(env).Filter(createFrame(t, map[string]any{"command": []string{"ls"}, "pty": false}))
+	if msg := readCreate(t, forward); environmentValue(msg.Env, "SSH_CLIENT") != "10.0.0.5 51000 22" {
+		t.Fatalf("exec create env = %v", msg.Env)
+	}
+
+	// A value the client chose wins.
+	forward, _ = NewCreateEnvFilter(env).Filter(createFrame(t, map[string]any{"env": []string{"SSH_CONNECTION=chosen"}}))
+	if msg := readCreate(t, forward); environmentValue(msg.Env, "SSH_CONNECTION") != "chosen" || environmentValue(msg.Env, "SSH_CLIENT") != "10.0.0.5 51000 22" {
+		t.Fatalf("client env overridden: %v", msg.Env)
+	}
+}
+
+func TestCreateEnvFilterForwardsReplacementHellos(t *testing.T) {
+	token := HelperConsentToken(RunningHelper{Protocol: ProtocolVersion, PID: 5, ActivityKnown: true, StartTime: 7, StateDigest: strings.Repeat("ab", 32)})
+	payload, _ := json.Marshal(helloMsg{Version: ProtocolVersion, ReplaceLegacy: token})
+	original := appendFrame(nil, frameHello, payload)
+	forward, intercepted := NewCreateEnvFilter([]string{"SSH_CLIENT=1 2 3"}).Filter(original)
+	if intercepted != "" || !bytes.Equal(forward, original) {
+		t.Fatalf("an env filter must leave hellos to the helper bridge, got token %q", intercepted)
+	}
+}
+
+func TestSSHBridgeReaderGivesSessionsItsConnection(t *testing.T) {
+	getenv := func(key string) string {
+		return map[string]string{"SSH_CONNECTION": "192.0.2.1 40000 192.0.2.2 22", "SSH_CLIENT": "192.0.2.1 40000 22"}[key]
+	}
+	env := SSHSessionEnv(getenv)
+	var stream []byte
+	stream = appendFrame(stream, frameHello, []byte(`{"version":3}`))
+	stream = append(stream, createFrame(t, map[string]any{"id": "a"})...)
+	reader := &filteredReader{source: iotest.OneByteReader(bytes.NewReader(stream)), filter: NewCreateEnvFilter(env)}
+	out, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msg createMsg
+	if err := json.Unmarshal(streamPayload(t, out, frameCreate), &msg); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(out, appendFrame(nil, frameHello, []byte(`{"version":3}`))) {
+		t.Fatal("the hello before the create was altered")
+	}
+	if environmentValue(msg.Env, "SSH_CONNECTION") != "192.0.2.1 40000 192.0.2.2 22" {
+		t.Fatalf("bridged create env = %v", msg.Env)
+	}
+	if len(SSHSessionEnv(func(string) string { return "" })) != 0 {
+		t.Fatal("a bridge outside an SSH session must add nothing")
 	}
 }

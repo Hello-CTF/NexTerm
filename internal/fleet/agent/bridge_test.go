@@ -219,7 +219,7 @@ func (h *bridgeHarness) openPipeTracked() (*wsStream, chan struct{}, *subprocess
 	h.t.Helper()
 	hello := testHello()
 	hello.BridgeID = fmt.Sprintf("test-bridge-%d", h.counter.Add(1))
-	agentConn, err := DialBridge(h.ctx, wsURL(h.server.server.URL), hello, DialPolicy{})
+	agentConn, env, err := dialBridgeWithEnv(h.ctx, wsURL(h.server.server.URL), hello, DialPolicy{})
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func (h *bridgeHarness) openPipeTracked() (*wsStream, chan struct{}, *subprocess
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = BridgePipe(h.ctx, agentConn, spawner, h.stateDir)
+		_ = BridgePipeWithEnv(h.ctx, agentConn, spawner, h.stateDir, env)
 	}()
 	return &wsStream{conn: <-h.accepted, ctx: h.ctx}, done, <-spawned
 }

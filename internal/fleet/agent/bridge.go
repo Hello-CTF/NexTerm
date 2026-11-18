@@ -68,29 +68,38 @@ const bridgeEnvWait = 3 * time.Second
 // bridgeCreateDefaults makes this host authoritative for new terminals: the account's shell and the login
 // environment's PATH are written into every create request that does not carry its own, so a helper that
 // was started earlier with a stale environment (or by an older build) still starts the right shell.
-var bridgeCreateDefaults = func() supervisor.CreateDefaults {
+var bridgeCreateDefaults = func(env []string) supervisor.CreateDefaults {
+	defaults := supervisor.CreateDefaults{}
+	if len(env) > 0 {
+		defaults.Env = func() []string { return env }
+	}
 	if runtime.GOOS == "windows" {
-		return supervisor.CreateDefaults{}
+		return defaults
 	}
-	return supervisor.CreateDefaults{
-		Shell: func(request string) (string, bool) {
-			choice := shellenv.Default().Shell(request)
-			return choice.Path, choice.Login
-		},
-		Path: func() string {
-			return shellenv.EnvValue(shellenv.Default().Env(bridgeEnvWait), "PATH")
-		},
+	defaults.Shell = func(request string) (string, bool) {
+		choice := shellenv.Default().Shell(request)
+		return choice.Path, choice.Login
 	}
+	defaults.Path = func() string {
+		return shellenv.EnvValue(shellenv.Default().Env(bridgeEnvWait), "PATH")
+	}
+	return defaults
 }
 
 // BridgePipe shuttles raw supervisor protocol bytes between the bridge
 // connection and the local helper bridge until either side fails or the
 // context ends. It is byte-transparent apart from two additions made by
-// supervisor.StreamFilter: create requests get this host's shell and PATH when
-// they carry none, and a consented replacement of an older build of the
+// supervisor.StreamFilter: create requests get this host's shell and PATH (and,
+// through BridgePipeWithEnv, SSH_CONNECTION and SSH_CLIENT) when they carry none, and a consented replacement of an older build of the
 // helper is performed here. Protocol-level resume (attach with an expected
 // incarnation, version checks) passes through unchanged.
 func BridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, stateDir string) error {
+	return BridgePipeWithEnv(ctx, conn, spawn, stateDir, nil)
+}
+
+// BridgePipeWithEnv is BridgePipe that also gives every session created through the bridge the env entries the
+// client did not set itself (the SSH session variables of the bridge connection).
+func BridgePipeWithEnv(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, stateDir string, env []string) error {
 	pipe, err := spawn(ctx, stateDir)
 	if err != nil {
 		return err
@@ -104,7 +113,7 @@ func BridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, 
 			return conn.Write(writeCtx, websocket.MessageBinary, chunk)
 		})
 	}()
-	filter := supervisor.NewStreamFilter(bridgeCreateDefaults())
+	filter := supervisor.NewStreamFilter(bridgeCreateDefaults(env))
 	for {
 		_, payload, err := conn.Read(ctx)
 		if err != nil {
