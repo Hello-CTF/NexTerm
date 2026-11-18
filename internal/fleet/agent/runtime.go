@@ -1109,7 +1109,7 @@ func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 			r.logger.Warn("bridge aborted: no healthy endpoint", "bridge_id", bridgeID)
 			return
 		}
-		conn, err := DialBridge(ctx, client.WSURL(), r.hello(bridgeID, purpose), client.DialPolicy())
+		conn, env, err := dialBridgeWithEnv(ctx, client.WSURL(), r.hello(bridgeID, purpose), client.DialPolicy())
 		if err != nil {
 			if r.handleDenied(err) {
 				return
@@ -1118,7 +1118,7 @@ func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 			return
 		}
 		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
-		_ = BridgePipe(ctx, conn, r.bridge, r.currentStateDir())
+		_ = BridgePipeWithEnv(ctx, conn, r.bridge, r.currentStateDir(), env)
 	}()
 }
 

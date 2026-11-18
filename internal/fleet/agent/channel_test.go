@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -205,5 +206,20 @@ func TestServerMessageIgnoresUnknownFields(t *testing.T) {
 	}
 	if message.BridgeID != "b1" || message.Purpose != "file" {
 		t.Fatalf("serverMessage = %+v", message)
+	}
+}
+
+func TestSSHSessionEnvStatesTheBridgeConnectionLikeSSHD(t *testing.T) {
+	local := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 53122}
+	remote := &net.TCPAddr{IP: net.ParseIP("2001:db8::1"), Port: 443}
+	env := sshSessionEnv(local, remote)
+	want := []string{"SSH_CONNECTION=2001:db8::1 443 192.0.2.10 53122", "SSH_CLIENT=2001:db8::1 443 53122"}
+	if strings.Join(env, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("env = %q, want %q", env, want)
+	}
+	// Without TCP endpoints the variables still mark the session as remote.
+	env = sshSessionEnv(&net.UnixAddr{Name: "x", Net: "unix"}, nil)
+	if env[0] != "SSH_CONNECTION=0.0.0.0 0 0.0.0.0 0" || env[1] != "SSH_CLIENT=0.0.0.0 0 0" {
+		t.Fatalf("env = %q", env)
 	}
 }

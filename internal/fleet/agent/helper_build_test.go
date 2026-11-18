@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -44,16 +45,16 @@ func TestBridgePipeMakesTheHostAuthoritativeForTheShell(t *testing.T) {
 	t.Setenv("SHELL", "/bin/bash")
 	t.Setenv("PATH", "/usr/bin:/bin")
 	shell := filepath.Join(t.TempDir(), "zsh")
-	script := "#!/bin/sh\nprintf 'shell=%s path=%s args=%s\\n' \"$SHELL\" \"$PATH\" \"$*\"\n"
+	script := "#!/bin/sh\nprintf 'shell=%s path=%s ssh=%s client=%s args=%s\\n' \"$SHELL\" \"$PATH\" \"$SSH_CONNECTION\" \"$SSH_CLIENT\" \"$*\"\n"
 	if err := os.WriteFile(shell, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	previous := bridgeCreateDefaults
-	bridgeCreateDefaults = func() supervisor.CreateDefaults {
-		return supervisor.CreateDefaults{
-			Shell: func(string) (string, bool) { return shell, true },
-			Path:  func() string { return "/opt/homebrew/bin:/usr/bin:/bin" },
-		}
+	bridgeCreateDefaults = func(env []string) supervisor.CreateDefaults {
+		defaults := previous(env)
+		defaults.Shell = func(string) (string, bool) { return shell, true }
+		defaults.Path = func() string { return "/opt/homebrew/bin:/usr/bin:/bin" }
+		return defaults
 	}
 	t.Cleanup(func() { bridgeCreateDefaults = previous })
 
@@ -72,6 +73,10 @@ func TestBridgePipeMakesTheHostAuthoritativeForTheShell(t *testing.T) {
 	output := readUntilMarker(t, attachment, "args=-l")
 	if !strings.Contains(output, "shell="+shell) || !strings.Contains(output, "path=/opt/homebrew/bin:/usr/bin:/bin") {
 		t.Fatalf("session output = %q, want the host's shell and PATH instead of the helper's", output)
+	}
+	// The bridge connection reaches a loopback test server: the peer is the client, this host the server.
+	if !regexp.MustCompile(`ssh=127\.0\.0\.1 [1-9][0-9]* 127\.0\.0\.1 [1-9][0-9]* client=127\.0\.0\.1 [1-9][0-9]* [1-9][0-9]* `).MatchString(output) {
+		t.Fatalf("session output = %q, want SSH_CONNECTION and SSH_CLIENT of the bridge connection", output)
 	}
 	_ = attachment.Close()
 }

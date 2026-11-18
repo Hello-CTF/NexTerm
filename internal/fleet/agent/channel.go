@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/wscompress"
@@ -22,9 +24,28 @@ const (
 // skips it. Redirects are refused so a bridge or control dial can never be
 // silently downgraded or forwarded to another origin.
 func wsDialOptions(policy DialPolicy, compression wscompress.Purpose) (*websocket.DialOptions, error) {
+	return wsDialOptionsObserved(policy, compression, nil)
+}
+
+// wsDialOptionsObserved is wsDialOptions that also reports every connection the dial opens to onDial; behind a
+// proxy that is the connection to the proxy.
+func wsDialOptionsObserved(policy DialPolicy, compression wscompress.Purpose, onDial func(net.Conn)) (*websocket.DialOptions, error) {
 	transport, err := policy.transport()
 	if err != nil {
 		return nil, err
+	}
+	if onDial != nil {
+		dial := transport.DialContext
+		if dial == nil {
+			dial = (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+		}
+		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			conn, err := dial(ctx, network, address)
+			if err == nil {
+				onDial(conn)
+			}
+			return conn, err
+		}
 	}
 	return wscompress.Dial(compression, &websocket.DialOptions{
 		HTTPClient: &http.Client{
@@ -250,10 +271,39 @@ func (c *Channel) Close() error {
 // DialBridge opens a dedicated outbound bridge connection carrying one
 // supervisor protocol stream as binary frames.
 func DialBridge(ctx context.Context, wsURL string, hello HelloMessage, policy DialPolicy) (*websocket.Conn, error) {
-	options, err := wsDialOptions(policy, wscompress.ForBridge(hello.Purpose))
+	conn, _, err := dialBridgeWithEnv(ctx, wsURL, hello, policy)
+	return conn, err
+}
+
+// dialBridgeWithEnv is DialBridge that also returns the SSH session variables describing the connection, for
+// the terminals created through it.
+func dialBridgeWithEnv(ctx context.Context, wsURL string, hello HelloMessage, policy DialPolicy) (*websocket.Conn, []string, error) {
+	var (
+		mu       sync.Mutex
+		endpoint net.Conn
+	)
+	options, err := wsDialOptionsObserved(policy, wscompress.ForBridge(hello.Purpose), func(conn net.Conn) {
+		mu.Lock()
+		endpoint = conn
+		mu.Unlock()
+	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	conn, err := finishBridgeDial(ctx, wsURL, hello, options)
+	if err != nil {
+		return nil, nil, err
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var env []string
+	if endpoint != nil {
+		env = sshSessionEnv(endpoint.LocalAddr(), endpoint.RemoteAddr())
+	}
+	return conn, env, nil
+}
+
+func finishBridgeDial(ctx context.Context, wsURL string, hello HelloMessage, options *websocket.DialOptions) (*websocket.Conn, error) {
 	conn, response, err := websocket.Dial(ctx, wsURL, options)
 	if err != nil {
 		status := 0
@@ -305,4 +355,23 @@ func isForbidden(err error) bool {
 func isOwnerUnavailable(err error) bool {
 	var serverError *ServerError
 	return errors.As(err, &serverError) && serverError.ownerUnavailable()
+}
+
+// sshSessionEnv states a bridge connection the way sshd states the connection of a session: the peer is the
+// client and this host the server. An address that is not TCP is reported as 0.0.0.0 port 0, so programs still
+// see a remote session.
+func sshSessionEnv(local, remote net.Addr) []string {
+	clientIP, clientPort := tcpEndpoint(remote)
+	serverIP, serverPort := tcpEndpoint(local)
+	return []string{
+		fmt.Sprintf("SSH_CONNECTION=%s %d %s %d", clientIP, clientPort, serverIP, serverPort),
+		fmt.Sprintf("SSH_CLIENT=%s %d %d", clientIP, clientPort, serverPort),
+	}
+}
+
+func tcpEndpoint(addr net.Addr) (string, int) {
+	if tcp, ok := addr.(*net.TCPAddr); ok && tcp.IP != nil {
+		return tcp.IP.String(), tcp.Port
+	}
+	return "0.0.0.0", 0
 }
