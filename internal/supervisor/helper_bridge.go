@@ -15,7 +15,60 @@ func runBridge(ctx context.Context, config HelperConfig) error {
 	if err != nil {
 		return err
 	}
-	return bridgeIO(os.Stdin, os.Stdout, conn)
+	var stdin io.Reader = os.Stdin
+	if env := SSHSessionEnv(os.Getenv); len(env) > 0 {
+		stdin = &filteredReader{source: os.Stdin, filter: NewCreateEnvFilter(env)}
+	}
+	return bridgeIO(stdin, os.Stdout, conn)
+}
+
+// SSHSessionEnvKeys are the variables sshd gives a session to say where it came from. A helper outlives the
+// connection that started it, so the bridge of each connection hands its own values to the sessions it creates;
+// programs use them to tell a remote terminal from a local one (to copy through OSC 52, for example).
+var SSHSessionEnvKeys = []string{"SSH_CONNECTION", "SSH_CLIENT"}
+
+// SSHSessionEnv returns the SSHSessionEnvKeys entries that getenv reports.
+func SSHSessionEnv(getenv func(string) string) []string {
+	var env []string
+	for _, key := range SSHSessionEnvKeys {
+		if value := getenv(key); value != "" {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
+}
+
+// filteredReader passes the bytes read from source through a StreamFilter.
+type filteredReader struct {
+	source  io.Reader
+	filter  *StreamFilter
+	pending []byte
+	buffer  [32 * 1024]byte
+}
+
+func (r *filteredReader) Close() error {
+	if closer, ok := r.source.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+func (r *filteredReader) Read(p []byte) (int, error) {
+	for len(r.pending) == 0 {
+		n, err := r.source.Read(r.buffer[:])
+		if n > 0 {
+			r.pending, _ = r.filter.Filter(r.buffer[:n])
+		}
+		if err != nil && len(r.pending) == 0 {
+			return 0, err
+		}
+		if err != nil {
+			break
+		}
+	}
+	n := copy(p, r.pending)
+	r.pending = r.pending[n:]
+	return n, nil
 }
 
 // DialHelperBridge opens a byte-transparent connection to the existing helper.
@@ -46,8 +99,8 @@ func bridgeIO(stdin io.Reader, stdout io.Writer, conn net.Conn) error {
 	go func() {
 		defer wg.Done()
 		_, _ = io.Copy(stdout, conn)
-		if file, ok := stdin.(*os.File); ok {
-			_ = file.Close()
+		if closer, ok := stdin.(io.Closer); ok {
+			_ = closer.Close()
 		}
 	}()
 	go func() {

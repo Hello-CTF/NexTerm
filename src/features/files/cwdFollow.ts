@@ -118,10 +118,21 @@ function subscribeCwd(cb: () => void): () => void {
   };
 }
 
+// The terminal each session's file view followed last, so showing an editor or another non-terminal tab keeps
+// following the terminal the user just used instead of switching to the first terminal in tab order.
+const lastFollowedTab = new Map<string, string>();
+
 export function pickFollowedTabId(workspaces: Workspace[], sessionId: string): string | null {
+  const live = new Set<string>();
+  let first: string | null = null;
   for (const w of workspaces) {
     if (w.sessionId !== sessionId) continue;
     const activePane = w.panes.find((p) => p.id === w.activePaneId);
+    const active = activePane?.tabs.find((t) => t.id === activePane.activeTabId);
+    if (active?.kind === "terminal" && active.tabId) {
+      lastFollowedTab.set(sessionId, active.tabId);
+      return active.tabId;
+    }
     const panes = activePane ? [activePane, ...w.panes.filter((p) => p !== activePane)] : w.panes;
     for (const p of panes) {
       const ordered = [
@@ -129,11 +140,17 @@ export function pickFollowedTabId(workspaces: Workspace[], sessionId: string): s
         ...p.tabs.filter((t) => t.id !== p.activeTabId),
       ];
       for (const t of ordered) {
-        if (t.kind === "terminal" && t.tabId) return t.tabId;
+        if (t.kind !== "terminal" || !t.tabId) continue;
+        live.add(t.tabId);
+        first ??= t.tabId;
       }
     }
   }
-  return null;
+  const remembered = lastFollowedTab.get(sessionId);
+  if (remembered && live.has(remembered)) return remembered;
+  if (first) lastFollowedTab.set(sessionId, first);
+  else lastFollowedTab.delete(sessionId);
+  return first;
 }
 
 /** The last directory reported by the session's followed terminal (see pickFollowedTabId). */
@@ -273,6 +290,7 @@ export function resetCwdFollowForTest(): void {
   stopWorkspaceWatch = null;
   lastWorkspaces = null;
   cwds.clear();
+  lastFollowedTab.clear();
   followMemory.clear();
   notifiedFailures.clear();
   gate = new EventVersionGate();
