@@ -59,24 +59,6 @@
 .cm-editor .cm-panels.cm-panels-top {
   border-bottom: 1px solid color-mix(in srgb, var(--color-neutral-800) 80%, transparent) !important;
 }
-.cm-editor .cm-search {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  font-size: calc(11.5px * var(--nx-ui-text-factor));
-}
-.cm-editor .cm-search label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--color-neutral-400) !important;
-  font-size: calc(11.5px * var(--nx-ui-text-factor));
-}
-.cm-editor .cm-search input[type="checkbox"] {
-  accent-color: var(--color-accent);
-}
 .cm-editor .cm-textfield {
   height: 24px;
   padding: 0 7px;
@@ -108,18 +90,6 @@
 }
 .cm-editor .cm-button:hover {
   background: var(--color-neutral-700) !important;
-  color: var(--color-neutral-100) !important;
-}
-.cm-editor .cm-search [name="close"] {
-  padding: 0 6px;
-  border: none !important;
-  background: transparent !important;
-  color: var(--color-neutral-400) !important;
-  font-size: calc(15px * var(--nx-ui-text-factor));
-  line-height: 1;
-  cursor: pointer;
-}
-.cm-editor .cm-search [name="close"]:hover {
   color: var(--color-neutral-100) !important;
 }
 .cm-editor .cm-searchMatch {

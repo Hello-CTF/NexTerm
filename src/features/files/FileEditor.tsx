@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { EditorView, keymap } from "@codemirror/view";
 import { basicSetup } from "codemirror";
@@ -10,6 +11,7 @@ import { fsApi } from "../../ipc/commands";
 import { openLogTab, useUi } from "../../app/store";
 import { modHint } from "../../app/platform";
 import { nxHighlight } from "../../ui/editorTheme";
+import { EditorSearchBar, editorSearchPanel, type EditorSearchHost } from "./editorSearchPanel";
 import {
   IconClose,
   IconLocate,
@@ -180,6 +182,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const applyingDiskRef = useRef(false);
   const [diskChange, setDiskChange] = useState<DiskChange | null>(null);
   const [showDiff, setShowDiff] = useState(false);
+  const [searchHost, setSearchHost] = useState<EditorSearchHost | null>(null);
   const mountedRef = useRef(true);
   const locatorRef = useRef({ sessionId, path });
   const loadLocksRef = useRef(new Map<string, { token: number; users: number }>());
@@ -406,7 +409,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
               doc: text,
               extensions: [
                 basicSetup,
-                search({ top: true }),
+                search({ top: true, createPanel: editorSearchPanel(setSearchHost) }),
                 language.of([]),
                 keymap.of([indentWithTab]),
                 nxHighlight,
@@ -975,6 +978,8 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         className="min-h-0 flex-1 overflow-auto"
         style={{ fontSize: fontPx }}
       />
+      {searchHost &&
+        createPortal(<EditorSearchBar view={searchHost.view} state={searchHost.state} />, searchHost.dom)}
     </div>
   );
 }
