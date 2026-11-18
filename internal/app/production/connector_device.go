@@ -327,7 +327,8 @@ func helperDTOFromDaemon(sessionID, action string, daemon *sshdaemon.Daemon) hel
 		update.Status = "interrupted"
 	case daemon.Update.Deferred:
 		update.Status = "deferred"
-	case matchingContent:
+	case matchingContent, daemon.Update.Retained:
+		// A retained helper is a later release or the same release: there is nothing to update to.
 		update.Status = "current"
 	case local.Known && local.SHA256 != "" && running.Known && running.SHA256 != "" &&
 		local.Protocol != nil && running.Protocol != nil && *local.Protocol == *running.Protocol:

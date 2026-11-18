@@ -40,8 +40,27 @@ func (h RunningHelper) NewerThan(local RuntimeMetadata) bool {
 	if h.Protocol != ProtocolVersion || h.Runtime == nil {
 		return false
 	}
-	helper, mine := "v"+strings.TrimPrefix(h.Runtime.Version, "v"), "v"+strings.TrimPrefix(local.Version, "v")
+	return ReleaseNewer(*h.Runtime, local)
+}
+
+// ReleaseNewer reports whether running carries a later semantic version than local. Versions that are not both
+// semantic versions (a dev build, an unreported version) are never ordered.
+func ReleaseNewer(running, local RuntimeMetadata) bool {
+	helper, mine := "v"+strings.TrimPrefix(running.Version, "v"), "v"+strings.TrimPrefix(local.Version, "v")
 	return semver.IsValid(helper) && semver.IsValid(mine) && semver.Compare(helper, mine) > 0
+}
+
+// SameRelease reports two builds of one release; see sameRelease.
+func SameRelease(a, b RuntimeMetadata) bool {
+	return sameRelease(a, b)
+}
+
+// ReleaseOlder reports whether running and local are both release builds and running carries the lower version.
+// It is the only case in which a client replaces an idle helper of another build on its own: two builds of one
+// version, or a dev build on either side, would otherwise replace each other's helper back and forth.
+func ReleaseOlder(running, local RuntimeMetadata) bool {
+	return isReleaseBuild(running) && isReleaseBuild(local) &&
+		semver.Compare("v"+strings.TrimPrefix(running.Version, "v"), "v"+strings.TrimPrefix(local.Version, "v")) < 0
 }
 
 // HelperBuild is the result of comparing the helper that serves a state directory with this build.

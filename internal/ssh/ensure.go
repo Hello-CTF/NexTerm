@@ -242,9 +242,15 @@ func (r *Resolver) ensureCycle(ctx context.Context, host Host, client *transport
 			connection.daemon.Update.Local = localHelperMetadata(*source)
 			connection.daemon.Update.Running = connection.metadata
 		}
-		if sourceErr == nil && source != nil && connection.known && !r.DisableAutoInstall &&
-			!strings.EqualFold(connection.metadata.SHA256, source.Digest) {
-			return r.updateRunningDaemon(ctx, host, location, source, *connection, options)
+		if sourceErr == nil && source != nil && connection.known && !strings.EqualFold(connection.metadata.SHA256, source.Digest) {
+			if reason := retainedHelperReason(connection.metadata, localHelperMetadata(*source)); reason != "" {
+				connection.daemon.Update.Retained = true
+				connection.daemon.Update.Reason = reason
+				return connection.daemon, nil
+			}
+			if !r.DisableAutoInstall {
+				return r.updateRunningDaemon(ctx, host, location, source, *connection, options)
+			}
 		}
 		if sourceErr != nil && !errors.Is(sourceErr, ErrHelperNotFound) {
 			connection.daemon.Update.Reason = "compatible daemon retained; local update evidence is unavailable: " + sourceErr.Error()
@@ -406,6 +412,20 @@ func (r *Resolver) uploadSourceForTarget(target Target) (*UploadSource, error) {
 func (r *Resolver) uploadSource(info targetInfo) (*UploadSource, bool, error) {
 	source, err := r.uploadSourceForTarget(Target{GOOS: info.goos, GOARCH: info.goarch, GOARM: info.goarm, DataRoot: info.dataRoot, Identity: info.euid})
 	return source, true, err
+}
+
+// retainedHelperReason says why a running helper of another build is kept instead of updated: it is a later
+// release than the local one, or another build of the same release. Several NexTerm installations of different
+// versions reach the same host; replacing by digest alone would downgrade the host's helper whenever an older one
+// connects, and builds of one release would replace each other back and forth. Empty means it may be updated.
+func retainedHelperReason(running, local supervisor.RuntimeMetadata) string {
+	switch {
+	case supervisor.ReleaseNewer(running, local):
+		return fmt.Sprintf("主机上的持久终端组件版本较新（%s，本机 %s），继续使用，不降级", running.Version, local.Version)
+	case supervisor.SameRelease(running, local):
+		return fmt.Sprintf("主机上的持久终端组件与本机同为 %s 版本，继续使用", running.Version)
+	}
+	return ""
 }
 
 func localHelperMetadata(source UploadSource) supervisor.RuntimeMetadata {

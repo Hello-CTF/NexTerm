@@ -409,8 +409,10 @@ type Session struct {
 	durableCreateFailure error
 	// helperUpdateRetrying (guarded by mu) marks a running retryWaitingHelperUpdate.
 	helperUpdateRetrying bool
-	fallbackNotified     bool
-	fallbackNoticeGen    uint64
+	// helperUpdateRecheck marks a running runHelperUpdateRecheck loop.
+	helperUpdateRecheck atomic.Bool
+	fallbackNotified    bool
+	fallbackNoticeGen   uint64
 	// localFallbackNotice is the last local helper reason shown on this session.
 	localFallbackNotice string
 

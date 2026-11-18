@@ -11,6 +11,11 @@ import (
 // helperUpdateRetryTimeout bounds the background helper update started when a session's last durable terminal ends.
 const helperUpdateRetryTimeout = 10 * time.Minute
 
+// helperUpdateRecheckInterval is how often a session whose SSH helper update waits for idle tries it again. The
+// update can wait on terminals of other clients or sessions, whose end this session never sees, so the retry when
+// its own last durable terminal ends is not enough.
+const helperUpdateRecheckInterval = 5 * time.Minute
+
 // updateWaitingProvider is a durable provider whose helper update waits only for the helper's processes to end.
 type updateWaitingProvider interface {
 	UpdateWaiting() bool
@@ -72,6 +77,60 @@ func (m *Manager) retryWaitingHelperUpdate(session *Session) {
 	}
 }
 
+// watchWaitingHelperUpdate starts, at most once per session, the loop that retries a helper update waiting for idle.
+// It takes no lock, so it may be called while session locks are held.
+func (m *Manager) watchWaitingHelperUpdate(session *Session, provider base.DurableProvider) {
+	if m.resolver == nil || session == nil || !providerUpdateWaiting(provider) {
+		return
+	}
+	if !session.helperUpdateRecheck.CompareAndSwap(false, true) {
+		return
+	}
+	if !m.startGoroutine(func() { m.runHelperUpdateRecheck(session) }) {
+		session.helperUpdateRecheck.Store(false)
+	}
+}
+
+func providerUpdateWaiting(provider base.DurableProvider) bool {
+	waiting, ok := provider.(updateWaitingProvider)
+	return ok && waiting.UpdateWaiting()
+}
+
+// runHelperUpdateRecheck retries the waiting helper update every helperUpdateRecheckEvery while the session's provider
+// still waits for idle. retryWaitingHelperUpdate keeps its own conditions: no live durable terminal in this session
+// and a resolver that checks the whole helper is idle before switching builds.
+func (m *Manager) runHelperUpdateRecheck(session *Session) {
+	timer := time.NewTimer(m.helperUpdateRecheckEvery)
+	defer timer.Stop()
+	for {
+		select {
+		case <-m.ctx.Done():
+			session.helperUpdateRecheck.Store(false)
+			return
+		case <-timer.C:
+		}
+		session.mu.Lock()
+		closed := session.closed
+		session.mu.Unlock()
+		session.durableMu.Lock()
+		provider := session.durableProvider
+		session.durableMu.Unlock()
+		if closed || !providerUpdateWaiting(provider) {
+			session.helperUpdateRecheck.Store(false)
+			// A waiting provider stored after the check above found the loop still marked; take it up again.
+			session.durableMu.Lock()
+			provider = session.durableProvider
+			session.durableMu.Unlock()
+			if !closed {
+				m.watchWaitingHelperUpdate(session, provider)
+			}
+			return
+		}
+		m.retryWaitingHelperUpdate(session)
+		timer.Reset(m.helperUpdateRecheckEvery)
+	}
+}
+
 func (m *Manager) runWaitingHelperUpdate(baseCtx context.Context, session *Session, transport *transportHandle, generation uint64, previous base.DurableProvider) {
 	defer func() {
 		session.mu.Lock()
@@ -90,13 +149,18 @@ func (m *Manager) runWaitingHelperUpdate(baseCtx context.Context, session *Sessi
 		return
 	}
 	session.mu.Lock()
-	defer session.mu.Unlock()
 	if session.closed || session.transport != transport || session.generation != generation {
+		session.mu.Unlock()
 		return
 	}
 	session.durableMu.Lock()
-	defer session.durableMu.Unlock()
-	if session.durableProvider == previous && session.durableGen == generation && session.durableTransport == transport {
+	replaced := session.durableProvider == previous && session.durableGen == generation && session.durableTransport == transport
+	if replaced {
 		session.durableProvider = provider
+	}
+	session.durableMu.Unlock()
+	session.mu.Unlock()
+	if replaced {
+		m.watchWaitingHelperUpdate(session, provider)
 	}
 }

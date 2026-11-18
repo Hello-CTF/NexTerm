@@ -93,6 +93,8 @@ type Manager struct {
 	livenessStale     atomic.Uint64
 	defaultReplay     int
 	slowConsumerGrace time.Duration
+	// helperUpdateRecheckEvery paces runHelperUpdateRecheck; tests shorten it.
+	helperUpdateRecheckEvery time.Duration
 
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -137,18 +139,19 @@ func NewManager(config Config) *Manager {
 			channelRecoverBeforeFeed:  func() {},
 			ephemeralReapAfterCurrent: func() {},
 		},
-		idleTimeout:      config.IdleTimeout,
-		sweepInterval:    config.SweepInterval,
-		reconnectMax:     config.ReconnectMax,
-		reconnectBackoff: append([]time.Duration(nil), config.ReconnectBackoff...),
-		jitter:           mathrand.Float64,
-		livenessPolicy:   config.Liveness.withDefaults(),
-		livenessClock:    systemLivenessClock{},
-		defaultReplay:    config.DefaultReplay,
-		openAccess:       config.OpenAccess,
-		ctx:              ctx,
-		cancel:           cancel,
-		closeDone:        make(chan struct{}),
+		idleTimeout:              config.IdleTimeout,
+		sweepInterval:            config.SweepInterval,
+		reconnectMax:             config.ReconnectMax,
+		reconnectBackoff:         append([]time.Duration(nil), config.ReconnectBackoff...),
+		jitter:                   mathrand.Float64,
+		livenessPolicy:           config.Liveness.withDefaults(),
+		livenessClock:            systemLivenessClock{},
+		defaultReplay:            config.DefaultReplay,
+		helperUpdateRecheckEvery: helperUpdateRecheckInterval,
+		openAccess:               config.OpenAccess,
+		ctx:                      ctx,
+		cancel:                   cancel,
+		closeDone:                make(chan struct{}),
 	}
 	if manager.now == nil {
 		manager.now = time.Now
