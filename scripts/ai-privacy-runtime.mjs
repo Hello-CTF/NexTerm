@@ -32,6 +32,9 @@ const nugetRuntimes = {
 };
 const nativeLibrary = { darwin: "libonnxruntime.dylib", linux: "libonnxruntime.so", windows: "onnxruntime.dll" };
 const UPSTREAM_LICENSES = ["LICENSE", "ThirdPartyNotices.txt"];
+// The managed-API package is about 1 MB and carries the release's license files (its LICENSE as LICENSE.txt).
+const NUGET_LICENSE_PACKAGE = "microsoft.ml.onnxruntime.managed";
+const NUGET_LICENSE_FILES = ["LICENSE.txt", "ThirdPartyNotices.txt"];
 const hostArchives = {
   "darwin-arm64": (v) => `onnxruntime-osx-arm64-${v}.tgz`,
   "darwin-amd64": (v) => `onnxruntime-osx-x86_64-${v}.tgz`,
@@ -111,26 +114,36 @@ export async function resolveVersion(context = {}) {
   return checkVersion(stable.pop());
 }
 
-// nugetPlan locates the platform library in the Microsoft.ML.OnnxRuntime package. The catalog entry states
-// the package's SHA-512 and lists its files, so a platform the package does not carry is known before the
-// download, as with a GitHub release that publishes no archive for it.
-async function nugetPlan(common, version, context) {
-  const registration = await fetchJSON(`${NUGET}/registration5-gz-semver2/${NUGET_PACKAGE}/${version}.json`, context);
-  if (!registration?.catalogEntry) throw new Error(`Neither GitHub nor nuget.org publishes ONNX Runtime ${version}`);
+// nugetPackage looks up a package version on nuget.org. Its catalog entry states the package SHA-512 and lists
+// its files; a package without a SHA-512 is refused, as a GitHub asset without a digest is.
+async function nugetPackage(id, version, context) {
+  const registration = await fetchJSON(`${NUGET}/registration5-gz-semver2/${id}/${version}.json`, context);
+  if (!registration?.catalogEntry) return null;
   const entry = await fetchJSON(registration.catalogEntry, context);
-  if (String(entry?.packageHashAlgorithm).toUpperCase() !== "SHA512" || !entry?.packageHash) throw new Error(`nuget.org publishes no SHA-512 for Microsoft.ML.OnnxRuntime ${version}; refusing to use an unverified download`);
-  const archive = `${NUGET_PACKAGE}.${version}.nupkg`;
+  if (String(entry?.packageHashAlgorithm).toUpperCase() !== "SHA512" || !entry?.packageHash) throw new Error(`nuget.org publishes no SHA-512 for ${id} ${version}; refusing to use an unverified download`);
+  const archive = `${id}.${version}.nupkg`;
+  return {
+    version,
+    archive,
+    url: registration.packageContent ?? `${NUGET}-flatcontainer/${id}/${version}/${archive}`,
+    digest: { algorithm: "sha512", value: Buffer.from(entry.packageHash, "base64").toString("hex") },
+    entries: new Set((entry.packageEntries ?? []).map((item) => item.fullName)),
+  };
+}
+
+// nugetPlan locates the platform library in the Microsoft.ML.OnnxRuntime package, so a platform the package
+// does not carry is known before the download, as with a GitHub release that publishes no archive for it.
+async function nugetPlan(common, version, context) {
+  const found = await nugetPackage(NUGET_PACKAGE, version, context);
+  if (!found) throw new Error(`Neither GitHub nor nuget.org publishes ONNX Runtime ${version}`);
+  const { entries, ...packaged } = found;
   const libraryPath = `runtimes/${nugetRuntimes[`${common.os}-${common.arch}`]}/native/${nativeLibrary[common.os]}`;
-  const entries = new Set((entry.packageEntries ?? []).map((item) => item.fullName));
   if (!entries.has(libraryPath)) return { ...common, version, source: "nuget", unavailable: `ONNX Runtime ${version} on nuget.org carries no ${libraryPath} for ${common.os}/${common.arch}` };
   return {
     ...common,
-    version,
+    ...packaged,
     source: "nuget",
     ...(common.os === "darwin" ? { minimumOS: "13.4" } : {}),
-    archive,
-    url: registration.packageContent ?? `${NUGET}-flatcontainer/${NUGET_PACKAGE}/${version}/${archive}`,
-    digest: { algorithm: "sha512", value: Buffer.from(entry.packageHash, "base64").toString("hex") },
     libraryPath,
     members: [libraryPath, ...UPSTREAM_LICENSES.filter((name) => entries.has(name))],
   };
@@ -324,26 +337,64 @@ export async function stageWindowsCRT(redistDirectory, arch, output, library) {
   return { version, imports, signature, files };
 }
 
+// nugetLicenseDirectory downloads the version's Microsoft.ML.OnnxRuntime.Managed package, verifies it and
+// extracts its license files; null when nuget.org does not publish the version.
+async function nugetLicenseDirectory(version, context) {
+  const found = await nugetPackage(NUGET_LICENSE_PACKAGE, version, context);
+  if (!found) return null;
+  const { entries, ...plan } = found;
+  const cache = path.join(repository, ".tmp/ai-privacy-runtime");
+  const downloaded = await download(plan, cache, context);
+  const directory = path.join(cache, version, `${plan.archive.replaceAll(".", "-")}-extracted`);
+  await rm(directory, { recursive: true, force: true });
+  await unpack(downloaded.archive, directory, NUGET_LICENSE_FILES.filter((name) => entries.has(name)));
+  return directory;
+}
+
 // ONNX-RUNTIME-LICENSE and the third-party notices come from the resolved
-// release: its archive when it carries them, else the matching git tag.
+// release: its archive when it carries them, else the matching git tag, else
+// the version's Microsoft.ML.OnnxRuntime.Managed package on nuget.org.
 async function stageLicenses(plan, source, output, { directory = thirdParty, ...context } = {}) {
   const searched = [archiveRoot(plan, source), source];
-  const upstream = { "licenses/ONNX-RUNTIME-LICENSE": [UPSTREAM_LICENSES[0]], "licenses/ONNX-RUNTIME-THIRD-PARTY-NOTICES": [UPSTREAM_LICENSES[1], "ThirdPartyNotices.md"] };
+  const upstream = {
+    "licenses/ONNX-RUNTIME-LICENSE": [UPSTREAM_LICENSES[0], NUGET_LICENSE_FILES[0]],
+    "licenses/ONNX-RUNTIME-THIRD-PARTY-NOTICES": [UPSTREAM_LICENSES[1], "ThirdPartyNotices.md"],
+  };
   const local = { "licenses/ASTRLINK-LICENSE": "ASTRLINK_LICENSE", "licenses/ASTRLINK-NOTICE.md": "ASTRLINK_NOTICE.md" };
+  let nuget;
+  const findIn = async (roots, candidates) => {
+    for (const candidate of candidates) for (const root of roots) {
+      const file = path.join(root, candidate);
+      if (await stat(file).then(entry => entry.isFile(), () => false)) return file;
+    }
+    return undefined;
+  };
   for (const name of RUNTIME_LICENSES) {
     const destination = path.join(output, name);
     if (local[name]) { await copyFile(path.join(directory, local[name]), destination); continue; }
-    let found;
-    for (const candidate of upstream[name]) for (const root of searched) {
-      const file = path.join(root, candidate);
-      if (!found && await stat(file).then(entry => entry.isFile(), () => false)) found = file;
-    }
+    let found = await findIn(searched, upstream[name]);
     if (found) { await copyFile(found, destination); continue; }
     let text;
-    for (const candidate of upstream[name]) text ??= await fetchText(`https://raw.githubusercontent.com/microsoft/onnxruntime/v${plan.version}/${candidate}`, context);
-    if (!text) throw new Error(`Cannot obtain ${name} for ONNX Runtime ${plan.version}`);
-    await mkdir(path.dirname(destination), { recursive: true });
-    await writeFile(destination, text);
+    for (const candidate of upstream[name]) {
+      if (text) break;
+      try {
+        text = await fetchText(`https://raw.githubusercontent.com/microsoft/onnxruntime/v${plan.version}/${candidate}`, context);
+      } catch (error) {
+        console.warn(`warning: GitHub ${candidate} for ONNX Runtime ${plan.version} unavailable (${error.message})`);
+      }
+    }
+    if (text) {
+      await mkdir(path.dirname(destination), { recursive: true });
+      await writeFile(destination, text);
+      continue;
+    }
+    if (nuget === undefined) {
+      console.warn(`warning: using the license files of Microsoft.ML.OnnxRuntime.Managed ${plan.version} from nuget.org`);
+      nuget = await nugetLicenseDirectory(plan.version, context);
+    }
+    found = nuget && await findIn([nuget], upstream[name]);
+    if (!found) throw new Error(`Cannot obtain ${name} for ONNX Runtime ${plan.version}`);
+    await copyFile(found, destination);
   }
 }
 

@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { crc32 } from "node:zlib";
 import { buildRuntime, resolveVersion, runtimePlan } from "./ai-privacy-runtime.mjs";
 
 const SHA512 = Buffer.alloc(64, 7).toString("base64");
@@ -122,5 +125,79 @@ test("the NuGet layout stages the library and the upstream licenses", async () =
     assert.equal(await readFile(path.join(output, "licenses/ONNX-RUNTIME-THIRD-PARTY-NOTICES"), "utf8"), "notices");
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// storedZip builds an uncompressed zip, enough for a fake .nupkg.
+function storedZip(files) {
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const [name, text] of Object.entries(files)) {
+    const fileName = Buffer.from(name);
+    const data = Buffer.from(text);
+    const crc = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(fileName.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(fileName.length, 28);
+    central.writeUInt32LE(offset, 42);
+    locals.push(local, fileName, data);
+    centrals.push(central, fileName);
+    offset += local.length + fileName.length + data.length;
+  }
+  const directory = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(Object.keys(files).length, 8);
+  end.writeUInt16LE(Object.keys(files).length, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, directory, end]);
+}
+
+const hasUnzip = process.platform === "win32" || spawnSync("unzip", ["-v"]).status === 0;
+
+test("mobile builds take the license files from nuget.org when GitHub cannot serve them", { skip: !hasUnzip && "unzip is not installed" }, async () => {
+  const directory = await mkdtemp(path.join(process.env.TMPDIR || os.tmpdir(), "ort-license-"));
+  const version = `1.32.${Date.now() % 100000}`;
+  try {
+    const source = path.join(directory, "aar");
+    await mkdir(path.join(source, "jni/arm64-v8a"), { recursive: true });
+    await writeFile(path.join(source, "jni/arm64-v8a/libonnxruntime.so"), "library");
+    const nupkg = storedZip({ "LICENSE.txt": "MIT License", "ThirdPartyNotices.txt": "notices", "README.md": "readme" });
+    const catalog = "https://api.nuget.org/v3/catalog0/data/x/managed.json";
+    const { fetchImpl } = fakeFetch({
+      [`https://api.nuget.org/v3/registration5-gz-semver2/microsoft.ml.onnxruntime.managed/${version}.json`]: json({
+        catalogEntry: catalog,
+        packageContent: "https://api.nuget.org/v3-flatcontainer/managed.nupkg",
+      }),
+      [catalog]: json({
+        packageHash: createHash("sha512").update(nupkg).digest("base64"),
+        packageHashAlgorithm: "SHA512",
+        packageEntries: [{ fullName: "LICENSE.txt" }, { fullName: "ThirdPartyNotices.txt" }, { fullName: "README.md" }],
+      }),
+      "https://api.nuget.org/v3-flatcontainer/managed.nupkg": new Response(nupkg),
+      "https://raw.githubusercontent.com/": new Response("gone", { status: 404 }),
+    });
+    const plan = { os: "android", arch: "arm64", library: "libonnxruntime.so", version, archive: `onnxruntime-android-${version}.aar` };
+    const output = path.join(directory, "out");
+    await buildRuntime({ plan, ortDir: source, output, env: {}, fetchImpl });
+    assert.equal(await readFile(path.join(output, "licenses/ONNX-RUNTIME-LICENSE"), "utf8"), "MIT License");
+    assert.equal(await readFile(path.join(output, "licenses/ONNX-RUNTIME-THIRD-PARTY-NOTICES"), "utf8"), "notices");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(path.join(path.dirname(new URL(import.meta.url).pathname), "..", ".tmp/ai-privacy-runtime", version), { recursive: true, force: true });
   }
 });
