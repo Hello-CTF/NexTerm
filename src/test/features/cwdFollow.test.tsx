@@ -38,7 +38,7 @@ import {
   resetCwdFollowForTest,
   startCwdTracking,
 } from "../../features/files/cwdFollow";
-import { useUi, type AppTab } from "../../app/store";
+import { openFileTab, useUi, type AppTab } from "../../app/store";
 
 const SID = "s1";
 
@@ -263,6 +263,25 @@ describe("FileTree terminal-directory follow", () => {
     emitControl({ tabId: "k1", version: 2, cwd: "/first/again" });
     await flush();
     expect(listCalls()).not.toContain("/first/again");
+  });
+
+  it("keeps following the last used terminal while a file editor tab is active", async () => {
+    seedWorkspace({ secondTabId: "k2" });
+    mountTree();
+    await flush();
+    emitControl({ tabId: "k1", version: 1, cwd: "/home/u" });
+    act(() => {
+      useUi.getState().setActiveTab("t2");
+    });
+    emitControl({ tabId: "k2", version: 1, cwd: "/srv/www" });
+    await waitFor(() => expect(listCalls()).toContain("/srv/www"));
+
+    const before = listCalls().length;
+    act(() => openFileTab(SID, "/srv/www/index.html"));
+    await flush();
+
+    expect(listCalls().slice(before)).not.toContain("/home/u");
+    expect(mounted!.container.querySelector('button[aria-label^="上级目录"]')?.getAttribute("aria-label")).toContain("/srv");
   });
 
   it("winrm sessions do not show the follow toggle", async () => {
