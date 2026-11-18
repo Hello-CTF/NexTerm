@@ -4,7 +4,9 @@
 // library that the Go privacy inference engine loads at run time. Nothing is
 // compiled here. The version comes from the release channels at build time
 // (or NEXTERM_ORT_VERSION) and every download is verified against the digest
-// its publisher states; no digests are pinned in this repository.
+// its publisher states; no digests are pinned in this repository. Desktop
+// builds use the GitHub release and, when GitHub cannot be reached after
+// retries, Microsoft's Microsoft.ML.OnnxRuntime package on nuget.org.
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
@@ -18,6 +20,18 @@ const thirdParty = path.join(repository, "internal/ai/privacy/third_party");
 const MIN_MINOR = 23;
 const GITHUB_API = "https://api.github.com/repos/microsoft/onnxruntime";
 const MAVEN = "https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android";
+const NUGET = "https://api.nuget.org/v3";
+const NUGET_PACKAGE = "microsoft.ml.onnxruntime";
+const nugetRuntimes = {
+  "darwin-arm64": "osx-arm64",
+  "darwin-amd64": "osx-x64",
+  "linux-arm64": "linux-arm64",
+  "linux-amd64": "linux-x64",
+  "windows-arm64": "win-arm64",
+  "windows-amd64": "win-x64",
+};
+const nativeLibrary = { darwin: "libonnxruntime.dylib", linux: "libonnxruntime.so", windows: "onnxruntime.dll" };
+const UPSTREAM_LICENSES = ["LICENSE", "ThirdPartyNotices.txt"];
 const hostArchives = {
   "darwin-arm64": (v) => `onnxruntime-osx-arm64-${v}.tgz`,
   "darwin-amd64": (v) => `onnxruntime-osx-x86_64-${v}.tgz`,
@@ -37,28 +51,89 @@ export function checkVersion(version) {
 const versionKey = (v) => v.split(".").map(Number);
 const compareVersions = (a, b) => { const x = versionKey(a), y = versionKey(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
 
-async function fetchChecked(url, { fetchImpl = fetch, env = process.env, accept } = {}) {
+const RETRY_ATTEMPTS = 3;
+const retryable = (status) => status === 429 || status >= 500;
+
+// fetchChecked returns null for 404 and throws for any other failure. Network errors, 429 and 5xx are
+// retried a few times first, so a passing outage does not fail a build or switch it to another channel.
+async function fetchChecked(url, { fetchImpl = fetch, env = process.env, accept, attempts = RETRY_ATTEMPTS, retryDelayMs = 2000 } = {}) {
   const headers = { "User-Agent": "nexterm-build" };
   if (accept) headers.Accept = accept;
   if (env.GITHUB_TOKEN && new URL(url).hostname === "api.github.com") headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
-  const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(600_000) });
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
-  return response;
+  for (let attempt = 1; ; attempt++) {
+    let response;
+    try {
+      response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(600_000) });
+    } catch (error) {
+      if (attempt >= attempts) throw new Error(`${url} failed: ${error.message}`);
+      console.warn(`warning: ${url} failed (${error.message}); retrying`);
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
+      continue;
+    }
+    if (response.status === 404) return null;
+    if (response.ok) return response;
+    if (!retryable(response.status) || attempt >= attempts) throw new Error(`${url} returned HTTP ${response.status}`);
+    console.warn(`warning: ${url} returned HTTP ${response.status}; retrying`);
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
+  }
 }
 
 const fetchJSON = async (url, context) => (await fetchChecked(url, { ...context, accept: "application/vnd.github+json" }))?.json() ?? null;
 const fetchText = async (url, context) => (await fetchChecked(url, context))?.text() ?? null;
 
+// fromGitHub runs a GitHub release lookup and returns its result, or undefined when GitHub cannot answer
+// (unreachable, rate limited, or the repository is gone), which sends the caller to the NuGet channel.
+async function fromGitHub(lookup, what) {
+  try {
+    const result = await lookup();
+    if (result) return result;
+    console.warn(`warning: GitHub has no ${what}; using the Microsoft.ML.OnnxRuntime package on nuget.org`);
+  } catch (error) {
+    console.warn(`warning: GitHub ${what} unavailable (${error.message}); using the Microsoft.ML.OnnxRuntime package on nuget.org`);
+  }
+  return undefined;
+}
+
 // The version is resolved once per workflow run and handed to every job through
-// NEXTERM_ORT_VERSION; unset, the latest non-prerelease GitHub release is used.
+// NEXTERM_ORT_VERSION; unset, the latest non-prerelease GitHub release is used,
+// else the newest stable version published on nuget.org.
 export async function resolveVersion(context = {}) {
   const env = context.env ?? process.env;
   if (env.NEXTERM_ORT_VERSION) return checkVersion(env.NEXTERM_ORT_VERSION.replace(/^v/, ""));
-  const release = await fetchJSON(`${GITHUB_API}/releases/latest`, context);
-  if (!release) throw new Error("microsoft/onnxruntime has no latest release");
-  if (release.prerelease || release.draft) throw new Error(`Latest ONNX Runtime release ${release.tag_name} is a prerelease; set NEXTERM_ORT_VERSION to pin a stable one`);
-  return checkVersion(String(release.tag_name).replace(/^v/, ""));
+  const release = await fromGitHub(() => fetchJSON(`${GITHUB_API}/releases/latest`, context), "latest ONNX Runtime release");
+  if (release) {
+    if (release.prerelease || release.draft) throw new Error(`Latest ONNX Runtime release ${release.tag_name} is a prerelease; set NEXTERM_ORT_VERSION to pin a stable one`);
+    return checkVersion(String(release.tag_name).replace(/^v/, ""));
+  }
+  const index = await fetchJSON(`${NUGET}-flatcontainer/${NUGET_PACKAGE}/index.json`, context);
+  const stable = (index?.versions ?? []).filter((name) => /^1\.\d+\.\d+$/.test(name)).sort(compareVersions);
+  if (!stable.length) throw new Error("Neither GitHub nor nuget.org publishes a stable ONNX Runtime 1.x release");
+  return checkVersion(stable.pop());
+}
+
+// nugetPlan locates the platform library in the Microsoft.ML.OnnxRuntime package. The catalog entry states
+// the package's SHA-512 and lists its files, so a platform the package does not carry is known before the
+// download, as with a GitHub release that publishes no archive for it.
+async function nugetPlan(common, version, context) {
+  const registration = await fetchJSON(`${NUGET}/registration5-gz-semver2/${NUGET_PACKAGE}/${version}.json`, context);
+  if (!registration?.catalogEntry) throw new Error(`Neither GitHub nor nuget.org publishes ONNX Runtime ${version}`);
+  const entry = await fetchJSON(registration.catalogEntry, context);
+  if (String(entry?.packageHashAlgorithm).toUpperCase() !== "SHA512" || !entry?.packageHash) throw new Error(`nuget.org publishes no SHA-512 for Microsoft.ML.OnnxRuntime ${version}; refusing to use an unverified download`);
+  const archive = `${NUGET_PACKAGE}.${version}.nupkg`;
+  const libraryPath = `runtimes/${nugetRuntimes[`${common.os}-${common.arch}`]}/native/${nativeLibrary[common.os]}`;
+  const entries = new Set((entry.packageEntries ?? []).map((item) => item.fullName));
+  if (!entries.has(libraryPath)) return { ...common, version, source: "nuget", unavailable: `ONNX Runtime ${version} on nuget.org carries no ${libraryPath} for ${common.os}/${common.arch}` };
+  return {
+    ...common,
+    version,
+    source: "nuget",
+    ...(common.os === "darwin" ? { minimumOS: "13.4" } : {}),
+    archive,
+    url: registration.packageContent ?? `${NUGET}-flatcontainer/${NUGET_PACKAGE}/${version}/${archive}`,
+    digest: { algorithm: "sha512", value: Buffer.from(entry.packageHash, "base64").toString("hex") },
+    libraryPath,
+    members: [libraryPath, ...UPSTREAM_LICENSES.filter((name) => entries.has(name))],
+  };
 }
 
 function parseDigest(value) {
@@ -105,15 +180,15 @@ export async function runtimePlan({ os, arch, iosPlatform = "device" }, context 
     if (!digest) throw new Error(`Maven Central publishes no checksum for ${archive}`);
     return { ...common, version: resolved, minimumOS: "24", archive, url, digest };
   }
-  const release = await fetchJSON(`${GITHUB_API}/releases/tags/v${resolved}`, context);
-  if (!release) throw new Error(`microsoft/onnxruntime has no release v${resolved}`);
+  const release = await fromGitHub(() => fetchJSON(`${GITHUB_API}/releases/tags/v${resolved}`, context), `release v${resolved}`);
+  if (!release) return nugetPlan(common, resolved, context);
   const archive = hostArchives[`${os}-${arch}`](resolved);
   const asset = release.assets?.find((item) => item.name === archive);
   // A platform the release no longer publishes builds without the privacy runtime; the guard reports unsupported at run time.
   if (!asset) return { ...common, version: resolved, unavailable: `ONNX Runtime ${resolved} publishes no ${archive} for ${os}/${arch}` };
   const digest = parseDigest(asset.digest);
   if (!digest) throw new Error(`GitHub publishes no digest for ${archive}; refusing to use an unverified download`);
-  return { ...common, version: resolved, ...(os === "darwin" ? { minimumOS: "13.4" } : {}), archive, digest, url: asset.browser_download_url };
+  return { ...common, version: resolved, source: "github", ...(os === "darwin" ? { minimumOS: "13.4" } : {}), archive, digest, url: asset.browser_download_url };
 }
 
 function command(executable, args, options = {}) {
@@ -146,10 +221,11 @@ async function download(plan, cache, context = {}) {
   return { archive, sha256: hash(data) };
 }
 
-async function unpack(archive, directory) {
+// unpack extracts the archive, or only members when given (the NuGet package carries every platform).
+async function unpack(archive, directory, members = []) {
   await mkdir(directory, { recursive: true });
-  if (archive.endsWith(".tgz") || process.platform === "win32") command(resolveTar(), ["-xf", archive, "-C", directory]);
-  else command("unzip", ["-oq", archive, "-d", directory]);
+  if (archive.endsWith(".tgz") || process.platform === "win32") command(resolveTar(), ["-xf", archive, "-C", directory, ...members]);
+  else command("unzip", ["-oq", archive, ...members, "-d", directory]);
 }
 
 async function copyFile(source, destination) {
@@ -185,9 +261,12 @@ async function stageLibrary(plan, source, output) {
     await copyFile(path.join(source, "jni", abi, "libonnxruntime.so"), path.join(output, plan.library));
     return;
   }
+  if (plan.libraryPath) {
+    await copyFile(path.join(source, ...plan.libraryPath.split("/")), path.join(output, plan.library));
+    return;
+  }
   const root = archiveRoot(plan, source);
-  const name = plan.os === "windows" ? "onnxruntime.dll" : plan.os === "darwin" ? "libonnxruntime.dylib" : "libonnxruntime.so";
-  await copyFile(path.join(root, "lib", name), path.join(output, plan.library));
+  await copyFile(path.join(root, "lib", nativeLibrary[plan.os]), path.join(output, plan.library));
 }
 
 async function windowsCRTDirectory(env = process.env) {
@@ -249,7 +328,7 @@ export async function stageWindowsCRT(redistDirectory, arch, output, library) {
 // release: its archive when it carries them, else the matching git tag.
 async function stageLicenses(plan, source, output, { directory = thirdParty, ...context } = {}) {
   const searched = [archiveRoot(plan, source), source];
-  const upstream = { "licenses/ONNX-RUNTIME-LICENSE": ["LICENSE"], "licenses/ONNX-RUNTIME-THIRD-PARTY-NOTICES": ["ThirdPartyNotices.txt", "ThirdPartyNotices.md"] };
+  const upstream = { "licenses/ONNX-RUNTIME-LICENSE": [UPSTREAM_LICENSES[0]], "licenses/ONNX-RUNTIME-THIRD-PARTY-NOTICES": [UPSTREAM_LICENSES[1], "ThirdPartyNotices.md"] };
   const local = { "licenses/ASTRLINK-LICENSE": "ASTRLINK_LICENSE", "licenses/ASTRLINK-NOTICE.md": "ASTRLINK_NOTICE.md" };
   for (const name of RUNTIME_LICENSES) {
     const destination = path.join(output, name);
@@ -286,7 +365,7 @@ export async function buildRuntime(options) {
   if (plan.unavailable) {
     console.warn(`warning: ${plan.unavailable}; building without the privacy runtime`);
     await mkdir(output, { recursive: true });
-    const manifest = { abi: RUNTIME_ABI, platform: plan.os, arch: plan.arch, onnxRuntime: plan.version, unavailable: plan.unavailable, files: {} };
+    const manifest = { abi: RUNTIME_ABI, platform: plan.os, arch: plan.arch, onnxRuntime: plan.version, ...(plan.source ? { source: plan.source } : {}), unavailable: plan.unavailable, files: {} };
     await writeFile(path.join(output, "runtime.json"), `${JSON.stringify(manifest, null, 2)}\n`);
     return manifest;
   }
@@ -300,7 +379,7 @@ export async function buildRuntime(options) {
     archiveSha256 = downloaded.sha256;
     source = path.join(cache, plan.version, plan.archive.replaceAll(".", "-") + "-extracted");
     await rm(source, { recursive: true, force: true });
-    await unpack(downloaded.archive, source);
+    await unpack(downloaded.archive, source, plan.members);
   }
   await stageLibrary(plan, source, output);
   await stageLicenses(plan, source, output, { directory: options.licenseDir, ...context });
@@ -308,7 +387,7 @@ export async function buildRuntime(options) {
   const files = {};
   await collect(output, files);
   const library = await stat(path.join(output, plan.library));
-  const manifest = { abi: RUNTIME_ABI, platform: plan.os, arch: plan.arch, onnxRuntime: plan.version, archive: plan.archive, archiveSha256, minimumOS: plan.minimumOS, library: plan.library, librarySizeBytes: library.size, ...(crt ? { crt } : {}), files };
+  const manifest = { abi: RUNTIME_ABI, platform: plan.os, arch: plan.arch, onnxRuntime: plan.version, ...(plan.source ? { source: plan.source } : {}), archive: plan.archive, archiveSha256, minimumOS: plan.minimumOS, library: plan.library, librarySizeBytes: library.size, ...(crt ? { crt } : {}), files };
   await writeFile(path.join(output, "runtime.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
 }
