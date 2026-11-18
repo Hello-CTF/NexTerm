@@ -108,6 +108,31 @@ func TestNewerThan(t *testing.T) {
 	}
 }
 
+func TestReleaseOlder(t *testing.T) {
+	release := func(version, commit string) RuntimeMetadata { return RuntimeMetadata{Version: version, Commit: commit} }
+	cases := []struct {
+		name    string
+		running RuntimeMetadata
+		local   RuntimeMetadata
+		want    bool
+	}{
+		{"older release", release("1.4.4", "aaa"), release("1.5.0", "bbb"), true},
+		{"older rc of the same version", release("v1.5.0-rc.2", "aaa"), release("1.5.0", "bbb"), true},
+		{"same version other commit", release("1.5.0", "aaa"), release("1.5.0", "bbb"), false},
+		{"newer release", release("1.6.0", "aaa"), release("1.5.0", "bbb"), false},
+		{"dev local", release("1.4.4", "aaa"), release("dev", "unknown"), false},
+		{"placeholder local", release("1.4.4", "aaa"), release("0.0.0", "bbb"), false},
+		{"dev helper", release("dev", "unknown"), release("1.5.0", "bbb"), false},
+		{"dirty local", release("1.4.4", "aaa"), release("1.5.0", "bbb+dirty"), false},
+		{"no helper commit", release("1.4.4", ""), release("1.5.0", "bbb"), false},
+	}
+	for _, tc := range cases {
+		if got := ReleaseOlder(tc.running, tc.local); got != tc.want {
+			t.Errorf("%s: got %v", tc.name, got)
+		}
+	}
+}
+
 func TestNewerHelperIsNotStaleAndNotReplaced(t *testing.T) {
 	running := RunningHelper{
 		Protocol: ProtocolVersion, ActivityKnown: true,

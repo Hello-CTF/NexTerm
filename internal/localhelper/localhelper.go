@@ -180,6 +180,11 @@ type Service struct {
 	done     chan struct{}
 	start    sync.Once
 	started  bool
+
+	// refusedReplace is the consent token of the last idle helper that could
+	// not be replaced automatically; it is not tried again while unchanged.
+	// Only the run goroutine reads or writes it.
+	refusedReplace string
 }
 
 type requestKind int
@@ -579,6 +584,9 @@ const (
 	// watchMigrated: the previous directory's helper ended idle and the
 	// service moved to the shared directory.
 	watchMigrated
+	// watchReplaced: an idle helper of an older release was stopped; the
+	// next durable terminal starts this build's helper.
+	watchReplaced
 )
 
 // run is the single actor that inspects, spawns, watches and replaces the
@@ -703,9 +711,9 @@ func (s *Service) run() {
 		switch outcome {
 		case watchClosed:
 			return
-		case watchMigrated:
-			// The previous helper ran nothing and was stopped; the shared one
-			// starts when a durable terminal needs it.
+		case watchMigrated, watchReplaced:
+			// The previous helper ran nothing and was stopped; this build's
+			// helper starts when a durable terminal needs it.
 			continue
 		case watchRestarted:
 			// The user restarted it onto this build: start the new one now.
@@ -826,6 +834,35 @@ func (s *Service) readyStatus(helper helperHandle, running supervisor.RunningHel
 	}
 	status.Reason = fmt.Sprintf("本机持久终端组件来自其他版本（%s），可更新；其中有 %d 个会话在运行，重启组件会结束这些会话", version, status.ActiveSessions)
 	return status
+}
+
+// replaceIdleOlder stops an attached helper that readyStatus offers for an
+// update when it runs no session and both it and this build are releases with
+// this one the later version, as the agent does with its own helper. A newer,
+// equal or dev build is left for the user to restart. stopHelper checks the
+// session count again, so a terminal that started since the inspection keeps
+// the helper. It reports whether the helper was stopped.
+func (s *Service) replaceIdleOlder(status Status, running supervisor.RunningHelper) bool {
+	if !status.UpdateAvailable || !status.ActivityKnown || status.ActiveSessions != 0 || running.Runtime == nil ||
+		status.ConsentToken == "" || status.ConsentToken == s.refusedReplace {
+		return false
+	}
+	local := supervisor.RuntimeMetadata{Version: s.config.selfVersion(), Commit: s.config.selfCommit()}
+	if !supervisor.ReleaseOlder(*running.Runtime, local) {
+		return false
+	}
+	stopped, err := s.restartWith(status.ConsentToken)
+	if err != nil {
+		if s.ctx.Err() == nil {
+			s.refusedReplace = status.ConsentToken
+			s.config.Logger.Warn("could not replace an idle local helper of an older release", "version", running.Runtime.Version, "pid", running.PID, "error", err)
+		}
+		return false
+	}
+	if stopped {
+		s.config.Logger.Info("replaced an idle local helper of an older release", "version", running.Runtime.Version, "to", local.Version, "pid", running.PID)
+	}
+	return stopped
 }
 
 func consentToken(running supervisor.RunningHelper) string {
@@ -978,6 +1015,9 @@ func (s *Service) watch(helper helperHandle) watchOutcome {
 	running, err := s.config.inspect(s.ctx, s.dir())
 	inspected := err == nil && running.Current()
 	status := s.readyStatus(helper, running, inspected && !helper.Spawned())
+	if s.replaceIdleOlder(status, running) {
+		return watchReplaced
+	}
 	s.setStatus(status, provider)
 	s.markChecked()
 	if s.config.StateRules != nil {
@@ -1037,6 +1077,9 @@ func (s *Service) watch(helper helperHandle) watchOutcome {
 			}
 			running, inspected = current, true
 			status = s.readyStatus(helper, running, true)
+			if s.replaceIdleOlder(status, running) {
+				return watchReplaced
+			}
 			s.setStatus(status, provider)
 		case req := <-s.requests:
 			switch req.kind {

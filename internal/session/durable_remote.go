@@ -266,6 +266,7 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 	// The outcome is stored and the running entry removed under session.mu, the lock ensureBackgroundHelper holds:
 	// a caller that no longer sees the running deployment therefore already sees its provider or failure, and never
 	// starts a second deployment in between.
+	var stored base.DurableProvider
 	session.mu.Lock()
 	backgroundHelperDeployments.Lock()
 	canceledByUser := entry.canceledByUser
@@ -283,6 +284,7 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 			session.durableFailure = nil
 			session.durableFailureAt = time.Time{}
 			session.durableCreateFailure = nil
+			stored = entry.provider
 		} else if canceledByUser && isPureCancellation(entry.err) {
 			session.durableProvider = nil
 			session.durableFailure = nil
@@ -295,6 +297,7 @@ func (m *Manager) runBackgroundHelper(entry *backgroundHelperDeployment) {
 		session.durableMu.Unlock()
 	}
 	session.mu.Unlock()
+	m.watchWaitingHelperUpdate(session, stored)
 	close(entry.done)
 }
 
@@ -502,7 +505,6 @@ func (m *Manager) resolveSSHCandidate(ctx context.Context, session *Session, tra
 	resolveCtx := ipc.WithHelperProgressScope(ctx, ipc.HelperProgressScope{SessionID: session.ID, AssetID: session.Asset().ID})
 	provider, err := m.resolver.ResolveDurable(resolveCtx, transport.Transport)
 	session.durableMu.Lock()
-	defer session.durableMu.Unlock()
 	if err != nil {
 		if sshHelperUnavailable(err) && ctx.Err() == nil {
 			session.durableProvider = nil
@@ -511,6 +513,7 @@ func (m *Manager) resolveSSHCandidate(ctx context.Context, session *Session, tra
 			session.durableGen = generation
 			session.durableTransport = transport
 		}
+		session.durableMu.Unlock()
 		return nil, err
 	}
 	session.durableProvider = provider
@@ -519,6 +522,8 @@ func (m *Manager) resolveSSHCandidate(ctx context.Context, session *Session, tra
 	session.durableCreateFailure = nil
 	session.durableGen = generation
 	session.durableTransport = transport
+	session.durableMu.Unlock()
+	m.watchWaitingHelperUpdate(session, provider)
 	return provider, nil
 }
 

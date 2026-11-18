@@ -121,3 +121,58 @@ func TestClosingTheLastDurableTabLeavesACurrentHelperAlone(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 }
+
+func TestAWaitingHelperUpdateIsRetriedPeriodicallyUntilItSucceeds(t *testing.T) {
+	waiting := func() base.DurableProvider {
+		return &updateWaitingDurableProvider{listingDurableProvider: &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}, waiting: true}
+	}
+	updated := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	resolver := &sequenceResolver{providers: []base.DurableProvider{waiting(), waiting(), updated}, called: make(chan struct{}, 8)}
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), DurableResolver: resolver})
+	manager.helperUpdateRecheckEvery = 5 * time.Millisecond
+	t.Cleanup(func() { _ = manager.Close() })
+	connected, err := manager.Connect(t.Context(), Asset{ID: "ssh-recheck", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab := openSSHDurableTab(t, manager, connected.ID, "remote-1")
+	<-resolver.called
+	select {
+	case <-resolver.called:
+		t.Fatal("the helper was resolved again while a durable terminal of this session still ran")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := manager.CloseTab(tab.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The retry on closing the last terminal still waits (another client's terminal, say); a later periodic
+	// retry finds the helper idle and updates it without any action in this session.
+	for range 2 {
+		select {
+		case <-resolver.called:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("the waiting helper update was not retried (calls = %d)", resolver.callCount())
+		}
+	}
+	manager.mu.Lock()
+	session := manager.sessions[connected.ID]
+	manager.mu.Unlock()
+	deadline := time.Now().Add(10 * time.Second)
+	for session.helperUpdateRecheck.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("the recheck loop kept running after the update")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	session.durableMu.Lock()
+	provider := session.durableProvider
+	session.durableMu.Unlock()
+	if provider != base.DurableProvider(updated) {
+		t.Fatalf("provider = %T, want the updated helper", provider)
+	}
+	select {
+	case <-resolver.called:
+		t.Fatal("the helper was resolved again after the update")
+	case <-time.After(50 * time.Millisecond):
+	}
+}

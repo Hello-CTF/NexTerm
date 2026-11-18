@@ -57,8 +57,11 @@ type HelperUpdateStatus struct {
 	// proceed once they end.
 	WaitingForIdle bool
 	Updated        bool
-	Interrupted    bool
-	RolledBack     bool
+	// Retained is set when the running helper is another build that is kept on purpose: a later release, or
+	// another build of the same release (see retainedHelperReason). Reason says which.
+	Retained    bool
+	Interrupted bool
+	RolledBack  bool
 	// ReplacedLegacy reports that an older-protocol helper was ended with
 	// consent; EndedSessions is how many sessions the user agreed to end.
 	ReplacedLegacy bool

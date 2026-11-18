@@ -1741,6 +1741,51 @@ func TestEnsureDaemonCompatibleReleaseDifferenceContinues(t *testing.T) {
 	}
 }
 
+func TestEnsureDaemonKeepsAHelperOfALaterOrTheSameRelease(t *testing.T) {
+	cases := []struct {
+		name            string
+		running, source supervisor.RuntimeMetadata
+		reason          string
+	}{
+		{"later release", supervisor.RuntimeMetadata{Version: "v1.6.0", Commit: "c6"}, supervisor.RuntimeMetadata{Version: "1.5.0", Commit: "c5"}, "版本较新"},
+		{"same release", supervisor.RuntimeMetadata{Version: "v1.5.0", Commit: "c5"}, supervisor.RuntimeMetadata{Version: "1.5.0", Commit: "c5"}, "同为"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHelperUpdateHarness(t)
+			running := supervisor.RuntimeMetadata{Version: tc.running.Version, Commit: tc.running.Commit, Protocol: supervisor.ProtocolVersion, SHA256: h.oldDigest}
+			h.oldClient.metadata = func(context.Context) (supervisor.RuntimeMetadata, bool, error) { return running, true, nil }
+			h.source.Version, h.source.Commit = tc.source.Version, tc.source.Commit
+			daemon, err := h.ensure(t.Context(), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if daemon.Binary != h.oldBinary || daemon.Update.Updated || !daemon.Update.Retained || !strings.Contains(daemon.Update.Reason, tc.reason) {
+				t.Fatalf("daemon = %+v; want the running helper kept with a visible reason", daemon)
+			}
+			if !h.oldRunning || h.newRunning || h.host.sawCommand("kill -TERM") || len(h.host.uploads) != 0 {
+				t.Fatalf("the kept helper was replaced: old=%v new=%v uploads=%v", h.oldRunning, h.newRunning, h.host.uploads)
+			}
+		})
+	}
+}
+
+func TestEnsureDaemonUpdatesAHelperOfAnEarlierRelease(t *testing.T) {
+	h := newHelperUpdateHarness(t)
+	running := supervisor.RuntimeMetadata{Version: "v1.4.4", Commit: "c4", Protocol: supervisor.ProtocolVersion, SHA256: h.oldDigest}
+	h.oldClient.metadata = func(context.Context) (supervisor.RuntimeMetadata, bool, error) { return running, true, nil }
+	h.source.Version, h.source.Commit = "1.5.0", "c5"
+	started := supervisor.RuntimeMetadata{Version: "1.5.0", Commit: "c5", Protocol: supervisor.ProtocolVersion, SHA256: h.newDigest}
+	h.newClient.metadata = func(context.Context) (supervisor.RuntimeMetadata, bool, error) { return started, true, nil }
+	daemon, err := h.ensure(t.Context(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !daemon.Update.Updated || daemon.Update.Retained || daemon.Binary != h.newBinary || !h.newRunning || h.oldRunning {
+		t.Fatalf("update = %+v old=%v new=%v; want the earlier release replaced", daemon, h.oldRunning, h.newRunning)
+	}
+}
+
 func TestEnsureDaemonWithOptionsDefersDiscoveredContentAddressedUpdate(t *testing.T) {
 	h := newHelperUpdateHarness(t)
 	h.oldClient.idle = func(context.Context) error { return supervisor.ErrActiveSessions }

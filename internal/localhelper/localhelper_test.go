@@ -380,6 +380,111 @@ func TestServiceKeepsUsingASameProtocolHelperFromAnotherBuild(t *testing.T) {
 	}
 }
 
+// releaseWorld reports an attached helper of release 1.4.4 while this build is release 1.5.0.
+func releaseWorld(t *testing.T, version string, sessions int) (*fakeWorld, Config) {
+	world := newFakeWorld()
+	world.running = &supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 21, Activity: supervisor.ActivitySnapshot{PTY: sessions}, ActivityKnown: true, StateDigest: "abcd1234",
+		Runtime: &supervisor.RuntimeMetadata{Version: version, Commit: "aaa", SHA256: "other"}}
+	config := world.config(t)
+	config.selfVersion = func() string { return "1.5.0" }
+	config.selfCommit = func() string { return "bbb" }
+	return world, config
+}
+
+func waitStops(t *testing.T, world *fakeWorld, want int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for world.stopCount() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("stops = %d, want %d", world.stopCount(), want)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+func TestServiceReplacesAnIdleHelperOfAnOlderReleaseOnItsOwn(t *testing.T) {
+	world, config := releaseWorld(t, "1.4.4", 0)
+	service := startService(t, config)
+	if err := settled(t, service); !errors.Is(err, ErrNotOutdated) {
+		t.Fatalf("settled = %v, want the idle state after the replacement", err)
+	}
+	if world.stopCount() != 1 || world.connectCount() != 1 {
+		t.Fatalf("stops = %d, connects = %d; want the attached helper stopped and nothing spawned yet", world.stopCount(), world.connectCount())
+	}
+	if status := service.Status(); status.State != StateIdle || status.UpdateAvailable {
+		t.Fatalf("status = %+v, want idle until a durable terminal needs a helper", status)
+	}
+	ready(t, service)
+	if world.connectCount() != 2 {
+		t.Fatalf("connects = %d, want this build's helper spawned for the terminal", world.connectCount())
+	}
+}
+
+func TestServiceKeepsAnIdleHelperOfTheSameVersionFromAnotherCommit(t *testing.T) {
+	world, config := releaseWorld(t, "1.5.0", 0)
+	service := startService(t, config)
+	if err := settled(t, service); !errors.Is(err, ErrStaleConsent) {
+		t.Fatalf("settled = %v, want the ready helper offered for an update", err)
+	}
+	if status := service.Status(); !status.UpdateAvailable || world.stopCount() != 0 {
+		t.Fatalf("status = %+v, stops = %d; two builds of one version must not replace each other", status, world.stopCount())
+	}
+}
+
+func TestServiceReplacesAnOlderReleaseHelperOnceItsSessionsEnd(t *testing.T) {
+	world, config := releaseWorld(t, "1.4.4", 1)
+	service := startService(t, config)
+	if err := settled(t, service); !errors.Is(err, ErrStaleConsent) {
+		t.Fatalf("settled = %v, want the ready helper offered for an update", err)
+	}
+	if world.stopCount() != 0 {
+		t.Fatal("a helper that runs a session was stopped without consent")
+	}
+	world.mu.Lock()
+	idle := *world.running
+	idle.Activity = supervisor.ActivitySnapshot{}
+	world.running = &idle
+	world.mu.Unlock()
+	waitStops(t, world, 1)
+	if err := settled(t, service); !errors.Is(err, ErrNotOutdated) {
+		t.Fatalf("settled = %v, want the idle state after the replacement", err)
+	}
+}
+
+func TestServiceDoesNotRetryARefusedAutomaticReplacement(t *testing.T) {
+	world, config := releaseWorld(t, "1.4.4", 0)
+	config.stop = func(_ context.Context, _ string, expected supervisor.RunningHelper) error {
+		world.mu.Lock()
+		defer world.mu.Unlock()
+		world.stops = append(world.stops, expected)
+		return errors.New("refused")
+	}
+	service := startService(t, config)
+	waitStops(t, world, 1)
+	world.mu.Lock()
+	inspects := world.inspects
+	world.mu.Unlock()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		world.mu.Lock()
+		polled := world.inspects - inspects
+		world.mu.Unlock()
+		if polled >= 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the helper was not polled again")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if world.stopCount() != 1 {
+		t.Fatalf("stops = %d, want the refused replacement tried once", world.stopCount())
+	}
+	if status := service.Status(); status.State != StateReady || !status.UpdateAvailable {
+		t.Fatalf("status = %+v, want the update still offered to the user", status)
+	}
+}
+
 func TestServiceUsesACurrentHelperOfThisBuildWithoutAskingToUpdate(t *testing.T) {
 	world := newFakeWorld()
 	world.running = &supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 11, Activity: supervisor.ActivitySnapshot{PTY: 4}, ActivityKnown: true, StateDigest: "abcd1234",

@@ -143,6 +143,14 @@ func TestHelperDTOFromDaemonReportsEvidenceAndRealUpdateOutcome(t *testing.T) {
 	if result.Update == nil || result.Update.Status != "deferred" || result.Update.Detail == "" {
 		t.Fatalf("deferred outcome = %+v", result.Update)
 	}
+
+	newer := supervisor.RuntimeMetadata{Version: "v1.5.0", Commit: "newer-commit", Protocol: protocol, SHA256: "cccc"}
+	daemon.RunningMetadata, daemon.MetadataKnown = newer, true
+	daemon.Update = sshdaemon.HelperUpdateStatus{Local: local, Running: newer, Retained: true, Reason: "newer release kept"}
+	result = helperDTOFromDaemon("session-a", "status", daemon)
+	if result.Update == nil || result.Update.Status != "current" || result.Update.Detail != "newer release kept" {
+		t.Fatalf("a retained newer helper must not be offered as an update: %+v", result.Update)
+	}
 }
 
 func TestHelperDTOFromDaemonOffersUpdatesOnlyForDifferentKnownContent(t *testing.T) {
