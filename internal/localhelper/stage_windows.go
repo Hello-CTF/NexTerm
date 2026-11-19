@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 )
 
 // stageExecutable returns a copy of the executable named by its digest. A
@@ -56,6 +58,10 @@ func stageExecutable(stateDir, executable string) (string, error) {
 				return "", err
 			}
 		}
+	}
+	if _, stored := supervisor.CurrentStoredHelper(stateDir); stored {
+		// The helper store owns the directory's other copies.
+		return target, nil
 	}
 	entries, _ := os.ReadDir(dir)
 	for _, entry := range entries {

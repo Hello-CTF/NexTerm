@@ -160,7 +160,7 @@ func describeHelperBuild(running RunningHelper, local RuntimeMetadata, expected 
 // report; ending it needs ReplaceStaleHelper with the user's consent. A helper that is not running, or
 // cannot be inspected, is not an error here.
 func EnsureHelperBuild(ctx context.Context, config HelperConfig) (HelperBuild, error) {
-	local, err := CurrentRuntimeMetadata()
+	local, err := configRelease(config)
 	if err != nil {
 		return HelperBuild{}, err
 	}
@@ -206,11 +206,19 @@ func ensureHelperBuild(ctx context.Context, config HelperConfig, local RuntimeMe
 // that changed, or is no longer older, is refused with a fresh *LegacyHelperError before anything is
 // signalled.
 func ReplaceStaleHelper(ctx context.Context, config HelperConfig, token string) (*Helper, ReplaceResult, error) {
-	local, err := CurrentRuntimeMetadata()
+	local, err := configRelease(config)
 	if err != nil {
 		return nil, ReplaceResult{}, err
 	}
 	return replaceStaleHelper(ctx, config, token, local)
+}
+
+// configRelease is the build a helper started with config runs: config.Release, or this executable.
+func configRelease(config HelperConfig) (RuntimeMetadata, error) {
+	if config.Release != nil {
+		return *config.Release, nil
+	}
+	return CurrentRuntimeMetadata()
 }
 
 func replaceStaleHelper(ctx context.Context, config HelperConfig, token string, local RuntimeMetadata) (*Helper, ReplaceResult, error) {

@@ -30,10 +30,12 @@ func CurrentRuntimeMetadata() (RuntimeMetadata, error) {
 	if err != nil {
 		return RuntimeMetadata{}, fmt.Errorf("resolve running helper executable: %w", err)
 	}
-	return runtimeMetadataForExecutable(executable)
+	return RuntimeMetadataForExecutable(executable)
 }
 
-func runtimeMetadataForExecutable(executable string) (RuntimeMetadata, error) {
+// RuntimeMetadataForExecutable is the metadata of executable as a build of this program's release: a file this
+// program ships or is, such as the standalone helper packaged with it.
+func RuntimeMetadataForExecutable(executable string) (RuntimeMetadata, error) {
 	file, err := os.Open(executable)
 	if err != nil {
 		return RuntimeMetadata{}, fmt.Errorf("open running helper executable: %w", err)

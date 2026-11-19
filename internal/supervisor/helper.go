@@ -40,6 +40,9 @@ type HelperConfig struct {
 	// because it started with another SHELL or PATH and was spawned by the desktop (SpawnedByDesktop).
 	// It is for a helper directory shared with the desktop.
 	KeepEnvStale bool
+	// Release is the metadata of Executable when it is not this program (a stored helper); EnsureHelperBuild then
+	// judges the running helper against it instead of against this executable.
+	Release *RuntimeMetadata
 	// SpawnedBy names who starts the helper (SpawnedByDesktop or SpawnedByAgent). ConnectHelper passes
 	// it to a helper it spawns, which reports it in its hello acknowledgement; empty means unknown.
 	SpawnedBy string
