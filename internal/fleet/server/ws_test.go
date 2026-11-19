@@ -1,9 +1,13 @@
 package fleetserver
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -641,5 +645,107 @@ func TestDeviceBridgeRelayListenAcceptPurposes(t *testing.T) {
 	audits := auditPayloadRows(t, f.service.db, auditSourceFleet, auditKindDeviceTerminal)
 	if len(audits) != 2 || audits[0]["action"] != "forward_open" || audits[1]["action"] != "forward_open" {
 		t.Fatalf("listen/accept audits = %v; want two forward_open", audits)
+	}
+}
+
+// pairTerminalBridge pairs one terminal bridge whose agent says hello with sessionEnv and returns the server side
+// and the agent's websocket.
+func pairTerminalBridge(t *testing.T, sessionEnv bool) (*wsConn, *websocket.Conn) {
+	t.Helper()
+	f := newHTTPFixture(t, false)
+	owner := f.createUser(t, "env-owner")
+	deviceID, secret := enrollWSAgent(t, f, owner, "env-box")
+	control := dialDeviceWS(t, f)
+	if response := helloDevice(t, control, agent.HelloMessage{
+		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret,
+		Capabilities: []string{agent.PurposeTerminal}, SessionEnv: sessionEnv,
+	}); response.Type != "hello_ok" {
+		t.Fatalf("hello = %+v", response)
+	}
+	paired := make(chan net.Conn, 1)
+	go func() {
+		conn, err := f.service.registry.RequestBridge(context.Background(), deviceID, agent.PurposeTerminal)
+		if err != nil {
+			t.Error(err)
+		}
+		paired <- conn
+	}()
+	request := readControlMessage(t, control, 5*time.Second)
+	bridgeWS := dialDeviceWS(t, f)
+	if response := helloDevice(t, bridgeWS, agent.HelloMessage{
+		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret,
+		BridgeID: request.BridgeID, Purpose: agent.PurposeTerminal, SessionEnv: sessionEnv,
+	}); response.Type != "hello_ok" {
+		t.Fatalf("bridge hello = %+v", response)
+	}
+	conn := <-paired
+	if conn == nil {
+		t.FailNow()
+	}
+	return conn.(*wsConn), bridgeWS
+}
+
+// createFrame is a supervisor protocol create frame (4-byte big-endian length, type 4, JSON payload).
+func createFrame(t *testing.T, fields map[string]any) []byte {
+	t.Helper()
+	payload, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(binary.BigEndian.AppendUint32(nil, uint32(len(payload))), append([]byte{4}, payload...)...)
+}
+
+// readBridgeStream reads what the agent receives until it holds a whole frame.
+func readBridgeStream(t *testing.T, conn *websocket.Conn) []byte {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var stream []byte
+	for len(stream) < 5 || len(stream) < 5+int(binary.BigEndian.Uint32(stream[:4])) {
+		_, chunk, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream = append(stream, chunk...)
+	}
+	return stream
+}
+
+func TestLegacyAgentTerminalBridgeGetsSSHSessionEnv(t *testing.T) {
+	serverSide, agentWS := pairTerminalBridge(t, false)
+	frame := createFrame(t, map[string]any{"id": "a", "env": []string{"TERM=xterm-256color", "SSH_CLIENT=chosen"}})
+	// Split writes still form one rewritten frame.
+	for _, part := range [][]byte{frame[:3], frame[3:9], frame[9:]} {
+		if count, err := serverSide.Write(part); err != nil || count != len(part) {
+			t.Fatalf("write = %d %v", count, err)
+		}
+	}
+	stream := readBridgeStream(t, agentWS)
+	if stream[4] != 4 {
+		t.Fatalf("frame type = %d", stream[4])
+	}
+	var create struct {
+		ID  string   `json:"id"`
+		Env []string `json:"env"`
+	}
+	if err := json.Unmarshal(stream[5:], &create); err != nil {
+		t.Fatal(err)
+	}
+	env := strings.Join(create.Env, "\n")
+	// The test client reaches the server over loopback: this server is the client, the agent's host the server.
+	if create.ID != "a" || !regexp.MustCompile(`(?m)^SSH_CONNECTION=127\.0\.0\.1 [1-9][0-9]* 127\.0\.0\.1 [1-9][0-9]*$`).MatchString(env) ||
+		!strings.Contains(env, "SSH_CLIENT=chosen") || strings.Count(env, "SSH_CLIENT=") != 1 || !strings.Contains(env, "TERM=xterm-256color") {
+		t.Fatalf("create forwarded to a legacy agent = %+v, want SSH_CONNECTION added and the client's SSH_CLIENT kept", create)
+	}
+}
+
+func TestCurrentAgentTerminalBridgeIsByteTransparent(t *testing.T) {
+	serverSide, agentWS := pairTerminalBridge(t, true)
+	frame := createFrame(t, map[string]any{"id": "a", "env": []string{"TERM=xterm-256color"}})
+	if _, err := serverSide.Write(frame); err != nil {
+		t.Fatal(err)
+	}
+	if stream := readBridgeStream(t, agentWS); !bytes.Equal(stream, frame) {
+		t.Fatalf("an agent that sets the session env itself got %q, want %q", stream, frame)
 	}
 }

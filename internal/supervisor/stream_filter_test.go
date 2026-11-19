@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -379,5 +380,20 @@ func TestSSHBridgeReaderGivesSessionsItsConnection(t *testing.T) {
 	}
 	if len(SSHSessionEnv(func(string) string { return "" })) != 0 {
 		t.Fatal("a bridge outside an SSH session must add nothing")
+	}
+}
+
+func TestSSHConnectionEnvStatesTheConnectionLikeSSHD(t *testing.T) {
+	client := &net.TCPAddr{IP: net.ParseIP("2001:db8::1"), Port: 443}
+	server := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 53122}
+	env := SSHConnectionEnv(client, server)
+	want := []string{"SSH_CONNECTION=2001:db8::1 443 192.0.2.10 53122", "SSH_CLIENT=2001:db8::1 443 53122"}
+	if strings.Join(env, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("env = %q, want %q", env, want)
+	}
+	// Without TCP endpoints the variables still mark the session as remote.
+	env = SSHConnectionEnv(nil, &net.UnixAddr{Name: "x", Net: "unix"})
+	if env[0] != "SSH_CONNECTION=0.0.0.0 0 0.0.0.0 0" || env[1] != "SSH_CLIENT=0.0.0.0 0 0" {
+		t.Fatalf("env = %q", env)
 	}
 }

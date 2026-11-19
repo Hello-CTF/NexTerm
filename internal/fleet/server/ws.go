@@ -6,10 +6,12 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
@@ -92,7 +94,7 @@ func (s *Service) serveDeviceWS(w http.ResponseWriter, r *http.Request) {
 		s.afterAuthenticate(hello.DeviceID)
 	}
 	if hello.BridgeID != "" {
-		s.serveDeviceBridge(conn, hello)
+		s.serveDeviceBridge(conn, hello, legacyBridgeSessionEnv(r, hello))
 		return
 	}
 	s.serveDeviceControl(conn, hello)
@@ -155,8 +157,11 @@ func (s *Service) serveDeviceControl(conn *websocket.Conn, hello agent.HelloMess
 // replies hello_ok after successful pairing, and blocks until the connection closes (the byte stream is driven by the consumer via wsConn).
 // hello_ok is a text control frame: wsConn.Read only accepts binary frames, so consumers never read it into the
 // supervisor byte stream.
-func (s *Service) serveDeviceBridge(conn *websocket.Conn, hello agent.HelloMessage) {
+func (s *Service) serveDeviceBridge(conn *websocket.Conn, hello agent.HelloMessage, sessionEnv []string) {
 	bridge := newWSConn(conn)
+	if len(sessionEnv) > 0 {
+		bridge.createEnv = supervisor.NewCreateEnvFilter(sessionEnv)
+	}
 	deliver, err := s.registry.PairBridge(hello.DeviceID, hello.BridgeID, hello.Purpose, bridge)
 	if err != nil {
 		_ = writeControlJSON(context.Background(), conn, controlMessage{
@@ -184,6 +189,26 @@ func (s *Service) serveDeviceBridge(conn *websocket.Conn, hello agent.HelloMessa
 	<-bridge.closed
 }
 
+// legacyBridgeSessionEnv returns the SSH session variables for the terminals of a terminal bridge whose agent does
+// not add them itself (it predates hello.SessionEnv and is only upgraded on a protocol change). They state the bridge
+// connection as that agent would: this server is the client and the agent's host the server.
+func legacyBridgeSessionEnv(r *http.Request, hello agent.HelloMessage) []string {
+	if hello.SessionEnv || (hello.Purpose != "" && hello.Purpose != agent.PurposeTerminal) {
+		return nil
+	}
+	local, _ := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	var device net.Addr
+	if ip, err := netip.ParseAddr(clientIP(r)); err == nil {
+		// Behind a trusted proxy the peer is the proxy and the forwarded address carries no port.
+		ip, port := ip.Unmap(), uint16(0)
+		if peer, err := netip.ParseAddrPort(r.RemoteAddr); err == nil && peer.Addr().Unmap() == ip {
+			port = peer.Port()
+		}
+		device = net.TCPAddrFromAddrPort(netip.AddrPortFrom(ip, port))
+	}
+	return supervisor.SSHConnectionEnv(local, device)
+}
+
 // wsConn adapts one websocket connection into a net.Conn byte stream: each binary message is a
 // segment of the byte stream, byte-transparent (supervisor protocol frames pass through as-is, resume semantics unchanged).
 type wsConn struct {
@@ -195,6 +220,11 @@ type wsConn struct {
 	readBuf   []byte
 	closed    chan struct{}
 	closeOnce sync.Once
+
+	// createEnv, when set, adds env to the create frames written to the bridge; writeMu keeps its frame state in
+	// stream order.
+	writeMu   sync.Mutex
+	createEnv *supervisor.StreamFilter
 }
 
 func newWSConn(conn *websocket.Conn) *wsConn {
@@ -236,8 +266,19 @@ func (c *wsConn) Read(p []byte) (int, error) {
 }
 
 func (c *wsConn) Write(p []byte) (int, error) {
-	if err := c.conn.Write(context.Background(), websocket.MessageBinary, p); err != nil {
-		return 0, err
+	if c.createEnv == nil {
+		if err := c.conn.Write(context.Background(), websocket.MessageBinary, p); err != nil {
+			return 0, err
+		}
+		return len(p), nil
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	forward, _ := c.createEnv.Filter(p)
+	if len(forward) > 0 {
+		if err := c.conn.Write(context.Background(), websocket.MessageBinary, forward); err != nil {
+			return 0, err
+		}
 	}
 	return len(p), nil
 }

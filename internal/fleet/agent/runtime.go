@@ -492,6 +492,7 @@ func (r *Runtime) hello(bridgeID, purpose string) HelloMessage {
 		StateDigest:      digest,
 		HelperInstanceID: instanceID,
 		Capabilities:     r.capabilities(),
+		SessionEnv:       true,
 	}
 }
 
