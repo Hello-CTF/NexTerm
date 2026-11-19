@@ -213,10 +213,64 @@ func TestUpgradeRefusesStagedBinaryReportingAnotherVersion(t *testing.T) {
 	}
 }
 
-func TestUnixRestartCommandReplacesARunningInstance(t *testing.T) {
-	if got := unixRestartCommand("darwin"); !strings.Contains(got, "kickstart -k") || !strings.Contains(got, launchdLabel) {
-		t.Fatalf("darwin restart = %q, want a kickstart -k of the agent label", got)
+func TestUnixRestartCommandRebootstrapsDarwinAgent(t *testing.T) {
+	requireUnixShell(t)
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
 	}
+	calls := filepath.Join(dir, "launchctl-calls")
+	state := filepath.Join(dir, "bootstrap-failed")
+	writeExecutable(t, filepath.Join(bin, "launchctl"), `#!/bin/sh
+printf '%s\n' "$*" >>"$NX_TEST_CALLS"
+case "$1" in
+bootout)
+  exit 1
+  ;;
+bootstrap)
+  if [ ! -f "$NX_TEST_STATE" ]; then
+    : >"$NX_TEST_STATE"
+    exit 5
+  fi
+  ;;
+esac
+exit 0
+`)
+	writeExecutable(t, filepath.Join(bin, "sleep"), "#!/bin/sh\nexit 0\n")
+	uid, err := exec.Command("id", "-u").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	domain := "gui/" + strings.TrimSpace(string(uid))
+	command := exec.Command("sh", "-c", unixRestartCommand("darwin"))
+	command.Env = []string{
+		"HOME=" + home,
+		"PATH=" + bin + ":/usr/bin:/bin",
+		"NX_TEST_CALLS=" + calls,
+		"NX_TEST_STATE=" + state,
+	}
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("darwin restart failed: %v\n%s", err, output)
+	}
+	content, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := "bootstrap " + domain + " " + filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
+	want := strings.Join([]string{
+		"bootout " + domain + "/" + launchdLabel,
+		bootstrap,
+		bootstrap,
+		"enable " + domain + "/" + launchdLabel,
+	}, "\n") + "\n"
+	if string(content) != want {
+		t.Fatalf("launchctl calls =\n%s\nwant:\n%s", content, want)
+	}
+}
+
+func TestUnixRestartCommandUsesSystemdOnLinux(t *testing.T) {
 	if got := unixRestartCommand("linux"); got != "systemctl --user restart "+systemdUnitName {
 		t.Fatalf("linux restart = %q", got)
 	}
