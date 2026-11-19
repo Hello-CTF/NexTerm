@@ -19,6 +19,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/coder/websocket"
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -88,8 +89,12 @@ type Runtime struct {
 	checkBuild func(ctx context.Context) (supervisor.HelperBuild, error)
 	bridge     BridgeSpawner
 	upgrader   *Upgrader
-	onChannel  func(connected bool)
-	executable string
+	// followedVersion is the server release followServerVersion last tried (guarded by mu).
+	followedVersion string
+	onChannel       func(connected bool)
+	executable      string
+	// selfRelease is the helper metadata of executable, hashed once.
+	selfRelease func() (supervisor.RuntimeMetadata, error)
 
 	// stateDir is the helper directory in use (guarded by mu); stateSource
 	// replaces it when set. While sharedDir is set the runtime starts on
@@ -901,6 +906,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		}
 		r.prober.ReportSuccess(client)
 		r.confirmUpgradeHealthy()
+		r.followServerVersion(ctx, channel.ServerVersion())
 		r.ownerRecovered()
 		r.notifyCurrentURL(ctx, client)
 		backoff = retrySleep
@@ -1020,6 +1026,48 @@ func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
 	}
 	r.logger.Info("self-upgrade staged; deferred replace will swap the binary and restart the service", "target_version", serverVersion)
 	r.fatal(errUpgradeStaged)
+}
+
+// followServerVersion upgrades this agent in the background to the server's release when that is a later stable
+// release, so an agent no longer stays on the build it was installed with until the protocol changes. A server of an
+// older release, a prerelease (RC stays a manual `update --version`), a dev build on either side, an embedded agent
+// without an upgrader, and a version that was rolled back recently are left alone. Each version is tried once per
+// run; a failed attempt only logs, and a staged upgrade restarts the agent like a protocol-driven one.
+func (r *Runtime) followServerVersion(ctx context.Context, serverVersion string) {
+	if r.upgrader == nil || !followsRelease(version.Version, serverVersion) {
+		return
+	}
+	r.mu.Lock()
+	if r.followedVersion == serverVersion {
+		r.mu.Unlock()
+		return
+	}
+	r.followedVersion = serverVersion
+	r.mu.Unlock()
+	if retryAt, _, failed := upgradeRetryAfter(readUpgradeFailures(r.upgrader.Executable), serverVersion); failed && r.now().Before(retryAt) {
+		r.logger.Info("server runs a later release that was rolled back recently; not upgrading yet", "target_version", serverVersion, "retry_after", retryAt)
+		return
+	}
+	r.loopWg.Add(1)
+	go func() {
+		defer r.loopWg.Done()
+		r.logger.Info("server runs a later release; upgrading this agent", "current_version", version.Version, "target_version", serverVersion)
+		if err := r.upgrader.Upgrade(ctx, serverVersion); err != nil {
+			if ctx.Err() == nil {
+				r.logger.Warn("upgrade to the server's release failed; staying on the current version", "target_version", serverVersion, "error", err)
+			}
+			return
+		}
+		r.logger.Info("upgrade to the server's release staged; restarting", "target_version", serverVersion)
+		r.fatal(errUpgradeStaged)
+	}()
+}
+
+// followsRelease reports whether an agent of current follows a server of target: both are release versions and
+// target is a later one without a prerelease suffix.
+func followsRelease(current, target string) bool {
+	cmp, ok := compareReleaseVersions(current, target)
+	return ok && cmp < 0 && semver.Prerelease("v"+strings.TrimPrefix(target, "v")) == ""
 }
 
 // PurposeHandler serves one bridge of a non-terminal purpose; it owns the full bridge lifecycle

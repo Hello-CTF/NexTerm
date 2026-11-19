@@ -22,8 +22,8 @@ const (
 
 // controlMessage is the server -> agent control channel frame; its field semantics correspond one-to-one with
 // internal/fleet/agent's serverMessage (that type is unexported, mirrored here).
-// ServerVersion appears only in version_mismatch frames: the agent uses it as the target version to self-upgrade from the fixed official
-// release source.
+// ServerVersion appears in version_mismatch frames and in the control channel's hello_ok: the agent uses it as the target
+// version to self-upgrade to from the fixed official release source (on hello_ok only when it is a later stable release).
 type controlMessage struct {
 	Type          string `json:"type"`
 	Code          string `json:"code,omitempty"`
@@ -137,7 +137,7 @@ func (s *Service) serveDeviceControl(conn *websocket.Conn, hello agent.HelloMess
 			s.deviceOffline(hello.DeviceID)
 		}
 	}()
-	if err := writeControlJSON(context.Background(), conn, controlMessage{Type: "hello_ok"}); err != nil {
+	if err := writeControlJSON(context.Background(), conn, controlMessage{Type: "hello_ok", ServerVersion: version.Version}); err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "hello ack failed")
 		return
 	}

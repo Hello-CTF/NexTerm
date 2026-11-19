@@ -92,8 +92,8 @@ func TestDeviceWSHelloAndAuth(t *testing.T) {
 		response := helloDevice(t, dialDeviceWS(t, f), agent.HelloMessage{
 			Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: deviceID, Secret: secret,
 		})
-		if response.Type != "hello_ok" {
-			t.Fatalf("hello response = %+v", response)
+		if response.Type != "hello_ok" || response.ServerVersion != version.Version {
+			t.Fatalf("hello response = %+v, want hello_ok with the server release for agents to follow", response)
 		}
 	})
 	t.Run("protocol mismatch returns version_mismatch", func(t *testing.T) {
