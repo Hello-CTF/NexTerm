@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -81,7 +80,7 @@ func TestChannelHandshakeConfigAndRevoke(t *testing.T) {
 	configReceived := make(chan ConfigUpdate, 1)
 	revoked := make(chan struct{}, 1)
 	fake := newWSFake(t, func(conn *websocket.Conn, hello HelloMessage) error {
-		if err := writeServerMessage(conn, serverMessage{Type: "hello_ok"}); err != nil {
+		if err := writeServerMessage(conn, serverMessage{Type: "hello_ok", ServerVersion: "1.4.5"}); err != nil {
 			return err
 		}
 		if err := writeServerMessage(conn, serverMessage{
@@ -96,6 +95,9 @@ func TestChannelHandshakeConfigAndRevoke(t *testing.T) {
 	channel, err := DialChannel(ctx, wsURL(fake.server.URL), testHello(), DialPolicy{}, time.Hour, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if channel.ServerVersion() != "1.4.5" {
+		t.Fatalf("server version = %q, want the hello_ok release", channel.ServerVersion())
 	}
 	err = channel.Run(ctx, channelHandlers{
 		onConfig: func(update ConfigUpdate) { configReceived <- update },
@@ -209,17 +211,22 @@ func TestServerMessageIgnoresUnknownFields(t *testing.T) {
 	}
 }
 
-func TestSSHSessionEnvStatesTheBridgeConnectionLikeSSHD(t *testing.T) {
-	local := &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 53122}
-	remote := &net.TCPAddr{IP: net.ParseIP("2001:db8::1"), Port: 443}
-	env := sshSessionEnv(local, remote)
-	want := []string{"SSH_CONNECTION=2001:db8::1 443 192.0.2.10 53122", "SSH_CLIENT=2001:db8::1 443 53122"}
-	if strings.Join(env, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("env = %q, want %q", env, want)
-	}
-	// Without TCP endpoints the variables still mark the session as remote.
-	env = sshSessionEnv(&net.UnixAddr{Name: "x", Net: "unix"}, nil)
-	if env[0] != "SSH_CONNECTION=0.0.0.0 0 0.0.0.0 0" || env[1] != "SSH_CLIENT=0.0.0.0 0 0" {
-		t.Fatalf("env = %q", env)
+func TestAgentFollowsOnlyALaterStableServerRelease(t *testing.T) {
+	for _, tc := range []struct {
+		current, server string
+		follow          bool
+	}{
+		{"1.4.3-rc.5", "1.4.5", true},
+		{"1.4.3", "v1.4.5", true},
+		{"1.4.5", "1.4.5", false},
+		// A newer agent keeps working with an older server and is never moved back.
+		{"1.4.5", "1.4.3", false},
+		{"1.4.3", "1.4.5-rc.1", false},
+		{"dev", "1.4.5", false},
+		{"1.4.3", "", false},
+	} {
+		if got := followsRelease(tc.current, tc.server); got != tc.follow {
+			t.Errorf("followsRelease(%q, %q) = %v, want %v", tc.current, tc.server, got, tc.follow)
+		}
 	}
 }

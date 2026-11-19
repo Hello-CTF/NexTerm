@@ -119,7 +119,12 @@ type Channel struct {
 	conn        *websocket.Conn
 	keepAlive   time.Duration
 	pingTimeout time.Duration
+	// serverVersion is the release the server reported in hello_ok; empty for a server that predates it.
+	serverVersion string
 }
+
+// ServerVersion is the release the server reported when the channel opened, or empty.
+func (c *Channel) ServerVersion() string { return c.serverVersion }
 
 // DialChannel opens the outbound control channel and performs the hello
 // handshake. A server error frame comes back as a *ServerError with Code
@@ -161,6 +166,7 @@ func (c *Channel) handshake(ctx context.Context, hello HelloMessage) error {
 	}
 	switch first.Type {
 	case "hello_ok":
+		c.serverVersion = first.ServerVersion
 		return nil
 	case "error":
 		return &ServerError{Code: first.Code, Message: first.Message, ServerVersion: first.ServerVersion, Reason: first.Reason}
