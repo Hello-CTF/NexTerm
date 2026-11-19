@@ -103,13 +103,23 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// unixRestartCommand is the command the script runs to (re)start the service after a swap and after a rollback
-// (darwin=launchctl kickstart -k, which also replaces an instance that is still running; linux=systemctl --user restart).
-// The script records its output and exit code in the upgrade log and never fails on it. A rollback restarts the previous
-// binary at most once; it does not loop because the restored agent backs off from the version that failed.
+// unixRestartCommand is the command the script runs to (re)start the service after a swap and after a rollback.
+// On macOS an ad-hoc binary's designated requirement is its CDHash, so kickstart can keep enforcing the previous
+// binary's launch constraint. Rebootstrap to learn the new requirement; bootstrap is retried because bootout removal
+// is asynchronous. Linux uses systemctl --user restart. The script records output and exit codes in the upgrade log.
+// A rollback restarts the previous binary at most once; the restored agent backs off from the version that failed.
 func unixRestartCommand(goos string) string {
 	if goos == "darwin" {
-		return `launchctl kickstart -k "gui/$(id -u)/` + launchdLabel + `"`
+		return `launchctl bootout "gui/$(id -u)/` + launchdLabel + `" 2>/dev/null || true
+nx_bootstrapped=0
+for nx_attempt in 1 2 3 4 5 6 7 8 9 10; do
+  if launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/` + launchdLabel + `.plist"; then
+    nx_bootstrapped=1
+    break
+  fi
+  sleep 1
+done
+[ "$nx_bootstrapped" -eq 1 ] && launchctl enable "gui/$(id -u)/` + launchdLabel + `"`
 	}
 	return "systemctl --user restart " + systemdUnitName
 }
