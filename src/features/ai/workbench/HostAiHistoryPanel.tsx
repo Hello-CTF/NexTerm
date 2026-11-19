@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { aiWorkbenchTab, useUi } from "../../../app/store";
 import type { AiConversationFilter } from "../../../ipc/types";
 import { IconDownload, IconGlobe, IconRefresh } from "../../../ui/icons";
+import { ResizeHandle } from "../../../ui/ResizeHandle";
+import { usePaneWidth } from "../../../ui/usePaneWidth";
 import { useHostLabeler } from "../../hosts/hostLabel";
 import { ConversationArchiveDialog } from "./ConversationArchiveDialog";
 import { ConversationList } from "./ConversationList";
@@ -9,6 +11,8 @@ import { ConversationPane } from "./ConversationPane";
 import { useConversationPages } from "./useConversationPages";
 import { useSelectedConversation } from "./useSelectedConversation";
 import { t } from "../../../i18n";
+
+const HOST_AI_LIST_WIDTH = { min: 200, max: 560, default: 280 };
 
 // HostAiHistoryPanel is the AI workbench of one host workspace: only the conversations whose scope names this host,
 // without filters. "去到全局" opens the global workbench in the tools workspace with this host preselected.
@@ -19,6 +23,7 @@ export function HostAiHistoryPanel({ visible, assetId }: { visible: boolean; ass
   const pages = useConversationPages(filter, visible);
   const selection = useSelectedConversation(pages, visible);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [listWidth, setListWidth] = usePaneWidth("host-ai-history-list", HOST_AI_LIST_WIDTH);
 
   const openGlobal = () => useUi.getState().addTab(aiWorkbenchTab(assetId));
 
@@ -51,8 +56,12 @@ export function HostAiHistoryPanel({ visible, assetId }: { visible: boolean; ass
           {t("去到全局")}
         </button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-wrap">
-        <div className="flex min-h-0 min-w-[220px] flex-[1_1_260px] flex-col border-r border-neutral-800/60">
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        <div
+          className="flex min-h-0 flex-col border-b border-neutral-800/60 max-md:max-h-[45vh] md:w-[min(var(--nx-ai-history-list-w),50%)] md:shrink-0 md:border-b-0 md:border-r"
+          style={{ "--nx-ai-history-list-w": `${listWidth}px` } as CSSProperties}
+          data-testid="host-ai-history-list"
+        >
           <ConversationList
             pages={pages}
             selectedId={selection.summary?.id ?? null}
@@ -60,7 +69,18 @@ export function HostAiHistoryPanel({ visible, assetId }: { visible: boolean; ass
             emptyText={t("此主机还没有 AI 会话")}
           />
         </div>
-        <div className="flex min-h-0 min-w-[320px] flex-[3_1_480px] flex-col">
+        <div className="hidden md:block">
+          <ResizeHandle
+            side="left"
+            width={listWidth}
+            min={HOST_AI_LIST_WIDTH.min}
+            max={HOST_AI_LIST_WIDTH.max}
+            defaultWidth={HOST_AI_LIST_WIDTH.default}
+            onChange={setListWidth}
+            label={t("调整会话列表宽度")}
+          />
+        </div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <ConversationPane summary={selection.summary} hostLabel={hostName} record={selection.record} onDeleted={selection.deleted} />
         </div>
       </div>

@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { useUi } from "../../../app/store";
 import type { AiConversationFilter, AiConversationStatus, AiConversationSummaryDto } from "../../../ipc/types";
 import { Select } from "../../../ui/Select";
 import { IconDownload, IconRefresh, IconSearch } from "../../../ui/icons";
+import { ResizeHandle } from "../../../ui/ResizeHandle";
+import { usePaneWidth } from "../../../ui/usePaneWidth";
 import { useHostLabeler } from "../../hosts/hostLabel";
 import { ConversationArchiveDialog } from "./ConversationArchiveDialog";
 import { ConversationDetails } from "./ConversationDetails";
@@ -20,6 +22,7 @@ export const UNLINKED_HOST = "__unlinked__";
 
 // Below this width the three columns stack.
 const STACK_WIDTH = 900;
+const WORKBENCH_LIST_WIDTH = { min: 220, max: 560, default: 290 };
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -57,6 +60,7 @@ export function AiWorkbenchView({ visible, assetId }: { visible: boolean; assetI
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [listWidth, setListWidth] = usePaneWidth("ai-workbench-list", WORKBENCH_LIST_WIDTH);
 
   // "去到全局" re-opens this tab with a host; the tab's assetId follows the picker, so a new value is a new request.
   useEffect(() => {
@@ -112,7 +116,8 @@ export function AiWorkbenchView({ visible, assetId }: { visible: boolean; assetI
 
   const listColumn = (
     <aside
-      className={`flex min-h-0 flex-col border-neutral-800/60 ${narrow ? "max-h-[45vh] border-b" : "w-[290px] shrink-0 border-r"}`}
+      className={`flex min-h-0 flex-col border-neutral-800/60 ${narrow ? "max-h-[45vh] border-b" : "w-[var(--nx-ai-workbench-list-w)] shrink-0 border-r"}`}
+      style={narrow ? undefined : ({ "--nx-ai-workbench-list-w": `${listWidth}px` } as CSSProperties)}
       aria-label={t("会话筛选和列表")}
     >
       <div className="flex shrink-0 flex-col gap-1.5 border-b border-neutral-800/60 p-2">
@@ -195,6 +200,17 @@ export function AiWorkbenchView({ visible, assetId }: { visible: boolean; assetI
       data-layout={narrow ? "stacked" : "columns"}
     >
       {listColumn}
+      {narrow ? null : (
+        <ResizeHandle
+          side="left"
+          width={listWidth}
+          min={WORKBENCH_LIST_WIDTH.min}
+          max={WORKBENCH_LIST_WIDTH.max}
+          defaultWidth={WORKBENCH_LIST_WIDTH.default}
+          onChange={setListWidth}
+          label={t("调整会话列表宽度")}
+        />
+      )}
       <div className={`flex min-w-0 flex-col ${narrow ? "min-h-[60vh]" : "min-h-0 flex-1"}`}>
         <ConversationPane summary={selection.summary} hostLabel={selectedHost} record={selection.record} onDeleted={selection.deleted} />
       </div>

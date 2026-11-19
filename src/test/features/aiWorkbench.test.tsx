@@ -158,6 +158,29 @@ describe("HostAiHistoryPanel", () => {
   });
 });
 
+describe("conversation list width", () => {
+  function listWidth(): string {
+    return document.querySelector<HTMLElement>('[data-testid="host-ai-history-list"]')?.style.getPropertyValue("--nx-ai-history-list-w") ?? "";
+  }
+
+  it("resizes the host history list from its separator and keeps the width for the next view", async () => {
+    localStorage.removeItem("nexterm.pane-width.v1.host-ai-history-list");
+    mounted = mount(createElement(HostAiHistoryPanel, { visible: true, assetId: "asset-web" }));
+    await waitForRendered(() => expect(text()).toContain("Restart nginx"));
+    expect(listWidth()).toBe("280px");
+    const separator = document.querySelector<HTMLElement>('[role="separator"][aria-label="调整会话列表宽度"]');
+    if (!separator) throw new Error("list separator not found");
+    act(() => {
+      separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", shiftKey: true, bubbles: true }));
+    });
+    expect(listWidth()).toBe("230px");
+    mounted.unmount();
+    mounted = mount(createElement(HostAiHistoryPanel, { visible: true, assetId: "asset-web" }));
+    await waitForRendered(() => expect(text()).toContain("Restart nginx"));
+    expect(listWidth()).toBe("230px");
+  });
+});
+
 describe("AiWorkbenchView", () => {
   it("preselects the host it was opened with and filters by status, text and the unlinked group", async () => {
     mounted = mount(createElement(AiWorkbenchView, { visible: true, assetId: "asset-db" }));

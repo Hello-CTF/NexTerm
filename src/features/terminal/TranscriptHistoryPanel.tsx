@@ -37,11 +37,13 @@ import { TranscriptReplayView } from "./TranscriptReplayView";
 import { TranscriptArchiveDialog } from "./TranscriptArchiveDialog";
 import { exportFileName, viewerTimeZone } from "./transcriptExport";
 import { ResizeHandle } from "../../ui/ResizeHandle";
+import { usePaneWidth } from "../../ui/usePaneWidth";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 import { useTranscriptFocus } from "./transcriptFocus";
 import { t } from "../../i18n";
 
 const POLL_MS = 5000;
+const TRANSCRIPT_LIST_WIDTH = { min: 200, max: 520, default: 300 };
 const PAGE_BYTES = 512 * 1024;
 const TERMINAL_ASSET_KINDS = new Set(["ssh", "local", "docker", "winrm", "telnet"]);
 
@@ -123,7 +125,7 @@ export function TranscriptHistoryPanel({
   // Lists every starred transcript of the host instead of the most recent ones.
   const [starredOnly, setStarredOnly] = useState(false);
   const [viewMode, setViewMode] = useState<"text" | "replay">("text");
-  const [listWidth, setListWidth] = useState(300);
+  const [listWidth, setListWidth] = usePaneWidth("transcript-history-list", TRANSCRIPT_LIST_WIDTH);
   const [loadedId, setLoadedId] = useState<string | null>(null);
   // A focus request moves through "select" (wait for the session list) and "load" (wait for the text reader).
   const [pendingFocus, setPendingFocus] = useState<{
@@ -815,9 +817,9 @@ export function TranscriptHistoryPanel({
           <ResizeHandle
             side="left"
             width={listWidth}
-            min={200}
-            max={520}
-            defaultWidth={300}
+            min={TRANSCRIPT_LIST_WIDTH.min}
+            max={TRANSCRIPT_LIST_WIDTH.max}
+            defaultWidth={TRANSCRIPT_LIST_WIDTH.default}
             onChange={setListWidth}
           />
         </div>
