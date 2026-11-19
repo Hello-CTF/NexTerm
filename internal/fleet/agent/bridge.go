@@ -100,6 +100,12 @@ func BridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, 
 // BridgePipeWithEnv is BridgePipe that also gives every session created through the bridge the env entries the
 // client did not set itself (the SSH session variables of the bridge connection).
 func BridgePipeWithEnv(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, stateDir string, env []string) error {
+	return bridgePipe(ctx, conn, spawn, supervisor.HelperConfig{StateDir: stateDir, SpawnedBy: supervisor.SpawnedByAgent}, env)
+}
+
+// bridgePipe is BridgePipeWithEnv for the helper of helper.StateDir; a consented replacement starts helper.
+func bridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, helper supervisor.HelperConfig, env []string) error {
+	stateDir := helper.StateDir
 	pipe, err := spawn(ctx, stateDir)
 	if err != nil {
 		return err
@@ -126,7 +132,7 @@ func BridgePipeWithEnv(ctx context.Context, conn *websocket.Conn, spawn BridgeSp
 			}
 		}
 		if replaceToken != "" {
-			reply := supervisor.ReplaceStaleHelperFrame(ctx, supervisor.HelperConfig{StateDir: stateDir, SpawnedBy: supervisor.SpawnedByAgent}, replaceToken)
+			reply := supervisor.ReplaceStaleHelperFrame(ctx, helper, replaceToken)
 			if len(reply) > 0 {
 				_ = conn.Write(ctx, websocket.MessageBinary, reply)
 			}

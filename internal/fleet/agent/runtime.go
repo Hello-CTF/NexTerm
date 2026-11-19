@@ -213,12 +213,10 @@ func New(options Options) (*Runtime, error) {
 	ensureHelper := options.EnsureHelper
 	if ensureHelper == nil {
 		checkBuild = func(ctx context.Context) (supervisor.HelperBuild, error) {
-			config := runtimeState.helperConfig()
-			config.Executable = executable
-			return supervisor.EnsureHelperBuild(ctx, config)
+			return supervisor.EnsureHelperBuild(ctx, runtimeState.launchConfig())
 		}
 		ensureHelper = func(ctx context.Context) error {
-			_, err := supervisor.ConnectHelper(ctx, supervisor.HelperConfig{StateDir: runtimeState.currentStateDir(), Executable: executable, SpawnedBy: supervisor.SpawnedByAgent})
+			_, err := supervisor.ConnectHelper(ctx, runtimeState.launchConfig())
 			return err
 		}
 	}
@@ -249,6 +247,7 @@ func New(options Options) (*Runtime, error) {
 		sharedDir:               sharedDir,
 		legacyDir:               legacyDir,
 		executable:              executable,
+		selfRelease:             sync.OnceValues(func() (supervisor.RuntimeMetadata, error) { return supervisor.RuntimeMetadataForExecutable(executable) }),
 		helperBuildEvery:        helperBuildInterval,
 		helperBuildWaitingEvery: helperBuildWaitingInterval,
 		logger:                  logger,
@@ -281,6 +280,40 @@ func (r *Runtime) currentStateDir() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.stateDir
+}
+
+// launchConfig is helperConfig with the helper to start: the one the state directory's helper store holds after
+// this agent offered it its own executable. The desktop and other agents sharing the directory offer theirs, and the
+// store keeps the newest release, so whoever starts the helper starts the same file.
+func (r *Runtime) launchConfig() supervisor.HelperConfig {
+	config := r.helperConfig()
+	release, err := r.selfRelease()
+	if err != nil {
+		r.logger.Warn("hash agent executable for the helper store failed; starting the helper from it", "error", err)
+		config.Executable = r.executable
+		return config
+	}
+	path, stored, err := supervisor.HelperExecutable(config.StateDir, r.executable, release)
+	if err != nil {
+		r.logger.Warn("helper store unavailable; starting the helper from the agent executable", "dir", config.StateDir, "error", err)
+	}
+	config.Executable = path
+	config.Release = &stored
+	return config
+}
+
+// bridgeHelperConfig is the helper a bridge starts when it replaces an older helper on the client's consent. A
+// helper managed elsewhere (the desktop's, checkBuild nil) is not offered this executable: the bridge starts what the
+// store already holds, or this executable when it holds nothing.
+func (r *Runtime) bridgeHelperConfig() supervisor.HelperConfig {
+	if r.checkBuild != nil {
+		return r.launchConfig()
+	}
+	config := r.helperConfig()
+	if stored, ok := supervisor.CurrentStoredHelper(config.StateDir); ok {
+		config.Executable, config.Release = stored.Path, &stored.Release
+	}
+	return config
 }
 
 // helperConfig is the helper configuration for the directory in use, without the executable. Inside the
@@ -1167,7 +1200,7 @@ func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 			return
 		}
 		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
-		_ = BridgePipeWithEnv(ctx, conn, r.bridge, r.currentStateDir(), env)
+		_ = bridgePipe(ctx, conn, r.bridge, r.bridgeHelperConfig(), env)
 	}()
 }
 

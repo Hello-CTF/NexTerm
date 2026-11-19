@@ -557,6 +557,18 @@ func (s *Service) helperExecutable() (string, error) {
 	if err := supervisor.PrepareStateDir(s.dir()); err != nil {
 		return "", err
 	}
+	// The standalone helper packaged with this build goes into the state directory's helper store, which every
+	// program sharing the directory starts its helper from; the store keeps the newest release.
+	if bundled, ok := bundledHelper(executable); ok {
+		release, err := bundledRelease(bundled)
+		if err == nil {
+			path, _, err := supervisor.HelperExecutable(s.dir(), bundled, release)
+			if err == nil {
+				return path, nil
+			}
+		}
+		s.config.Logger.Warn("helper store unavailable; starting the helper from this executable", "helper", bundled, "error", err)
+	}
 	staged, err := stageExecutable(s.dir(), executable)
 	if err != nil {
 		return "", fmt.Errorf("stage the helper executable: %w", err)
