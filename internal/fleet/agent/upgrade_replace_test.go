@@ -261,9 +261,9 @@ exit 0
 	bootstrap := "bootstrap " + domain + " " + filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
 	want := strings.Join([]string{
 		"bootout " + domain + "/" + launchdLabel,
-		bootstrap,
-		bootstrap,
 		"enable " + domain + "/" + launchdLabel,
+		bootstrap,
+		bootstrap,
 	}, "\n") + "\n"
 	if string(content) != want {
 		t.Fatalf("launchctl calls =\n%s\nwant:\n%s", content, want)
