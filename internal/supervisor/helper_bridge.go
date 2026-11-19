@@ -38,6 +38,25 @@ func SSHSessionEnv(getenv func(string) string) []string {
 	return env
 }
 
+// SSHConnectionEnv states a connection that reaches this host the way sshd states the connection of a session:
+// client is the peer and server this host's end. An address that is not TCP is reported as 0.0.0.0 port 0, so
+// programs still see a remote session.
+func SSHConnectionEnv(client, server net.Addr) []string {
+	clientIP, clientPort := tcpEndpoint(client)
+	serverIP, serverPort := tcpEndpoint(server)
+	return []string{
+		fmt.Sprintf("SSH_CONNECTION=%s %d %s %d", clientIP, clientPort, serverIP, serverPort),
+		fmt.Sprintf("SSH_CLIENT=%s %d %d", clientIP, clientPort, serverPort),
+	}
+}
+
+func tcpEndpoint(addr net.Addr) (string, int) {
+	if tcp, ok := addr.(*net.TCPAddr); ok && tcp.IP != nil {
+		return tcp.IP.String(), tcp.Port
+	}
+	return "0.0.0.0", 0
+}
+
 // filteredReader passes the bytes read from source through a StreamFilter.
 type filteredReader struct {
 	source  io.Reader

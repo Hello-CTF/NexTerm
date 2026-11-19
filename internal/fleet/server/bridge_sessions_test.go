@@ -51,7 +51,9 @@ func (f *bridgeRelayFixture) open(t *testing.T, session *httpSession) pairedRela
 	}
 	bridge := dialDeviceWS(t, f.httpFixture)
 	if response := helloDevice(t, bridge, agent.HelloMessage{
+		// A current agent: the relay then passes the test's non-protocol bytes through untouched.
 		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: f.deviceID, Secret: f.secret, BridgeID: request.BridgeID,
+		SessionEnv: true,
 	}); response.Type != "hello_ok" {
 		t.Fatalf("bridge hello = %+v", response)
 	}

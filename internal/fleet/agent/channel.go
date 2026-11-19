@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
 )
@@ -77,6 +78,9 @@ type HelloMessage struct {
 	// HelperInstanceID is the random id of the helper state directory. It only tells apart helpers on different
 	// machines that happen to share uid and path (and thus StateDigest); it is not a credential.
 	HelperInstanceID string `json:"helper_instance_id,omitempty"`
+	// SessionEnv says the agent gives the terminals of its bridges SSH_CONNECTION and SSH_CLIENT itself. The server
+	// adds them to the terminal bridges of an agent that predates it.
+	SessionEnv bool `json:"session_env,omitempty"`
 }
 
 type serverMessage struct {
@@ -304,7 +308,7 @@ func dialBridgeWithEnv(ctx context.Context, wsURL string, hello HelloMessage, po
 	defer mu.Unlock()
 	var env []string
 	if endpoint != nil {
-		env = sshSessionEnv(endpoint.LocalAddr(), endpoint.RemoteAddr())
+		env = supervisor.SSHConnectionEnv(endpoint.RemoteAddr(), endpoint.LocalAddr())
 	}
 	return conn, env, nil
 }
@@ -361,23 +365,4 @@ func isForbidden(err error) bool {
 func isOwnerUnavailable(err error) bool {
 	var serverError *ServerError
 	return errors.As(err, &serverError) && serverError.ownerUnavailable()
-}
-
-// sshSessionEnv states a bridge connection the way sshd states the connection of a session: the peer is the
-// client and this host the server. An address that is not TCP is reported as 0.0.0.0 port 0, so programs still
-// see a remote session.
-func sshSessionEnv(local, remote net.Addr) []string {
-	clientIP, clientPort := tcpEndpoint(remote)
-	serverIP, serverPort := tcpEndpoint(local)
-	return []string{
-		fmt.Sprintf("SSH_CONNECTION=%s %d %s %d", clientIP, clientPort, serverIP, serverPort),
-		fmt.Sprintf("SSH_CLIENT=%s %d %d", clientIP, clientPort, serverPort),
-	}
-}
-
-func tcpEndpoint(addr net.Addr) (string, int) {
-	if tcp, ok := addr.(*net.TCPAddr); ok && tcp.IP != nil {
-		return tcp.IP.String(), tcp.Port
-	}
-	return "0.0.0.0", 0
 }
