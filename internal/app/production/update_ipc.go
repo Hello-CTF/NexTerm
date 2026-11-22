@@ -16,6 +16,7 @@ type updateCommandManager interface {
 	Check(context.Context) update.Status
 	Install(context.Context, string) (update.Result, error)
 	Restart(context.Context) update.Result
+	State() update.InstallState
 }
 
 func updateInstallIPCError(err error) error {
@@ -55,6 +56,12 @@ func registerUpdateCommands(dispatcher *ipc.Dispatcher, manager updateCommandMan
 			return ipc.Register(dispatcher, "app_update_install", func(ctx context.Context, _ *ipc.Call, input updateInstallRequest) (update.Result, error) {
 				result, err := manager.Install(ctx, input.Version)
 				return result, updateInstallIPCError(err)
+			})
+		},
+		func() error {
+			// app_update_state lets a reloaded interface resume an install that is still running or waits for a restart.
+			return ipc.Register(dispatcher, "app_update_state", func(context.Context, *ipc.Call, struct{}) (update.InstallState, error) {
+				return manager.State(), nil
 			})
 		},
 		func() error {

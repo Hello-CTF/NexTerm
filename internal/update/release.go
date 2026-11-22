@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 
 	"github.com/Hello-CTF/NexTerm/internal/releasesig"
@@ -28,6 +29,7 @@ type Release struct {
 	TagName    string  `json:"tag_name"`
 	Name       string  `json:"name"`
 	Body       string  `json:"body"`
+	HTMLURL    string  `json:"html_url"`
 	Draft      bool    `json:"draft"`
 	Prerelease bool    `json:"prerelease"`
 	Assets     []Asset `json:"assets"`
@@ -180,22 +182,26 @@ func readReleaseAsset(reader io.Reader, name string, limit int64) ([]byte, error
 // running build never influences the channel: a stable channel on an RC build waits for a newer stable release
 // and never downgrades. A current version that cannot be parsed (dev builds) accepts any visible release.
 func selectRelease(releases []Release, current string, channel ReleaseChannel) (Release, bool) {
-	var best Release
-	found := false
-	for _, release := range releases {
-		if !releaseVisibleOn(release, channel) {
-			continue
-		}
-		if !isNewerVersion(release.version(), current) {
-			continue
-		}
-		if found && compareMustParse(release.version(), best.version()) <= 0 {
-			continue
-		}
-		best = release
-		found = true
+	candidates := candidateReleases(releases, current, channel)
+	if len(candidates) == 0 {
+		return Release{}, false
 	}
-	return best, found
+	return candidates[0], true
+}
+
+// candidateReleases lists the releases visible on the channel that are newer than the current version, newest
+// first; releases that compare equal keep the API order.
+func candidateReleases(releases []Release, current string, channel ReleaseChannel) []Release {
+	var candidates []Release
+	for _, release := range releases {
+		if releaseVisibleOn(release, channel) && isNewerVersion(release.version(), current) {
+			candidates = append(candidates, release)
+		}
+	}
+	sort.SliceStable(candidates, func(left, right int) bool {
+		return compareMustParse(candidates[left].version(), candidates[right].version()) > 0
+	})
+	return candidates
 }
 
 func compareMustParse(left, right string) int {

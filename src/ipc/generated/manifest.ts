@@ -514,6 +514,14 @@ export const ipcContractManifest = {
       input: { go: "struct{Version *string \"json:\\\"version\\\"\"}", ts: "{\n  version: string | null;\n}" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/update.Result", ts: "UpdateResult" },
     },
+    "app_update_state": {
+      scope: "update",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/update.InstallState", ts: "InstallState" },
+    },
     "app_windows_build": {
       scope: "platform",
       nested: false,
@@ -3552,6 +3560,10 @@ export interface IPCCommandTypeMap {
   version: string | null;
 };
     output: contractTypes.UpdateResult;
+  };
+  "app_update_state": {
+    input: Record<string, never>;
+    output: contractTypes.InstallState;
   };
   "app_windows_build": {
     input: Record<string, never>;

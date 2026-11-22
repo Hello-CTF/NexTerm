@@ -16,24 +16,27 @@ import (
 // When the currently running exe is the install target, NSIS cannot overwrite the running executable,
 // so loaded executable/runtime images are moved aside and restored on failure.
 // Loose copies leave the original file alone and restart into the installed version.
-func (m *Manager) applyInstall(ctx context.Context, archive string) error {
+func (m *Manager) applyInstall(ctx context.Context, archive string) (string, error) {
 	target, inPlace := installTargetFor(m.ExePath, registeredInstallTarget(), defaultInstallDir(), canonicalExeName())
 	if !inPlace {
 		if err := runInstaller(ctx, archive); err != nil {
-			return err
+			return "", err
 		}
 		if _, err := os.Stat(target); err != nil {
-			return userErrorf(UserErrorIO, "安装完成后未找到新可执行文件 %s", target)
+			return "", userErrorf(UserErrorIO, "安装完成后未找到新可执行文件 %s", target)
 		}
-		m.restartTarget = target
-		return nil
+		return target, nil
 	}
 	executable := m.ExePath
 	if err := installWindowsPayload(executable, func() error { return runInstaller(ctx, archive) }); err != nil {
-		return userErrorf(UserErrorIO, "安装更新文件失败: %w", err)
+		return "", userErrorf(UserErrorIO, "安装更新文件失败: %w", err)
 	}
-	m.restartTarget = executable
-	return nil
+	return executable, nil
+}
+
+// installBlocker reports nothing on Windows: the per-user NSIS installer always has a writable target.
+func (m *Manager) installBlocker() string {
+	return ""
 }
 
 func runInstaller(ctx context.Context, archive string) error {

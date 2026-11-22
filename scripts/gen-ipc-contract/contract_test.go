@@ -154,6 +154,7 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 		{name: "system_notification_remove", scope: "platform", input: "SystemNotificationIDRequest", output: "unknown"},
 		{name: "app_update_check", scope: "update", input: "Record<string, never>", output: "UpdateStatus"},
 		{name: "app_update_install", scope: "update", input: updateInstallInput, output: "UpdateResult"},
+		{name: "app_update_state", scope: "update", input: "Record<string, never>", output: "InstallState"},
 		{name: "app_restart", scope: "update", input: "Record<string, never>", output: "UpdateResult"},
 		{name: "app_update_channel_get", scope: "update", input: "Record<string, never>", output: "UpdateChannelResponse"},
 		{name: "app_update_channel_set", scope: "update", input: "UpdateChannelRequest", output: "UpdateChannelResponse"},
@@ -193,8 +194,8 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 18 {
-		t.Fatalf("selected platform/update/biometric command count = %d, want 18", len(selected))
+	if len(selected) != 19 {
+		t.Fatalf("selected platform/update/biometric command count = %d, want 19", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "platform" || command.Scope == "update" || command.Scope == "biometric") && !selected[name] {

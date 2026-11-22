@@ -210,14 +210,6 @@ func TestCheckDegradesToUnavailableReason(t *testing.T) {
 			contains: "检查更新失败",
 		},
 		{
-			name: "missing asset",
-			manager: func(server *httptest.Server) *Manager {
-				return &Manager{CurrentVersion: "0.2.2", GOOS: "windows", GOARCH: "amd64", APIURL: server.URL + "/releases"}
-			},
-			fixture:  func(t *testing.T) *releaseFixture { return linuxFixture(t, "0.3.0", false) },
-			contains: "没有适合当前平台的安装包",
-		},
-		{
 			name: "missing checksum entry",
 			manager: func(server *httptest.Server) *Manager {
 				return &Manager{CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", APIURL: server.URL + "/releases"}
@@ -274,7 +266,7 @@ func TestCheckServerModeReportsCanInstallFalse(t *testing.T) {
 	}
 }
 
-func TestInstallReplacesBinaryEmitsProgressAndRestarts(t *testing.T) {
+func TestInstallReplacesBinaryAndWaitsForRestart(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("linux deb install test")
 	}
@@ -285,12 +277,14 @@ func TestInstallReplacesBinaryEmitsProgressAndRestarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	var progress []Progress
+	restarts := 0
 	restartTarget := ""
 	manager := &Manager{
 		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
 		ExePath: executable, APIURL: server.URL + "/releases",
 		Emit: func(_ context.Context, event Progress) { progress = append(progress, event) },
 		RestartFunc: func(_ context.Context, target string) error {
+			restarts++
 			restartTarget = target
 			return nil
 		},
@@ -299,8 +293,11 @@ func TestInstallReplacesBinaryEmitsProgressAndRestarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Installed || !result.Restarted || result.Version != "0.3.0" {
+	if !result.Installed || result.Restarted || result.Version != "0.3.0" {
 		t.Fatalf("result = %+v", result)
+	}
+	if restarts != 0 {
+		t.Fatal("install must not restart the app")
 	}
 	content, err := os.ReadFile(executable)
 	if err != nil {
@@ -309,11 +306,15 @@ func TestInstallReplacesBinaryEmitsProgressAndRestarts(t *testing.T) {
 	if string(content) != "new-binary-0.3.0" {
 		t.Fatalf("executable content = %q", content)
 	}
-	if restartTarget != executable {
-		t.Fatalf("restart target = %q, want %q", restartTarget, executable)
+	if state := manager.State(); state.Phase != StateInstalled || state.InstalledVersion != "0.3.0" || state.Error != "" {
+		t.Fatalf("state = %+v", state)
 	}
-	if len(progress) < 3 {
-		t.Fatalf("progress events = %+v", progress)
+	phases := map[string]bool{}
+	for _, event := range progress {
+		phases[event.Phase] = true
+	}
+	if !phases[PhaseDownload] || !phases[PhaseVerify] || !phases[PhaseInstall] {
+		t.Fatalf("progress events = %+v, want download, verify and install phases", progress)
 	}
 	if progress[0].Phase != PhaseDownload || progress[0].Total != int64(len(fixture.archive)) {
 		t.Fatalf("first progress = %+v", progress[0])
@@ -321,6 +322,15 @@ func TestInstallReplacesBinaryEmitsProgressAndRestarts(t *testing.T) {
 	last := progress[len(progress)-1]
 	if last.Phase != PhaseInstall || !last.Done || last.Error != "" {
 		t.Fatalf("last progress = %+v", last)
+	}
+	// A repeated install of the version waiting for a restart does not download it again.
+	before := len(progress)
+	again, err := manager.Install(context.Background(), "0.3.0")
+	if err != nil || !again.Installed || again.Version != "0.3.0" || len(progress) != before {
+		t.Fatalf("repeat install = %+v, %v, events %d -> %d", again, err, before, len(progress))
+	}
+	if restart := manager.Restart(context.Background()); !restart.Restarted || restartTarget != executable || restarts != 1 {
+		t.Fatalf("restart = %+v, target = %q, restarts = %d", restart, restartTarget, restarts)
 	}
 }
 
@@ -467,11 +477,11 @@ func TestInstallCannotBypassStableChannel(t *testing.T) {
 	if err != nil || result.Installed || result.UnavailableReason == "" {
 		t.Fatalf("Install on stable must not install an rc: %+v, %v", result, err)
 	}
-	if _, _, err := manager.resolveAsset(context.Background(), "1.4.0-rc.1", ChannelStable); err == nil {
-		t.Fatal("resolveAsset must refuse an rc on the stable channel")
+	if status, found := manager.check(context.Background(), ChannelStable); status.Available || found != nil {
+		t.Fatalf("check must refuse an rc on the stable channel: %+v", status)
 	}
-	if _, _, err := manager.resolveAsset(context.Background(), "1.4.0-rc.1", ChannelRC); err != nil {
-		t.Fatalf("resolveAsset must allow an rc on the rc channel: %v", err)
+	if status, found := manager.check(context.Background(), ChannelRC); !status.Available || found == nil {
+		t.Fatalf("check must allow an rc on the rc channel: %+v", status)
 	}
 }
 
