@@ -18,7 +18,7 @@ vi.mock("../../ipc/commands", () => ({
   terminalApi: { closeTab: mocks.closeTab, listLive: mocks.listLive, listDurable: mocks.listDurable },
 }));
 
-import { getTerminalPrefs, setTerminalCloseAction } from "../../app/preferences";
+import { getTerminalPrefs, setTerminalCloseAction, setTerminalConfirmTemporaryClose } from "../../app/preferences";
 import {
   closeActionHint,
   closeTabHint,
@@ -255,21 +255,47 @@ describe("terminal close preference dispatch", () => {
     const tab = { ...terminal(), durable: false };
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
     setTerminalCloseAction("detach");
-    mocks.askChoice.mockResolvedValueOnce("kill");
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: false });
 
     await requestCloseTab(tab.id);
 
-    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
-    const options = mocks.askChoice.mock.calls[0][1] as { choices: { key: string; danger?: boolean }[] };
+    expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
+    const options = mocks.askChoiceRemember.mock.calls[0][1] as { choices: { key: string; danger?: boolean }[]; rememberLabel?: string };
     expect(options.choices).toEqual([expect.objectContaining({ key: "kill", danger: true })]);
+    expect(options.rememberLabel).toBe("不再询问");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
     expect(tabsRemaining()).toEqual([]);
+    expect(getTerminalPrefs().confirmTemporaryClose).toBe(true);
+  });
+
+  it("stops asking before closing a regular SSH terminal after 不再询问, except for a key chord", async () => {
+    const tab = (id: string) => ({ ...terminal(id), durable: false });
+    seed([{ id: "p", tabs: [tab("r1"), tab("r2"), tab("r3")], activeTabId: "r1" }]);
+    setTerminalCloseAction("detach");
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: true });
+
+    await requestCloseTab("r1");
+    expect(getTerminalPrefs().confirmTemporaryClose).toBe(false);
+
+    await requestCloseTab("r2");
+    expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-r2", "kill", "s");
+
+    // A chord still asks, focuses 取消 first and offers no way to stop asking.
+    mocks.askChoiceRemember.mockResolvedValueOnce(null);
+    await requestCloseTab("r3", { viaShortcut: true });
+    expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(2);
+    const options = mocks.askChoiceRemember.mock.calls[1][1] as { focusCancel?: boolean; rememberLabel?: string };
+    expect(options.focusCancel).toBe(true);
+    expect(options.rememberLabel).toBeUndefined();
+    expect(tabsRemaining().map((t) => t.id)).toEqual(["r3"]);
+    setTerminalConfirmTemporaryClose(true);
   });
 
   it("keeps a regular SSH terminal open when its close dialog is dismissed", async () => {
     const tab = { ...terminal(), durable: false };
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
-    mocks.askChoice.mockResolvedValueOnce(null);
+    mocks.askChoiceRemember.mockResolvedValueOnce(null);
 
     await requestCloseTab(tab.id);
 
@@ -483,7 +509,7 @@ describe("consolidated batch close dialog", () => {
     setTerminalCloseAction("ask");
   });
 
-  it("shows one choice without a remember checkbox for multiple running SSH terminals", async () => {
+  it("shows one choice with a remember checkbox for multiple running SSH terminals", async () => {
     const files: AppTab = { id: "f1", kind: "files", title: "Files", closable: true };
     seed([{ id: "p", tabs: [terminal("t1"), terminal("t2"), terminal("t3"), files], activeTabId: "t1" }]);
     mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: false });
@@ -494,7 +520,7 @@ describe("consolidated batch close dialog", () => {
     const [message, options] = mocks.askChoiceRemember.mock.calls[0];
     expect(message).toContain("3 个终端");
     expect(message).toContain("后台会话");
-    expect(options.rememberLabel).toBeUndefined();
+    expect(options.rememberLabel).toBe("以后都按此选择");
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledTimes(3);
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill", "s");
@@ -504,7 +530,7 @@ describe("consolidated batch close dialog", () => {
     expect(getTerminalPrefs().closeAction).toBe("ask");
   });
 
-  it("keeps terminals, closes non-terminal tabs normally, and reports no failure when the batch dialog is cancelled", async () => {
+  it("closes nothing, not even the non-terminal tabs, and reports no failure when the batch dialog is cancelled", async () => {
     const files: AppTab = { id: "f1", kind: "files", title: "Files", closable: true };
     seed([{ id: "p", tabs: [terminal("t1"), terminal("t2"), files], activeTabId: "t1" }]);
     mocks.askChoiceRemember.mockResolvedValueOnce(null);
@@ -512,7 +538,7 @@ describe("consolidated batch close dialog", () => {
     await requestCloseTabs(["t1", "t2", "f1"]);
 
     expect(mocks.closeTab).not.toHaveBeenCalled();
-    expect(tabsRemaining().map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(tabsRemaining().map((t) => t.id)).toEqual(["t1", "t2", "f1"]);
     expect(toastText()).not.toContain("未能关闭");
   });
 
@@ -540,7 +566,7 @@ describe("consolidated batch close dialog", () => {
     expect(tabsRemaining()).toEqual([]);
   });
 
-  it("keeps separate confirmation branches for blocked terminals in a batch", async () => {
+  it("names blocked terminals in the single batch dialog", async () => {
     seed([{ id: "p", tabs: [terminal("t1"), execTerminal("e1")], activeTabId: "t1" }]);
     mocks.askChoiceRemember.mockResolvedValueOnce({ key: "detach", remember: false });
 
@@ -548,22 +574,21 @@ describe("consolidated batch close dialog", () => {
 
     expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
     expect(mocks.askChoiceRemember.mock.calls[0][0]).toContain("1 个终端");
-    expect(mocks.ask).toHaveBeenCalledTimes(1);
-    expect(mocks.ask.mock.calls[0][0]).toContain("容器 exec");
+    expect(mocks.askChoiceRemember.mock.calls[0][0]).toContain("容器 exec");
+    expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
     expect(tabsRemaining()).toEqual([]);
   });
 
-  it("keeps a separate blocked-type warning after an ask-kill batch choice", async () => {
+  it("needs no second dialog for blocked terminals after an ask-kill batch choice", async () => {
     seed([{ id: "p", tabs: [terminal("t1"), execTerminal("e1")], activeTabId: "t1" }]);
     mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: false });
 
     await requestCloseTabs(["t1", "e1"]);
 
     expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
-    expect(mocks.ask).toHaveBeenCalledTimes(1);
-    expect(mocks.ask.mock.calls[0][0]).toContain("容器 exec");
+    expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill", "s");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
   });
@@ -577,7 +602,7 @@ describe("consolidated batch close dialog", () => {
 
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).not.toHaveBeenCalled();
-    expect(tabsRemaining().map((t) => t.id)).toEqual(["t1", "e1"]);
+    expect(tabsRemaining().map((t) => t.id)).toEqual(["t1", "e1", "f1"]);
   });
 
   it("ends all processes directly without dialogs for a kill-preference batch close", async () => {

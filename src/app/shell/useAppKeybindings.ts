@@ -148,7 +148,7 @@ export function useAppKeybindings({
         case "closeTab":
           if (!activeTabId) return;
           e.preventDefault();
-          void requestCloseTab(activeTabId);
+          void requestCloseTab(activeTabId, { viaShortcut: true });
           return;
         case "terminalFontIncrease":
         case "terminalFontDecrease":

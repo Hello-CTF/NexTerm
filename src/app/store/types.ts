@@ -8,6 +8,7 @@ import type { ResolvedTheme, ThemeMode } from "../theme";
 import type { ProjectFocus, ProjectInventory } from "../projectFocus";
 import type { FocusDirection, SplitNode } from "../splitTree";
 import type { PaneEdge } from "../tabDropZone";
+import type { WorkspaceClosePreconfirmed } from "./closeActions";
 
 export type PaneKind =
   | "terminal"
@@ -270,6 +271,12 @@ export interface ToastItem {
   duration?: number;
   remaining?: number;
   held?: boolean;
+  // A persistent toast has no timer and stays until the user dismisses it; newer toasts never push it out.
+  persistent?: boolean;
+}
+
+export interface ToastOptions {
+  persistent?: boolean;
 }
 
 export interface TextPromptState {
@@ -285,6 +292,9 @@ export interface AppDialogState {
   message: string;
   title?: string;
   level: "info" | "warning";
+  confirmLabel?: string;
+  // Whether the confirm button is red; the warning level decides when unset.
+  danger?: boolean;
   resolve: (v: boolean) => void;
 }
 
@@ -302,6 +312,7 @@ export interface AppChoiceState {
   options: AppChoiceOption[];
   level: "info" | "warning";
   rememberLabel?: string;
+  focusCancel?: boolean;
   resolve: (v: string | null, remember: boolean) => void;
 }
 
@@ -460,7 +471,9 @@ export interface UiState {
 
   ensureWorkspace: (spec: WorkspaceSpec) => string;
   setActiveWorkspace: (id: string) => void;
-  closeWorkspace: (id: string, mode?: "detach") => Promise<boolean>;
+  // mode "detach" moves every terminal to the background; a preconfirmed batch decision skips the dialog unless the
+  // workspace gained something since.
+  closeWorkspace: (id: string, mode?: "detach" | WorkspaceClosePreconfirmed) => Promise<boolean>;
   markDeletedAssetWorkspaces: (assetId: string) => void;
   reconcileDeletedTargets: (assets: readonly { id: string }[], epoch: number) => void;
 
@@ -515,7 +528,7 @@ export interface UiState {
   workspaceRestoreResults: Record<string, WorkspaceRestoreResult>;
   dismissWorkspaceRestoreBanner: () => void;
   setAiBusy: (v: boolean) => void;
-  pushToast: (kind: ToastItem["kind"], text: string, action?: ToastAction) => void;
+  pushToast: (kind: ToastItem["kind"], text: string, action?: ToastAction, options?: ToastOptions) => void;
   dismissToast: (id: number) => void;
   // Hovering or focusing a toast holds its timer; releasing restarts the remaining time.
   holdToast: (id: number) => void;

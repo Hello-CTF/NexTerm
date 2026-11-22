@@ -374,10 +374,12 @@ export function DialogHost() {
   let content = null;
   if (choice) {
     const warning = choice.level === "warning";
-    const defaultChoice =
-      choice.options.find((option) => option.primary && !option.danger) ??
-      choice.options.find((option) => !option.danger) ??
-      null;
+    // A dialog a key chord opened focuses 取消, so a held or repeated key cannot pick a choice.
+    const defaultChoice = choice.focusCancel
+      ? null
+      : (choice.options.find((option) => option.primary && !option.danger) ??
+        choice.options.find((option) => !option.danger) ??
+        null);
     content = (
       <div className="nx-overlay" onClick={cancelActive}>
         <div
@@ -456,6 +458,7 @@ export function DialogHost() {
     const warning = dialog.level === "warning";
     const Icon = warning ? IconAlert : IconInfo;
     const focusCancel = warning && dialog.kind !== "message";
+    const danger = dialog.danger ?? warning;
     content = (
       <div className="nx-overlay" onClick={cancelActive}>
         <div
@@ -496,12 +499,12 @@ export function DialogHost() {
             <button
               ref={focusCancel ? undefined : initialButtonRef}
               type="button"
-              className={`nx-btn ${warning ? "nx-btn-danger-solid" : "nx-btn-primary"}`}
+              className={`nx-btn ${danger ? "nx-btn-danger-solid" : "nx-btn-primary"}`}
               onClick={() => {
                 if (useUi.getState().appDialog === dialog) close(true);
               }}
             >
-              {t("确定")}
+              {dialog.confirmLabel ?? t("确定")}
             </button>
           </div>
         </div>

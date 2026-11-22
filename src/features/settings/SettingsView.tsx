@@ -3,6 +3,7 @@ import { aiApi, desktopTrayApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import {
   setTerminalCloseAction,
+  setTerminalConfirmTemporaryClose,
   setTerminalDefaultMode,
   setTerminalGpuAcceleration,
   setTerminalLinkActivation,
@@ -675,6 +676,22 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               </div>
               <p className="nx-hint mt-1.5">{CLOSE_ACTION_HINTS[terminalPrefs.closeAction]}</p>
             </div>
+            <label className="flex cursor-pointer items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-[12.5px] text-neutral-200" data-setting="confirm-temporary-close">
+                  {t("关闭运行中的临时终端前确认")}
+                  <SyncScopeBadge scope="local" />
+                </div>
+                <p className="nx-hint mt-0.5">{t("临时终端的进程随标签页一起结束。用快捷键关闭时始终确认。")}</p>
+              </div>
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 shrink-0"
+                aria-label={t("关闭运行中的临时终端前确认")}
+                checked={terminalPrefs.confirmTemporaryClose}
+                onChange={(e) => setTerminalConfirmTemporaryClose(e.target.checked)}
+              />
+            </label>
             {showCloseToTray && (
               <label className="flex cursor-pointer items-start gap-3">
                 <div className="min-w-0 flex-1">

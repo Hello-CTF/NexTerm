@@ -48,6 +48,8 @@ export function useAppDialogHandlers(): void {
             message,
             title: options?.title,
             level: dialogLevelForKind(options?.kind),
+            confirmLabel: options?.confirmLabel,
+            danger: options?.danger,
             resolve,
           });
         }),
@@ -74,6 +76,7 @@ export function useAppDialogHandlers(): void {
             options: options?.choices ?? [],
             level: options?.level ?? "info",
             rememberLabel: options?.rememberLabel,
+            focusCancel: options?.focusCancel,
             resolve: (key, remember) => resolve(key === null ? null : { key, remember }),
           });
         }),

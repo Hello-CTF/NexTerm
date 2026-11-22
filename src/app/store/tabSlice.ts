@@ -16,6 +16,7 @@ import {
   makePane,
   migrateToolTabs,
   migrateWorkspaceFileLocators,
+  neighbourAfterRemoval,
   nextBroadcastGeneration,
   pickPaneForTab,
   pruneBroadcastToWorkspaces,
@@ -217,6 +218,7 @@ export function createTabSlice(set: UiSet, get: UiGet) {
           if (w.id !== wsId) return w;
           const pane = w.panes.find((p) => p.id === paneId);
           if (!pane) return w;
+          const closedIndex = pane.tabs.findIndex((t) => t.id === id);
           const tabs = pane.tabs.filter((t) => t.id !== id);
           const dropPane = tabs.length === 0 && w.panes.length > 1;
           const panes = dropPane
@@ -226,7 +228,8 @@ export function createTabSlice(set: UiSet, get: UiGet) {
                   ? {
                       ...p,
                       tabs,
-                      activeTabId: p.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : p.activeTabId,
+                      // Closing the active tab activates its right neighbour, or the left one at the end.
+                      activeTabId: p.activeTabId === id ? (neighbourAfterRemoval(tabs, closedIndex)?.id ?? null) : p.activeTabId,
                     }
                   : p,
               );
@@ -253,9 +256,12 @@ export function createTabSlice(set: UiSet, get: UiGet) {
       if (remoteKillSkipped) {
         if (report) report.remoteKillSkipped = true;
         if (!suppressErrorToast) {
+          // A skipped kill leaves a process running: the notice stays until the user dismisses it.
           get().pushToast(
             "error",
             tr("「{title}」已在本地关闭，但主机已断开或无法访问，远端进程未能结束；它仍在「后台会话」中，重新连接后可接管或结束", { title: target.title }),
+            undefined,
+            { persistent: true },
           );
         }
       } else if (remoteCloseUnknown && !suppressErrorToast) {

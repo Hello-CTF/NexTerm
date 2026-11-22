@@ -123,10 +123,13 @@ export {
 } from "./store/durableReadiness";
 export { hasExitEvidence, isConnectionLostTab, isDurableTab, isUnconfirmedDurableExit } from "./store/durableExit";
 export {
+  applyPreconfirmedClose,
   closeActionHint,
+  closeWorkspaces,
   collectWorkspaceClose,
   confirmWorkspaceClose,
   executeWorkspaceClose,
+  pushWorkspaceCloseToast,
   closeTabHint,
   countBlockedTerminals,
   requestCloseTab,

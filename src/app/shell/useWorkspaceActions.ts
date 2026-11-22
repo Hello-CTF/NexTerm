@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   useUi,
+  closeWorkspaces,
   openTerminalTab,
   nextTabId,
   hostHistoryTab,
@@ -270,9 +271,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
       .map((workspace) => workspace.id);
     const active = state.workspaces.find((workspace) => workspace.id === activeId);
     if (active?.closable) ids.push(active.id);
-    for (const id of ids) {
-      if (!(await useUi.getState().closeWorkspace(id))) break;
-    }
+    await closeWorkspaces(ids);
   }, []);
 
   // Each command opens something in the workspaces, so on the mobile shell it leaves the home first.

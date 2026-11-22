@@ -164,6 +164,47 @@ describe("shared dialog accessibility", () => {
     expect(useUi.getState().appDialog).toBeNull();
   });
 
+  it("focuses 取消 first in a choice a key chord opened, so a held key cannot pick a choice", () => {
+    mounted = mount(createElement(DialogHost));
+    act(() => {
+      useUi.setState({
+        appChoice: {
+          title: "关闭「t1」",
+          message: "进程正在运行",
+          level: "info",
+          focusCancel: true,
+          options: [
+            { key: "detach", label: "转到后台运行", primary: true },
+            { key: "kill", label: "直接关闭", danger: true },
+          ],
+          resolve: vi.fn(),
+        },
+      });
+    });
+    expect(document.activeElement).toBe(findButton(mounted.container, "取消"));
+  });
+
+  it("names the confirm action and keeps a non-destructive warning out of red", () => {
+    mounted = mount(createElement(DialogHost));
+    act(() => {
+      useUi.setState({
+        appDialog: { kind: "ask", message: "结束这个进程？", level: "warning", confirmLabel: "结束进程", resolve: vi.fn() },
+      });
+    });
+    const kill = findButton(mounted.container, "结束进程");
+    expect(kill.className).toContain("nx-btn-danger-solid");
+    expect(document.activeElement).toBe(findButton(mounted.container, "取消"));
+
+    act(() => {
+      useUi.setState({
+        appDialog: { kind: "ask", message: "转入后台？", level: "warning", confirmLabel: "转入后台", danger: false, resolve: vi.fn() },
+      });
+    });
+    const detach = findButton(mounted.container, "转入后台");
+    expect(detach.className).not.toContain("nx-btn-danger-solid");
+    expect(detach.className).toContain("nx-btn-primary");
+  });
+
   it("clears the old dialog before a resolver opens its replacement", async () => {
     const trigger = document.body.appendChild(document.createElement("button"));
     trigger.focus();

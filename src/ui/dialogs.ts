@@ -12,7 +12,14 @@ import { t } from "../i18n";
 
 export { dropStaged as discardStaged };
 
-type AskOptions = { title?: string; kind?: "info" | "warning" | "error" };
+type AskOptions = {
+  title?: string;
+  kind?: "info" | "warning" | "error";
+  /** The confirm button's text (for example 删除, 覆盖, 结束进程); 确定 when omitted. */
+  confirmLabel?: string;
+  /** Whether the confirm button is red. Defaults to the warning kind; a non-destructive warning passes false. */
+  danger?: boolean;
+};
 
 type AskFn = (message: string, options?: AskOptions) => Promise<boolean>;
 type ConfirmFn = (message: string) => Promise<boolean>;
@@ -31,6 +38,8 @@ export type ChoiceOptions = {
   level?: "info" | "warning";
   choices: ChoiceOption[];
   rememberLabel?: string;
+  /** Focus 取消 first instead of the primary choice, for a dialog a key chord opened (a held key must not pick). */
+  focusCancel?: boolean;
 };
 
 export interface ChoiceResult {

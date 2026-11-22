@@ -3,12 +3,12 @@ import { describeError } from "../../ui/errorText";
 import type { ChoiceOption } from "../../ui/dialogs";
 import { dirtyFileEditors } from "../../features/files/editorGuards";
 import { runningAiTabs as getRunningAiTabs, type AiCloseTab } from "../../features/ai/runOwnership";
-import { getTerminalPrefs, setTerminalCloseAction, type TerminalCloseAction } from "../preferences";
+import { getTerminalPrefs, setTerminalCloseAction, setTerminalConfirmTemporaryClose } from "../preferences";
 import { GLOBAL_AI_BOARD_KEY } from "./model";
 import { isUnconfirmedDurableExit } from "./durableExit";
 import { findTab } from "./tabActions";
 import { useRemoteStatus } from "../../features/remote/remoteStatus";
-import type { AppTab, CloseTabReport, SqlDraft, WorkspaceKind } from "./types";
+import type { AppTab, CloseTabReport, SqlDraft, Workspace, WorkspaceKind } from "./types";
 import { useUi } from "./useUi";
 import { t as tr } from "../../i18n";
 
@@ -20,6 +20,7 @@ export async function confirmDirtyEditors(tabs: AppTab[], title: string): Promis
   return ask(tr("有 {length} 个文件尚未保存：{names}\n关闭后会丢失这些改动。仍要继续？", { length: dirty.length, names }), {
     title,
     kind: "warning",
+    confirmLabel: tr("放弃改动"),
   });
 }
 
@@ -125,26 +126,12 @@ interface WorkspaceCloseOutcome {
   succeededDbConnIds: Set<string>;
 }
 
-async function applyClosePreference(plan: ClosePreferencePlan, title: string): Promise<boolean> {
-  const action = getTerminalPrefs().closeAction;
-  plan.confirmBlocked = action !== "kill";
-  if (plan.detachable.length === 0 || action === "detach") return true;
-  if (action === "kill") {
-    plan.preferredKills = plan.detachable;
-    plan.detachable = [];
-    return true;
-  }
-  const { askChoiceRemember } = await import("../../ui/dialogs");
-  const result = await askChoiceRemember(
-    tr("{length} 个终端的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。", { length: plan.detachable.length }),
-    { title, choices: CLOSE_CHOICE_OPTIONS },
-  );
-  if (!result) return false;
-  if (result.key === "kill") {
-    plan.preferredKills = plan.detachable;
-    plan.detachable = [];
-  }
-  return true;
+// applyCloseDecision moves the running terminals that could go to the background into the kill list when the
+// decision is to end them.
+function applyCloseDecision(plan: ClosePreferencePlan, action: "detach" | "kill"): void {
+  if (action !== "kill") return;
+  plan.preferredKills = [...plan.preferredKills, ...plan.detachable];
+  plan.detachable = [];
 }
 
 export function collectWorkspaceClose(
@@ -192,20 +179,114 @@ export function collectWorkspaceClose(
   };
 }
 
-// confirmWorkspaceClose merges unsaved content and terminal close consequences into one confirmation;
-// on cancel, no IPC is issued and no tab is closed.
+// mergeWorkspaceCloseSummaries folds the plans of several workspaces (or tab groups) into one, so a single dialog
+// confirms them all.
+export function mergeWorkspaceCloseSummaries(summaries: WorkspaceCloseSummary[]): WorkspaceCloseSummary {
+  const all = <T>(pick: (summary: WorkspaceCloseSummary) => T[]): T[] => summaries.flatMap(pick);
+  return {
+    tabs: all((s) => s.tabs),
+    dirty: all((s) => s.dirty),
+    detachable: all((s) => s.detachable),
+    preferredKills: all((s) => s.preferredKills),
+    confirmBlocked: false,
+    blocked: all((s) => s.blocked),
+    blockedKinds: [...new Set(all((s) => (s.blockedKinds ? s.blockedKinds.split("、") : [])))].join("、"),
+    cleanup: all((s) => s.cleanup),
+    unconfirmed: all((s) => s.unconfirmed),
+    dbConnIds: [...new Set(all((s) => s.dbConnIds))],
+    liveRemote: all((s) => s.liveRemote),
+    hasSqlDraft: summaries.some((s) => s.hasSqlDraft),
+    runningAiTabs: all((s) => s.runningAiTabs),
+    aiBoardKey: "",
+    aiTabIds: new Set(all((s) => [...s.aiTabIds])),
+  };
+}
+
+// The tabs whose consequences a confirmation names; a later plan is covered only when it names nothing new.
+function confirmedTabIds(summary: WorkspaceCloseSummary): Set<string> {
+  return new Set(
+    [...summary.dirty, ...summary.blocked, ...summary.liveRemote, ...summary.detachable, ...summary.preferredKills, ...summary.unconfirmed]
+      .map((tab) => tab.id),
+  );
+}
+
+// closeCoveredBy reports whether a confirmation already given (for a batch) covers this plan: no unsaved content,
+// terminal or AI task it would end was added since.
+export function closeCoveredBy(plan: WorkspaceCloseSummary, confirmed: WorkspaceCloseSummary): boolean {
+  const ids = confirmedTabIds(confirmed);
+  const aiIds = new Set(confirmed.runningAiTabs.map((tab) => tab.id));
+  return (
+    [...confirmedTabIds(plan)].every((id) => ids.has(id)) &&
+    (!plan.hasSqlDraft || confirmed.hasSqlDraft) &&
+    plan.runningAiTabs.every((tab) => aiIds.has(tab.id))
+  );
+}
+
+// WorkspaceClosePreconfirmed closes a workspace under a batch confirmation: the decision for its running terminals
+// and the plan that was confirmed. A plan that names something new is confirmed again.
+export interface WorkspaceClosePreconfirmed {
+  action: "detach" | "kill";
+  confirmed: WorkspaceCloseSummary;
+}
+
+export function applyPreconfirmedClose(plan: WorkspaceCloseSummary, preconfirmed: WorkspaceClosePreconfirmed): boolean {
+  if (!closeCoveredBy(plan, preconfirmed.confirmed)) return false;
+  plan.confirmBlocked = false;
+  applyCloseDecision(plan, preconfirmed.action);
+  return true;
+}
+
+// The decision a confirmed batch took for running terminals that could go to the background.
+export function confirmedCloseAction(summary: WorkspaceCloseSummary): "detach" | "kill" {
+  return summary.preferredKills.length > 0 || getTerminalPrefs().closeAction === "kill" ? "kill" : "detach";
+}
+
+// confirmWorkspaceClose merges unsaved content, terminal close consequences and, when the preference asks, the
+// background-or-end choice into one dialog; on cancel, no IPC is issued and no tab is closed.
 export async function confirmWorkspaceClose(
   summary: WorkspaceCloseSummary,
   title: string,
   detachOnly = false,
+  dialogTitle = tr("关闭「{title}」", { title }),
 ): Promise<boolean> {
-  if (detachOnly) {
-    summary.preferredKills = [];
-    summary.confirmBlocked = false;
-  } else if (!(await applyClosePreference(summary, tr("关闭「{title}」", { title })))) return false;
+  const action = detachOnly ? "detach" : getTerminalPrefs().closeAction;
+  summary.confirmBlocked = action !== "kill" && !detachOnly;
+  if (detachOnly) summary.preferredKills = [];
+  if (action === "kill") applyCloseDecision(summary, "kill");
+  const choose = action === "ask" && summary.detachable.length > 0;
+  const lines = workspaceCloseLines(summary, !choose);
+  if (choose) {
+    const { askChoiceRemember } = await import("../../ui/dialogs");
+    const question = tr("{length} 个终端的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。", { length: summary.detachable.length });
+    const result = await askChoiceRemember(lines.length > 0 ? `${question}\n\n${lines.join("\n")}` : question, {
+      title: dialogTitle,
+      choices: CLOSE_CHOICE_OPTIONS,
+      rememberLabel: tr("以后都按此选择"),
+    });
+    if (!result) return false;
+    const decided = result.key === "kill" ? "kill" : "detach";
+    applyCloseDecision(summary, decided);
+    if (result.remember) setTerminalCloseAction(decided);
+    return true;
+  }
   const confirmBlocked = summary.blocked.length > 0 && summary.confirmBlocked;
   const unconfirmed = summary.unconfirmed.length;
-  if (summary.dirty.length === 0 && !confirmBlocked && !summary.hasSqlDraft && summary.runningAiTabs.length === 0 && unconfirmed === 0 && summary.liveRemote.length === 0) return true;
+  const destructive = summary.dirty.length > 0 || confirmBlocked || summary.hasSqlDraft || summary.runningAiTabs.length > 0 || summary.liveRemote.length > 0;
+  if (!destructive && unconfirmed === 0) return true;
+  const { ask } = await import("../../ui/dialogs");
+  return ask(tr("{join}\n仍要继续？", { join: lines.join("\n") }), {
+    title: dialogTitle,
+    kind: "warning",
+    confirmLabel: tr("关闭"),
+    danger: destructive || summary.preferredKills.length > 0,
+  });
+}
+
+// workspaceCloseLines lists what closing ends or moves; withDecision adds what happens to the running terminals that
+// could go to the background, once that is decided.
+function workspaceCloseLines(summary: WorkspaceCloseSummary, withDecision: boolean): string[] {
+  const confirmBlocked = summary.blocked.length > 0 && summary.confirmBlocked;
+  const unconfirmed = summary.unconfirmed.length;
   const lines: string[] = [];
   if (summary.dirty.length > 0) {
     lines.push(
@@ -224,17 +305,16 @@ export async function confirmWorkspaceClose(
   if (confirmBlocked) {
     lines.push(tr("· {length} 个{blockedKinds}终端不支持转入后台，将结束进程", { length: summary.blocked.length, blockedKinds: summary.blockedKinds }));
   }
-  if (summary.preferredKills.length > 0) {
+  if (withDecision && summary.preferredKills.length > 0) {
     lines.push(tr("· {length} 个运行中的终端将结束进程", { length: summary.preferredKills.length }));
   }
-  if (summary.detachable.length > 0) {
+  if (withDecision && summary.detachable.length > 0) {
     lines.push(tr("· {length} 个运行中的终端将转入后台", { length: summary.detachable.length }));
   }
   if (unconfirmed > 0) {
     lines.push(tr("· {unconfirmed} 个终端无法确认状态，主机上可能仍在运行，将转入后台会话", { unconfirmed }));
   }
-  const { ask } = await import("../../ui/dialogs");
-  return ask(tr("{join}\n仍要继续？", { join: lines.join("\n") }), { title: tr("关闭「{title}」", { title }), kind: "warning" });
+  return lines;
 }
 
 export async function executeWorkspaceClose(summary: WorkspaceCloseSummary): Promise<WorkspaceCloseOutcome> {
@@ -290,7 +370,8 @@ export function pushWorkspaceCloseToast(title: string, outcome: WorkspaceCloseOu
     parts.push(
       tr("{killUnreachable} 个终端所在主机已断开或无法访问，远端进程未能结束，仍在「后台会话」中，重新连接后可接管或结束", { killUnreachable: outcome.killUnreachable }),
     );
-    pushToast("error", `${deleted ? tr("已关闭「{title}」", { title }) : tr("已关闭部分标签页「{title}」", { title })}：${parts.join("，")}`);
+    // A process left running stays on screen until the user dismisses the notice.
+    pushToast("error", `${deleted ? tr("已关闭「{title}」", { title }) : tr("已关闭部分标签页「{title}」", { title })}：${parts.join("，")}`, undefined, { persistent: true });
     return;
   }
   if (parts.length === 0) return;
@@ -325,11 +406,14 @@ const CLOSE_CHOICE_OPTIONS: ChoiceOption[] = [
   { key: "kill", label: tr("直接关闭"), hint: tr("结束进程，无法恢复"), danger: true },
 ];
 
-// decided is only passed by batch close: undefined = dispatch by preference, null = batch choice canceled (keep running terminals), anything else is the unified decision.
-async function requestCloseTabWithAction(
-  id: string,
-  decided: TerminalCloseAction | null | undefined,
-): Promise<void> {
+export interface CloseRequestOptions {
+  // The close came from a key chord: every dialog focuses 取消 first, and a close that ends a running process always
+  // asks once, whatever the preferences say, so a stray chord never ends one.
+  viaShortcut?: boolean;
+}
+
+async function requestCloseTabWithAction(id: string, options: CloseRequestOptions): Promise<void> {
+  const viaShortcut = options.viaShortcut === true;
   const st = useUi.getState();
   const found = findTab(id);
   if (!found) return;
@@ -340,62 +424,70 @@ async function requestCloseTabWithAction(
     const ok = await ask(tr("「{title}」的远程桌面仍在连接。\n断开后会话结束，仍要关闭？", { title: ws.title }), {
       title: tr("关闭「{title}」", { title: ws.title }),
       kind: "warning",
+      confirmLabel: tr("断开"),
     });
     if (!ok) return;
   }
-  if (target.kind !== "terminal" || !target.tabId || target.dead) {
+  if (target.kind !== "terminal" || !target.tabId || target.dead || target.exited) {
     await st.closeTab(id);
     return;
   }
-  if (target.exited) {
-    await st.closeTab(id, decided === "kill" ? "kill" : undefined);
-    return;
-  }
-  if (decided === null) return;
   const block = detachBlockOf(target, st.sessions, ws.assetKind);
   if (block === "unattached") {
     await st.closeTab(id);
     return;
   }
+  const prefs = getTerminalPrefs();
   if (block) {
-    const action = decided ?? getTerminalPrefs().closeAction;
-    if (block === "regular" && (decided !== undefined || action !== "kill")) {
-      // A regular SSH terminal has a single outcome, so offer only the red close action.
-      const { askChoice } = await import("../../ui/dialogs");
-      const choice = await askChoice(tr("「{title}」是临时终端，进程随连接结束，不能转到后台。", { title: target.title }), {
-        title: tr("关闭「{title}」", { title: target.title }),
-        level: "warning",
-        choices: [{ key: "kill", label: tr("直接关闭"), hint: tr("结束进程，无法恢复"), danger: true }],
-      });
-      if (choice !== "kill") return;
-    } else if (decided !== undefined || action !== "kill") {
+    if (block === "regular") {
+      if (viaShortcut || (prefs.closeAction !== "kill" && prefs.confirmTemporaryClose)) {
+        // A regular SSH terminal has a single outcome, so offer only the red close action.
+        const { askChoiceRemember } = await import("../../ui/dialogs");
+        const choice = await askChoiceRemember(tr("「{title}」是临时终端，进程随连接结束，不能转到后台。", { title: target.title }), {
+          title: tr("关闭「{title}」", { title: target.title }),
+          level: "warning",
+          choices: [{ key: "kill", label: tr("直接关闭"), hint: tr("结束进程，无法恢复"), danger: true }],
+          // A chord always asks, so the dialog it opens offers no way to stop asking.
+          rememberLabel: viaShortcut ? undefined : tr("不再询问"),
+          focusCancel: viaShortcut,
+        });
+        if (choice?.key !== "kill") return;
+        if (choice.remember) setTerminalConfirmTemporaryClose(false);
+      }
+    } else if (viaShortcut || prefs.closeAction !== "kill") {
       const { ask } = await import("../../ui/dialogs");
       const ok = await ask(
         tr("「{title}」是{value}终端，不支持转入后台。\n关闭会结束这个进程，仍要关闭？", { title: target.title, value: detachBlockLabel(block) }),
-        { title: tr("关闭「{title}」", { title: target.title }), kind: "warning" },
+        { title: tr("关闭「{title}」", { title: target.title }), kind: "warning", confirmLabel: tr("结束进程") },
       );
       if (!ok) return;
     }
     await st.closeTab(id, "kill");
     return;
   }
-  let action = decided;
-  if (action === undefined) {
-    action = getTerminalPrefs().closeAction;
-    if (action === "ask") {
-      const { askChoiceRemember } = await import("../../ui/dialogs");
-      const result = await askChoiceRemember(
-        tr("「{title}」的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。", { title: target.title }),
-        {
-          title: tr("关闭「{title}」", { title: target.title }),
-          rememberLabel: tr("以后都按此选择"),
-          choices: CLOSE_CHOICE_OPTIONS,
-        },
-      );
-      if (!result) return;
-      action = result.key === "kill" ? "kill" : "detach";
-      if (result.remember) setTerminalCloseAction(action);
-    }
+  let action: "detach" | "kill" = prefs.closeAction === "kill" ? "kill" : "detach";
+  if (prefs.closeAction === "ask") {
+    const { askChoiceRemember } = await import("../../ui/dialogs");
+    const result = await askChoiceRemember(
+      tr("「{title}」的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。", { title: target.title }),
+      {
+        title: tr("关闭「{title}」", { title: target.title }),
+        rememberLabel: tr("以后都按此选择"),
+        choices: CLOSE_CHOICE_OPTIONS,
+        focusCancel: viaShortcut,
+      },
+    );
+    if (!result) return;
+    action = result.key === "kill" ? "kill" : "detach";
+    if (result.remember) setTerminalCloseAction(action);
+  } else if (action === "kill" && viaShortcut) {
+    const { ask } = await import("../../ui/dialogs");
+    const ok = await ask(tr("结束「{title}」里的进程？\n\n进程会被终止，无法恢复。", { title: target.title }), {
+      title: tr("关闭「{title}」", { title: target.title }),
+      kind: "warning",
+      confirmLabel: tr("结束进程"),
+    });
+    if (!ok) return;
   }
   if (action === "kill") {
     await st.closeTab(id, "kill");
@@ -468,42 +560,81 @@ export async function reconcileTerminalCloseState(ids: string[]): Promise<void> 
   }
 }
 
-export async function requestCloseTab(id: string): Promise<void> {
+export async function requestCloseTab(id: string, options: CloseRequestOptions = {}): Promise<void> {
   await reconcileTerminalCloseState([id]);
-  await requestCloseTabWithAction(id, undefined);
+  await requestCloseTabWithAction(id, options);
 }
 
+// requestCloseTabs closes several tabs (关闭左侧 / 右侧标签页) as one batch: it plans every close, asks once for all of
+// them, then closes. Cancel closes nothing.
 export async function requestCloseTabs(ids: string[]): Promise<void> {
   await reconcileTerminalCloseState(ids);
   const st = useUi.getState();
   for (const id of ids) {
     if (findTab(id)?.tab.closeError) st.updateTab(id, { closeError: undefined });
   }
-  let decided: TerminalCloseAction | null | undefined;
-  if (getTerminalPrefs().closeAction === "ask") {
-    const pending = ids.filter((id) => {
-      const found = findTab(id);
-      return (
-        found !== null &&
-        isRunningTerminal(found.tab) &&
-        !detachBlockOf(found.tab, st.sessions, found.ws.assetKind)
-      );
-    });
-    if (pending.length > 0) {
-      const { askChoiceRemember } = await import("../../ui/dialogs");
-      const result = await askChoiceRemember(
-        tr("{length} 个终端的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。", { length: pending.length }),
-        { title: tr("关闭终端标签页"), choices: CLOSE_CHOICE_OPTIONS },
-      );
-      decided = result ? (result.key === "kill" ? "kill" : "detach") : null;
-    }
-  }
+  const groups = new Map<string, { ws: Workspace; tabs: AppTab[] }>();
   for (const id of ids) {
-    await requestCloseTabWithAction(id, decided);
+    const found = findTab(id);
+    if (!found) continue;
+    const group = groups.get(found.ws.id) ?? { ws: found.ws, tabs: [] };
+    group.tabs.push(found.tab);
+    groups.set(found.ws.id, group);
   }
+  if (groups.size === 0) return;
+  // Workspace-level content (SQL draft, AI tabs, database connections) stays with the workspace; the database tabs in
+  // the batch disconnect through their own close.
+  const plan = mergeWorkspaceCloseSummaries(
+    [...groups.values()].map(({ ws, tabs }) => ({
+      ...collectWorkspaceClose(tabs, ws.assetKind, ws.kind, ws.id),
+      hasSqlDraft: false,
+      sqlDraft: undefined,
+      runningAiTabs: [],
+      aiTabIds: new Set<string>(),
+      dbConnIds: [],
+    })),
+  );
+  const title = plan.tabs.every((tab) => tab.kind === "terminal")
+    ? tr("关闭终端标签页")
+    : tr("关闭 {length} 个标签页", { length: plan.tabs.length });
+  if (!(await confirmWorkspaceClose(plan, "", false, title))) return;
+  const outcome = await executeWorkspaceClose(plan);
+  const handled = new Set(
+    [...plan.detachable, ...plan.unconfirmed, ...plan.preferredKills, ...plan.blocked, ...plan.cleanup].map((tab) => tab.id),
+  );
+  for (const tab of plan.tabs) {
+    if (!handled.has(tab.id)) await useUi.getState().closeTab(tab.id);
+  }
+  const first = [...groups.values()][0].ws;
+  pushWorkspaceCloseToast(groups.size === 1 ? first.title : tr("多个工作区"), outcome, false);
   const failed = ids.filter((id) => findTab(id)?.tab.closeError).length;
   if (failed > 0) {
     useUi.getState().pushToast("error", tr("{failed} 个标签页未能关闭，已保留并在标签页上标出原因", { failed }));
+  }
+}
+
+// closeWorkspaces closes several workspaces (关闭全部工作区) as one batch: one dialog confirms everything they would
+// end, then each closes under that decision. Cancel closes nothing; a workspace that gained content since asks again.
+export async function closeWorkspaces(ids: string[]): Promise<void> {
+  const present = (id: string) => useUi.getState().workspaces.find((w) => w.id === id);
+  const targets = ids.filter((id) => present(id));
+  if (targets.length === 0) return;
+  if (targets.length === 1) {
+    await useUi.getState().closeWorkspace(targets[0]);
+    return;
+  }
+  await reconcileTerminalCloseState(targets.flatMap((id) => present(id)?.panes.flatMap((p) => p.tabs.map((tab) => tab.id)) ?? []));
+  const summaries = new Map<string, WorkspaceCloseSummary>();
+  for (const id of targets) {
+    const ws = present(id);
+    if (ws) summaries.set(id, collectWorkspaceClose(ws.panes.flatMap((p) => p.tabs), ws.assetKind, ws.kind, ws.id));
+  }
+  if (summaries.size === 0) return;
+  const merged = mergeWorkspaceCloseSummaries([...summaries.values()]);
+  if (!(await confirmWorkspaceClose(merged, "", false, tr("关闭 {length} 个工作区", { length: summaries.size })))) return;
+  const action = confirmedCloseAction(merged);
+  for (const [id, confirmed] of summaries) {
+    await useUi.getState().closeWorkspace(id, { action, confirmed });
   }
 }
 
@@ -520,6 +651,7 @@ export async function requestKillTab(id: string): Promise<void> {
   const ok = await ask(tr("结束「{title}」里的进程？\n\n进程会被终止，无法恢复。", { title: target.title }), {
     title: tr("结束进程"),
     kind: "warning",
+    confirmLabel: tr("结束进程"),
   });
   if (!ok) return;
   const report: CloseTabReport = {};
@@ -541,6 +673,7 @@ export async function requestKillWorkspaceTerminals(workspaceId: string): Promis
   const ok = await ask(tr("结束「{title}」里 {length} 个终端的进程？\n\n进程会被终止，无法恢复。", { title: before.title, length: live.length }), {
     title: tr("结束全部终端进程"),
     kind: "warning",
+    confirmLabel: tr("结束进程"),
   });
   if (!ok) return;
   // The dialog can stay open for a while; resolve session kinds from the state at confirmation time.

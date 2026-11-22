@@ -316,6 +316,9 @@ export interface TerminalPrefs {
   // Which macOS Option key sends Meta (ESC + key) in the terminal; the other types the layout's characters. A device
   // setting: it follows this machine's keyboard, so it is never synced.
   macOptionMeta: TerminalMacOptionMeta;
+  // Asks before closing a running 临时终端 (its process always ends with the tab). Turned off from the close dialog's
+  // 不再询问; a close started by a key chord still asks. A device setting, never synced.
+  confirmTemporaryClose: boolean;
 }
 
 export type TerminalMacOptionMeta = "left" | "both" | "off";
@@ -345,6 +348,7 @@ const TERMINAL_DEFAULTS: TerminalPrefs = {
   durableHistoryMiB: null,
   trzsz: true,
   macOptionMeta: "left",
+  confirmTemporaryClose: true,
 };
 
 // Any value that is not one of the options, including a missing one, is the default.
@@ -407,6 +411,7 @@ function loadTerminal(): TerminalPrefs {
     durableHistoryMiB: normalizeDurableHistoryMiB(durableHistory),
     trzsz: local.trzsz !== false,
     macOptionMeta: local.macOptionMeta === "both" || local.macOptionMeta === "off" ? local.macOptionMeta : TERMINAL_DEFAULTS.macOptionMeta,
+    confirmTemporaryClose: local.confirmTemporaryClose !== false,
   };
 }
 
@@ -559,6 +564,18 @@ export function setTerminalTrzsz(value: boolean): void {
     const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
     const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
     localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, trzsz: value }));
+  } catch {
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+export function setTerminalConfirmTemporaryClose(value: boolean): void {
+  if (terminalPrefs.confirmTemporaryClose === value) return;
+  terminalPrefs = { ...terminalPrefs, confirmTemporaryClose: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, confirmTemporaryClose: value }));
   } catch {
   }
   for (const listener of terminalListeners) listener();
