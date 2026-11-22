@@ -292,7 +292,7 @@ describe("buffered input with an input method", () => {
   }
 
   afterEach(() => {
-    configureImeCommitEnter({ webkit: null });
+    configureImeCommitEnter({ webkit: null, now: () => performance.now() });
     vi.useRealTimers();
   });
 
@@ -332,7 +332,7 @@ describe("buffered input with an input method", () => {
   });
 
   it("ignores the Enter WebKit delivers right after compositionend, and the next Enter sends", () => {
-    configureImeCommitEnter({ webkit: true });
+    configureImeCommitEnter({ webkit: true, now: () => 0 });
     renderBar();
     click(button("缓冲输入"));
     const field = composer()!;
