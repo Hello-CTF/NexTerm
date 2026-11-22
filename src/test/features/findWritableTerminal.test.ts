@@ -51,7 +51,20 @@ describe("findWritableTerminal", () => {
       terminal("live", { shell: "powershell" }),
     ]);
 
-    expect(findWritableTerminal("s1")).toEqual({ tabId: "kernel-live", shell: "powershell" });
+    expect(findWritableTerminal("s1")).toEqual({ id: "live", tabId: "kernel-live", shell: "powershell" });
+  });
+
+  it("prefers the focused pane over the first pane in order", () => {
+    seed([terminal("left")]);
+    useUi.setState((state) => ({
+      workspaces: state.workspaces.map((workspace) => ({
+        ...workspace,
+        panes: [...workspace.panes, { id: "right-pane", tabs: [terminal("right")], activeTabId: "right" }],
+        activePaneId: "right-pane",
+      })),
+    }));
+
+    expect(findWritableTerminal("s1")?.id).toBe("right");
   });
 
   it("returns null when every terminal is dead or exited", () => {

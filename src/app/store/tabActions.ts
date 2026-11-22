@@ -225,20 +225,22 @@ export function takePendingDirectory(storeTabId: string): string | null {
   return null;
 }
 
+// findWritableTerminal picks a live terminal of the session: the active workspace first, then its focused pane and that
+// pane's active tab, so text goes where the user is looking rather than to the first terminal in tab order.
 export function findWritableTerminal(
   sessionId: string,
-): { tabId: string; shell: "powershell" | "cmd" | "posix" | "unknown" } | null {
+): { id: string; tabId: string; shell: "powershell" | "cmd" | "posix" | "unknown" } | null {
   const st = useUi.getState();
-  for (const w of st.workspaces) {
-    if (w.sessionId !== sessionId) continue;
-    for (const p of w.panes) {
-      const ordered = [
-        ...p.tabs.filter((t) => t.id === p.activeTabId),
-        ...p.tabs.filter((t) => t.id !== p.activeTabId),
-      ];
-      for (const t of ordered) {
+  const first = <T>(items: T[], pick: (item: T) => boolean) => [...items.filter(pick), ...items.filter((item) => !pick(item))];
+  const workspaces = first(
+    st.workspaces.filter((w) => w.sessionId === sessionId),
+    (w) => w.id === st.activeWorkspaceId,
+  );
+  for (const w of workspaces) {
+    for (const p of first(w.panes, (pane) => pane.id === w.activePaneId)) {
+      for (const t of first(p.tabs, (tab) => tab.id === p.activeTabId)) {
         if (t.kind === "terminal" && t.tabId && !t.dead && !t.exited) {
-          return { tabId: t.tabId, shell: t.shell ?? "unknown" };
+          return { id: t.id, tabId: t.tabId, shell: t.shell ?? "unknown" };
         }
       }
     }
