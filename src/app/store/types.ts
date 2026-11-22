@@ -368,7 +368,9 @@ export interface WorkspaceDocks {
 export interface UiState {
   leftOpen: boolean;
   leftMode: LeftMode;
-  // leftOverride is a transient, never persisted switch of a host workspace sidebar away from its file tree.
+  // leftOverride is the user's switch of a host workspace sidebar from its file tree to the asset tree or credentials.
+  // It stays across connects, workspace switches and work in the main area until the user picks the file tree again
+  // from the rail; it is not persisted across restarts.
   leftOverride: LeftMode | null;
   setLeftOverride: (m: LeftMode | null) => void;
   rightOpen: boolean;
