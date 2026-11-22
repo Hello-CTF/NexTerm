@@ -4,7 +4,7 @@ import type { ChoiceOption } from "../../ui/dialogs";
 import { dirtyFileEditors } from "../../features/files/editorGuards";
 import { runningAiTabs as getRunningAiTabs, type AiCloseTab } from "../../features/ai/runOwnership";
 import { getTerminalPrefs, setTerminalCloseAction, setTerminalConfirmTemporaryClose } from "../preferences";
-import { GLOBAL_AI_BOARD_KEY } from "./model";
+import { GLOBAL_AI_BOARD_KEY, REMOTE_KILL_SKIPPED_TOAST } from "./model";
 import { isUnconfirmedDurableExit } from "./durableExit";
 import { findTab } from "./tabActions";
 import { useRemoteStatus } from "../../features/remote/remoteStatus";
@@ -373,7 +373,7 @@ export function pushWorkspaceCloseToast(title: string, outcome: WorkspaceCloseOu
       tr("{killUnreachable} 个终端所在主机已断开或无法访问，远端进程未能结束，仍在「后台会话」中，重新连接后可接管或结束", { killUnreachable: outcome.killUnreachable }),
     );
     // A process left running stays on screen until the user dismisses the notice.
-    pushToast("error", `${deleted ? tr("已关闭「{title}」", { title }) : tr("已关闭部分标签页「{title}」", { title })}：${parts.join("，")}`, undefined, { persistent: true });
+    pushToast("error", `${deleted ? tr("已关闭「{title}」", { title }) : tr("已关闭部分标签页「{title}」", { title })}：${parts.join("，")}`, undefined, { persistent: true, group: REMOTE_KILL_SKIPPED_TOAST });
     return;
   }
   if (parts.length === 0) return;

@@ -17,6 +17,7 @@ import {
   migrateToolTabs,
   migrateWorkspaceFileLocators,
   neighbourAfterRemoval,
+  REMOTE_KILL_SKIPPED_TOAST,
   nextBroadcastGeneration,
   pickPaneForTab,
   pruneBroadcastToWorkspaces,
@@ -261,7 +262,7 @@ export function createTabSlice(set: UiSet, get: UiGet) {
             "error",
             tr("「{title}」已在本地关闭，但主机已断开或无法访问，远端进程未能结束；它仍在「后台会话」中，重新连接后可接管或结束", { title: target.title }),
             undefined,
-            { persistent: true },
+            { persistent: true, group: REMOTE_KILL_SKIPPED_TOAST },
           );
         }
       } else if (remoteCloseUnknown && !suppressErrorToast) {

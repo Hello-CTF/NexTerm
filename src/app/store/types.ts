@@ -273,10 +273,16 @@ export interface ToastItem {
   held?: boolean;
   // A persistent toast has no timer and stays until the user dismisses it; newer toasts never push it out.
   persistent?: boolean;
+  // The group of a persistent toast: a newer one of the same group replaces it and counts how many there were.
+  group?: string;
+  repeat?: number;
 }
 
 export interface ToastOptions {
+  // Keeps the toast until dismissed. At most one persistent toast per group is shown (the text when no group is given),
+  // so they cannot fill the stack.
   persistent?: boolean;
+  group?: string;
 }
 
 export interface TextPromptState {
