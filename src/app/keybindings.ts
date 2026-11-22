@@ -633,8 +633,32 @@ export interface AppKeybindingHit {
 }
 
 // AltGr reports Ctrl+Alt on Windows; an AltGr chord types a character and is never an app shortcut.
+// The US-layout characters of the physical keys app chords use, unshifted and shifted.
+const CODE_CHARACTERS: Record<string, [string, string]> = {
+  Digit1: ["1", "!"], Digit2: ["2", "@"], Digit3: ["3", "#"], Digit4: ["4", "$"], Digit5: ["5", "%"],
+  Digit6: ["6", "^"], Digit7: ["7", "&"], Digit8: ["8", "*"], Digit9: ["9", "("], Digit0: ["0", ")"],
+  Minus: ["-", "_"], Equal: ["=", "+"], BracketLeft: ["[", "{"], BracketRight: ["]", "}"], Backslash: ["\\", "|"],
+  Semicolon: [";", ":"], Quote: ["'", "\""], Comma: [",", "<"], Period: [".", ">"], Slash: ["/", "?"], Backquote: ["`", "~"],
+};
+// ASCII characters layouts type with AltGr on the digit and symbol keys (German AltGr+7 is {, French AltGr+0 is @).
+const ALTGR_SYMBOLS = new Set(["{", "}", "[", "]", "\\", "|", "@", "~", "#", "^", "`"]);
+
+/**
+ * Whether the key typed a third-level (AltGr) character. Windows reports AltGr as Ctrl+Alt, and WebView2 / Chromium
+ * do not always set the AltGraph state when it is pressed as left Ctrl + left Alt, so a Ctrl+Alt chord whose key is an
+ * AltGr character (a brace or bracket on a digit key, a non-ASCII symbol, a non-ASCII letter on a letter key) counts
+ * too. A layout's own unshifted characters (French & é on the digit row) and US Ctrl+Alt+7 stay shortcuts.
+ */
 function isAltGraph(event: KeyEventLike): boolean {
-  return event.getModifierState?.("AltGraph") === true;
+  if (event.getModifierState?.("AltGraph") === true) return true;
+  if (!event.ctrlKey || !event.altKey || event.metaKey || event.key.length !== 1) return false;
+  const code = event.code ?? "";
+  const key = event.key;
+  if (/^Key[A-Z]$/.test(code)) return !/^[A-Za-z]$/.test(key);
+  const chars = CODE_CHARACTERS[code];
+  if (!chars || key === chars[0] || (event.shiftKey && key === chars[1])) return false;
+  if (ALTGR_SYMBOLS.has(key)) return true;
+  return key.charCodeAt(0) > 0x7e && !/\p{L}/u.test(key);
 }
 
 // A chord someone chose (an account or device override, or a server default) wins over a built-in default that

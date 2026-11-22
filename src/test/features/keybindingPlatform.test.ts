@@ -204,6 +204,24 @@ describe("desktop default keymap", () => {
       expect(matchAppKeybinding(altGr), `${code} app`).toBeNull();
       expect(matchTerminalWithheldKeybinding(altGr), `${code} terminal`).toBeNull();
     }
+    // Windows left Ctrl + left Alt types the AltGr character without reporting the AltGraph state.
+    const typed: Array<[string, string]> = [
+      ["{", "Digit7"], ["[", "Digit8"], ["]", "Digit9"], ["}", "Digit0"], ["@", "Digit0"], ["~", "Digit2"], ["#", "Digit3"],
+      ["\\", "Minus"], ["}", "Equal"], ["²", "Digit2"], ["€", "Digit5"],
+    ];
+    for (const [key, code] of typed) {
+      const event = keyEvent({ key, code, ctrlKey: true, altKey: true, getModifierState: () => false });
+      expect(matchAppKeybinding(event), `${key} on ${code}`).toBeNull();
+      expect(matchTerminalWithheldKeybinding(event), `${key} on ${code} terminal`).toBeNull();
+    }
+    setKeybinding("lockApp", "Mod+Alt+q");
+    expect(matchAppKeybinding(keyEvent({ key: "@", code: "KeyQ", ctrlKey: true, altKey: true }))).toBeNull();
+    expect(matchAppKeybinding(keyEvent({ key: "q", code: "KeyQ", ctrlKey: true, altKey: true }))?.action).toBe("lockApp");
+    // A layout's own digit-row characters (French &, é) and the shifted US character stay shortcuts.
+    expect(matchAppKeybinding(keyEvent({ key: "&", code: "Digit1", ctrlKey: true, altKey: true }))?.action).toBe("switchTab");
+    expect(matchAppKeybinding(keyEvent({ key: "é", code: "Digit2", ctrlKey: true, altKey: true }))?.action).toBe("switchTab");
+    expect(matchAppKeybinding(keyEvent({ key: "7", code: "Digit7", ctrlKey: true, altKey: true }))?.action).toBe("switchTab");
+    expect(matchAppKeybinding(keyEvent({ key: "+", code: "Equal", ctrlKey: true, shiftKey: true, altKey: true }))?.action).toBe("equalizeSplits");
     // The same chord without AltGr is still a shortcut, so the check above is not vacuous.
     expect(matchAppKeybinding(keyEvent({ key: "1", code: "Digit1", ctrlKey: true, altKey: true }))?.action).toBe("switchTab");
   });
