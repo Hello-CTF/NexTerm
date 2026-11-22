@@ -193,6 +193,8 @@ type TreeRowProps = {
   reconnecting: boolean;
   setSize: number;
   posInSet: number;
+  // The folder row a file drag would upload into.
+  dropTarget: boolean;
   actions: TreeRowActions;
 };
 
@@ -210,6 +212,7 @@ const TreeRow = memo(function TreeRow({
   reconnecting,
   setSize,
   posInSet,
+  dropTarget,
   actions,
 }: TreeRowProps) {
   if (error) {
@@ -264,8 +267,9 @@ const TreeRow = memo(function TreeRow({
       aria-posinset={posInSet}
       data-row-path={entry.path}
       tabIndex={0}
-      data-drop-path={isDir ? entry.path : undefined}
-      className={`nx-row nx-row-oneline nx-row-reserve-actions nx-ftree-row ${isSel ? "is-selected" : ""}`}
+      data-drop-path={isDir ? entry.path : dir}
+      data-drop-target={dropTarget ? "" : undefined}
+      className={`nx-row nx-row-oneline nx-row-reserve-actions nx-ftree-row ${isSel ? "is-selected" : ""} ${dropTarget ? "bg-blue-500/10 ring-1 ring-inset ring-blue-500/40" : ""}`}
       style={{ paddingLeft: 2 + depth * 12 }}
       onClick={(e) => {
         if (actions.consumeClick()) return;
@@ -278,7 +282,8 @@ const TreeRow = memo(function TreeRow({
           return;
         }
         actions.select(entry.path);
-        if (isDir) actions.toggle(entry.path);
+        // The second click of a double-click belongs to the double-click, which enters the folder instead.
+        if (isDir && e.detail < 2) actions.toggle(entry.path);
       }}
       onDoubleClick={() => {
         if (multiMode) return;
@@ -877,7 +882,10 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       return;
     }
     if (!isEditableFile(entry.name)) {
-      pushToast("info", t("「{name}」不是文本文件，不能在线编辑；可以下载到本机后打开", { name: entry.name }));
+      pushToast("info", t("「{name}」不是文本文件，不能在线编辑；可以下载到本机后打开", { name: entry.name }), {
+        label: t("下载"),
+        onSelect: () => void download(entry.path),
+      });
       return;
     }
     openFileTab(sessionId, entry.path);
@@ -891,12 +899,23 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     return root ?? "";
   };
 
+  // A drop on a folder row goes into that folder, on a file row next to the file, and anywhere else into the folder
+  // the tree shows; the selection does not redirect it.
+  const dropDirAt = (target: EventTarget | null): string =>
+    (target instanceof Element ? target.closest<HTMLElement>("[data-drop-path]")?.dataset.dropPath : undefined) ?? root ?? "";
+  const [dropDir, setDropDir] = useState<string | null>(null);
+  const announceDrop = (dir: string) => {
+    setDropDir(null);
+    if (dir) pushToast("info", t("上传到 {dir}", { dir }));
+  };
+
   const treeDropRef = useRef<HTMLDivElement>(null);
   useNativeFileDrop(sessionId, {
     surface: treeDropRef,
-    fallbackDir: targetDir,
+    fallbackDir: () => root ?? "",
     knownSiblings: (dir) => dirMap.get(dir),
     onSettled: () => refresh(),
+    onDrop: announceDrop,
   });
 
   const existingNameMessage = (name: string) =>
@@ -1006,12 +1025,13 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
     noteHtml5Drop();
-    const row = (event.target as HTMLElement).closest<HTMLElement>("[data-drop-path]");
-    const dir = row?.dataset.dropPath ?? targetDir();
+    const dir = dropDirAt(event.target);
     if (!dir) {
+      setDropDir(null);
       pushToast("info", t("请先选择实际目录再上传"));
       return;
     }
+    announceDrop(dir);
     void dropFolderUpload({
       sessionId,
       dir,
@@ -1043,6 +1063,11 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   };
 
   const batchDownload = async (files: FileEntryDto[]) => {
+    // The desktop picks one local folder for the whole selection instead of asking once per file.
+    if (folderDownloadAvailable()) {
+      void startFolderDownload(sessionId, files);
+      return;
+    }
     if (batchBusy.current || files.some((f) => entryIsDir(f))) return;
     batchBusy.current = true;
     try {
@@ -1356,24 +1381,23 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       title: t("已选 {length} 项", { length: items.length }),
       items: [
         { kind: "group", label: t("已选 {length} 项", { length: items.length }) },
-        {
-          kind: "item",
-          label: t("下载 {length} 个文件", { length: items.length }),
-          icon: <IconDownload size={13} />,
-          hint: hasDir ? t("目录请单独打包下载") : undefined,
-          disabled: hasDir || sessionGone,
-          onSelect: () => void batchDownload(items),
-        },
-        ...(folderDownloadAvailable()
-          ? [{
+        folderDownloadAvailable()
+          ? {
               kind: "item" as const,
               label: t("下载到文件夹…"),
               icon: <IconDownload size={13} />,
               hint: t("保留目录结构"),
               disabled: sessionGone,
               onSelect: () => void startFolderDownload(sessionId, items),
-            }]
-          : []),
+            }
+          : {
+              kind: "item" as const,
+              label: t("下载 {length} 个文件", { length: items.length }),
+              icon: <IconDownload size={13} />,
+              hint: hasDir ? t("目录请单独打包下载") : undefined,
+              disabled: hasDir || sessionGone,
+              onSelect: () => void batchDownload(items),
+            },
         { kind: "separator" },
         { kind: "group", label: t("危险操作") },
         {
@@ -1534,6 +1558,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         label: t("删除"),
         icon: <IconTrash size={13} />,
         danger: true,
+        hint: sessionGone ? goneHint : undefined,
+        disabled: sessionGone,
         onSelect: () => void remove(entry.path),
       },
     );
@@ -1753,6 +1779,10 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       return true;
     },
     deleteFrom: (path) => {
+      if (sessionGone) {
+        pushToast("info", goneHint);
+        return;
+      }
       if (pickedEntries.length > 1 && sel.paths.has(path)) void batchDelete(pickedEntries);
       else void remove(path);
     },
@@ -1822,6 +1852,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         reconnecting={reconnecting}
         setSize={r.setSize}
         posInSet={r.posInSet}
+        dropTarget={Boolean(r.entry && dropDir !== null && entryIsDir(r.entry) && r.entry.path === dropDir)}
         actions={rowActions}
       />
     );
@@ -2042,8 +2073,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
           </button>
           <button
             className="nx-btn nx-btn-sm"
-            disabled={pickedHasDir || sessionGone || pickedEntries.length === 0}
-            title={pickedHasDir ? t("目录请单独打包下载") : t("下载选中的文件")}
+            disabled={(pickedHasDir && !folderDownloadAvailable()) || sessionGone || pickedEntries.length === 0}
+            title={folderDownloadAvailable() ? t("下载到文件夹…") : pickedHasDir ? t("目录请单独打包下载") : t("下载选中的文件")}
             onClick={() => void batchDownload(pickedEntries)}
           >
             <IconDownload size={13} />
@@ -2075,6 +2106,11 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
           if (computer || !e.dataTransfer.types.includes("Files")) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = "copy";
+          const dir = dropDirAt(e.target);
+          setDropDir((current) => (current === dir ? current : dir));
+        }}
+        onDragLeave={(e) => {
+          if (!(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))) setDropDir(null);
         }}
         onDrop={dropUpload}
       >
@@ -2152,14 +2188,20 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       </div>
 
       <div className="flex h-[24px] shrink-0 items-center gap-2 border-t border-neutral-800/60 px-2.5 text-[10.5px] text-neutral-500">
-        <span>{t("{entryCount} 项", { entryCount })}</span>
-        {pickedEntries.length > 1 && (
+        {dropDir ? (
+          <span className="min-w-0 flex-1 truncate text-blue-300" role="status" title={dropDir}>
+            {t("上传到 {dir}", { dir: dropDir })}
+          </span>
+        ) : (
+          <span>{t("{entryCount} 项", { entryCount })}</span>
+        )}
+        {!dropDir && pickedEntries.length > 1 && (
           <>
             <span className="text-neutral-700">|</span>
             <span className="shrink-0 whitespace-nowrap">{t("已选 {length} 项", { length: pickedEntries.length })}</span>
           </>
         )}
-        {pickedEntries.length <= 1 && selectedEntry && (
+        {!dropDir && pickedEntries.length <= 1 && selectedEntry && (
           <>
             <span className="text-neutral-700">|</span>
             <span className="min-w-0 flex-1 truncate" title={selectedEntry.path}>

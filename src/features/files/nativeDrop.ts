@@ -55,6 +55,8 @@ export interface NativeDropSurface {
   fallbackDir: () => string;
   knownSiblings: (dir: string) => FileEntryDto[] | undefined;
   onSettled: (dir: string) => void;
+  // onDrop learns the directory a drop resolved to before the upload starts.
+  onDrop?: (dir: string) => void;
 }
 
 async function handleNativeDrop(
@@ -107,6 +109,7 @@ export function useNativeFileDrop(sessionId: string, surface: NativeDropSurface)
       if (point?.closest("[data-file-drop-target]") !== el) return;
       const row = point?.closest<HTMLElement>("[data-drop-path]");
       const dir = row?.dataset.dropPath ?? current.fallbackDir();
+      current.onDrop?.(dir);
       void handleNativeDrop(sessionId, dir, event.paths, current);
     }).then((unlisten) => {
       if (disposed) unlisten();
