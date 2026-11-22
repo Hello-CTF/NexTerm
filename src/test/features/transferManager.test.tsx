@@ -359,7 +359,7 @@ describe("unified transfer queue panel (FileTree)", () => {
     expect(pathTitle).toContain(LOCAL_FILE);
     expect(pathTitle).toContain("~/nginx-access.log");
     expect(pathTitle.indexOf(LOCAL_FILE)).toBeLessThan(pathTitle.indexOf("~/nginx-access.log"));
-    expect(panel!.textContent).toContain("1 进行中");
+    expect(panel!.textContent).toContain("1 个进行中");
 
     resolveUpload(42_118);
     await waitFor(() => expect(panelRows(mounted!.container)[0]?.textContent).toContain("已完成"));
@@ -423,7 +423,7 @@ describe("unified transfer queue panel (FileTree)", () => {
     const pathTitle = panelTitles(panel!);
     expect(pathTitle).toContain(LOCAL_SAVE);
     expect(pathTitle.indexOf("~/a.txt")).toBeLessThan(pathTitle.indexOf(LOCAL_SAVE));
-    expect(panel!.textContent).toContain("1 进行中");
+    expect(panel!.textContent).toContain("1 个进行中");
 
     resolveDownload(10);
     await waitFor(() =>

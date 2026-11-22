@@ -378,7 +378,7 @@ func TestAccountChangeStopsExposureForGood(t *testing.T) {
 	if status.State != StateOff {
 		t.Fatalf("status = %+v, want off after the account changed", status)
 	}
-	if !strings.Contains(status.Reason, "吊销") {
+	if !strings.Contains(status.Reason, "撤销") {
 		t.Fatalf("reason = %q, want advice to revoke the device under the earlier account", status.Reason)
 	}
 	select {
@@ -583,7 +583,7 @@ func TestFailedFailClosedRevokeNamesTheDevice(t *testing.T) {
 	runners := &runnerLog{}
 	controller := newTestController(t, host, runners)
 	_, err := controller.SetEnabled(context.Background(), true)
-	if err == nil || !strings.Contains(err.Error(), "device-1") || !strings.Contains(err.Error(), "请在设备列表中吊销") {
+	if err == nil || !strings.Contains(err.Error(), "device-1") || !strings.Contains(err.Error(), "请在设备列表中撤销") {
 		t.Fatalf("enable error = %v, want the device ID and how to revoke it", err)
 	}
 	if status := controller.Status(); !strings.Contains(status.Reason, "device-1") {

@@ -84,7 +84,7 @@ describe("background session badge and page share one rule", () => {
       await waitForRendered(() => expect(rows(view.container)).toBe(2));
       expect(view.container.textContent).toContain("甲-持久");
       expect(view.container.textContent).not.toContain("本机构建");
-      expect(view.container.querySelector('[data-testid="background-count"]')?.textContent).toBe("2 个可恢复");
+      expect(view.container.querySelector('[data-testid="background-count"]')?.textContent).toBe("2 个可接管");
 
       view.unmount();
       const other = mount(createElement(Probe, { id: "wB" }));
