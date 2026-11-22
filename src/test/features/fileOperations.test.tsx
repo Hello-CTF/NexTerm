@@ -410,9 +410,10 @@ function openRowMenu(container: HTMLElement, path: string): void {
 }
 
 function menuItem(container: ParentNode, label: string): HTMLButtonElement {
-  const button = [...container.querySelectorAll('[role="menuitem"]')].find((b) =>
-    b.textContent?.includes(label),
-  );
+  // The shortest item containing the label wins, so 新建文件 does not pick 新建文件夹.
+  const button = [...container.querySelectorAll('[role="menuitem"]')]
+    .filter((b) => b.textContent?.includes(label))
+    .sort((a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0))[0];
   if (!button) throw new Error(`Menu item not found: ${label}`);
   return button as HTMLButtonElement;
 }

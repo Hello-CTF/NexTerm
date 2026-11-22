@@ -38,7 +38,7 @@ describe("Device management - desktop logged out", () => {
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("登录服务端账号后可用") ?? false);
 
-    expect(document.body.textContent).toContain("账号同步");
+    expect(document.body.textContent).toContain("账号与同步");
     expect(mocks.fetch).not.toHaveBeenCalled();
 
     const guide = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("前往「设置"));
