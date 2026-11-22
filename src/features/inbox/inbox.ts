@@ -33,6 +33,9 @@ export interface InboxEntry {
   detail: string;
   // The session's host from the cross-host listing; a session no tab here shows is opened through it.
   host?: AggregateHost;
+  // The listing's own custom and program window titles, which name a tab opened from the entry.
+  listedTitle?: string;
+  listedWindowTitle?: string;
   // No tab in this app reports on the session; only the cross-host listing knows it.
   listedOnly?: boolean;
 }
@@ -103,7 +106,7 @@ export function buildInbox(
       awareness,
       badge,
       detail: attentionDetail(awareness),
-      ...(row ? { host: row.host } : {}),
+      ...(row ? { host: row.host, listedTitle: row.session.title, listedWindowTitle: row.session.windowTitle } : {}),
     });
   }
   // A session no tab here reports on comes from the cross-host listing; a tab's own state wins whenever it has one.
@@ -126,6 +129,8 @@ export function buildInbox(
       badge,
       detail: attentionDetail(awareness),
       host,
+      listedTitle: session.title,
+      listedWindowTitle: session.windowTitle,
       listedOnly: true,
     });
   }
@@ -161,9 +166,11 @@ export function openInboxTab(tabId: string): boolean {
 // openAggregateEntry opens a session this client knows only from the cross-host listing as a tab: through its host's
 // connected session, or, for a device no workspace here holds, by opening the device first. It resolves to null once
 // the tab is open, or to the reason it could not be.
-export async function openAggregateEntry(entry: Pick<InboxEntry, "tabId" | "title" | "host">): Promise<string | null> {
+export async function openAggregateEntry(
+  entry: Pick<InboxEntry, "tabId" | "host" | "listedTitle" | "listedWindowTitle">,
+): Promise<string | null> {
   if (!entry.host) return t("当前客户端未打开该终端");
-  const result = await takeOverAggregateSession(entry.host, entry.tabId, entry.title);
+  const result = await takeOverAggregateSession(entry.host, entry.tabId, entry.listedTitle, entry.listedWindowTitle);
   if (result.ok) return null;
   return "canceled" in result ? null : result.error;
 }
