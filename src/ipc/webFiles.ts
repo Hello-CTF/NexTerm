@@ -111,7 +111,7 @@ async function readStagedRef(res: Response, what: string): Promise<StagedRef> {
   const body = (await res.json()) as { data?: Partial<StagedRef> };
   const id = body.data?.id;
   const path = body.data?.path;
-  if (!id || !path) throw new Error(t("{what}失败：服务端未返回 id / path", { what }));
+  if (!id || !path) throw new Error(t("{what}失败：服务返回的数据不完整，请重试", { what }));
   return { id, path };
 }
 

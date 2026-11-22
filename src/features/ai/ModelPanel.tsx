@@ -632,7 +632,7 @@ export function ModelManager({
                         id={`${fieldId}-reasoning-effort`}
                         ariaLabel={t("思考强度")}
                         className="font-mono"
-                        placeholder={t("接口地址默认")}
+                        placeholder={t("使用服务商默认值")}
                         value={draft.reasoningEffort ?? ""}
                         options={REASONING_EFFORT_PRESETS.map((value) => ({ value }))}
                         onChange={(value) => patch({ reasoningEffort: value })}
@@ -665,7 +665,7 @@ export function ModelManager({
                         min={1}
                         max={MAX_TOKENS_HARD_LIMIT}
                         step={1}
-                        placeholder={t("接口地址默认（tokens）")}
+                        placeholder={t("使用服务商默认值")}
                         value={maxTokensLabel(draft as ModelProfile)}
                         onChange={(e) => patch({ maxTokens: maxTokensFromInput(e.target.value) })}
                       />
@@ -684,7 +684,7 @@ export function ModelManager({
                             min={1}
                             max={3600}
                             step={1}
-                            placeholder={t("接口地址默认")}
+                            placeholder={t("使用服务商默认值")}
                             value={requestTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ requestTimeoutSeconds: timeoutSecondsFromInput(e.target.value, false) })}
                           />

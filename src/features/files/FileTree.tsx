@@ -226,7 +226,7 @@ const TreeRow = memo(function TreeRow({
         <div className="min-w-0 flex-1 text-[11px] leading-relaxed text-red-200">
           <div className="break-words">
             {error.gone
-              ? t("会话已在服务端删除，重试不会恢复；重新连接该主机后在此继续浏览")
+              ? t("连接已失效，请重新连接该主机后继续浏览")
               : error.message}
           </div>
           <div className="flex gap-2">
@@ -726,7 +726,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
 
   const sessionGone =
     rootsSessionGone || results.some((result) => fsErrorResource(result.error) === "session");
-  const goneHint = t("会话已在服务端删除，请重新连接该主机");
+  const goneHint = t("连接已失效，请重新连接该主机");
   const [reconnecting, setReconnecting] = useState(false);
 
   const reconnectHost = useCallback(async () => {
@@ -1132,7 +1132,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const packDownload = async (dir: string) => {
     const target = await pickTarget(`${baseName(dir)}.tar.gz`);
     if (!target) return;
-    pushToast("info", t("开始远端打包下载…"));
+    pushToast("info", t("正在主机上打包，完成后开始下载…"));
     enqueuePackDownload(sessionId, { remotePath: dir, localPath: target });
   };
 
@@ -1508,7 +1508,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         kind: "item",
         label: t("查看日志"),
         icon: <IconEye size={13} />,
-        hint: t("只读分块"),
+        hint: t("只读"),
         disabled: !isEditableFile(entry.name),
         onSelect: () => openLogTab(sessionId, entry.path),
       });
@@ -2065,8 +2065,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         </button>
         <button
           className="nx-tree-caret"
-          title={homeSupported ? t("回到主目录（~）") : t("WinRM 后端不支持 ~ 展开")}
-          aria-label={homeSupported ? t("回到主目录（~）") : t("WinRM 后端不支持 ~ 展开")}
+          title={homeSupported ? t("回到主目录（~）") : t("WinRM 主机不支持 ~（主目录）")}
+          aria-label={homeSupported ? t("回到主目录（~）") : t("WinRM 主机不支持 ~（主目录）")}
           disabled={!homeSupported || root === homeTarget}
           onClick={() => {
             if (homeSupported) navigateRoot(homeTarget);
@@ -2136,7 +2136,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
             <div className="min-w-0 flex-1 text-[11px] leading-relaxed text-red-200">
               <div className="break-words">
                 {rootsSessionGone
-                  ? t("会话已在服务端删除，重试不会恢复；重新连接该主机后在此继续浏览")
+                  ? t("连接已失效，请重新连接该主机后继续浏览")
                   : t("无法读取磁盘根信息：{value}", { value: describeError(rootsQuery.error) })}
               </div>
               <div className="flex gap-2">

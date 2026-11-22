@@ -235,7 +235,7 @@ describe("ServicesPanel", () => {
     click(target("s1"));
     click(target("s2"));
     clickButton(panel().container, "加载服务");
-    await flushUntil(() => panel().container.textContent?.includes("unsupported：无 systemd") ?? false);
+    await flushUntil(() => panel().container.textContent?.includes("不支持：主机无 systemd") ?? false);
     const row = panel().container.querySelector('tr[data-unit="nginx.service"]');
     if (!row) throw new Error("nginx row not found");
     clickButton(row, "journal");
@@ -270,7 +270,7 @@ describe("ServicesPanel", () => {
     expect(text).toContain("1 个 Windows 服务");
     expect(text).toContain("运行中");
     expect(text).toContain("自动（延迟）");
-    expect(text).not.toContain("unsupported：无 systemd");
+    expect(text).not.toContain("不支持：主机无 systemd");
     const row = panel().container.querySelector('tr[data-unit="Spooler"]');
     if (!row) throw new Error("Spooler row not found");
     const labels = Array.from(row.querySelectorAll("button")).map((button) => button.textContent);

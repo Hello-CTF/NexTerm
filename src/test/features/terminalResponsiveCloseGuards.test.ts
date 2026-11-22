@@ -596,8 +596,8 @@ describe("winrm ephemeral line tabs share the no-detach path", () => {
 
   it("closeTabHint reflects detach capability per tab kind", () => {
     seed([{ id: "p", tabs: [], activeTabId: null }], "winrm");
-    expect(closeTabHint(terminal())).toBe("关闭标签页（结束 WinRM 非交互进程）");
-    expect(closeActionHint(terminal())).toBe("结束 WinRM 非交互进程");
+    expect(closeTabHint(terminal())).toBe("关闭标签页（结束 WinRM 命令）");
+    expect(closeActionHint(terminal())).toBe("结束 WinRM 命令");
     expect(closeActionHint(execTerminal())).toBe("结束容器内命令进程");
     seed([{ id: "p", tabs: [], activeTabId: null }], "ssh");
     expect(closeTabHint(terminal())).toBe("关闭标签页（转入后台）");
@@ -628,7 +628,7 @@ describe("detach capability without session metadata", () => {
     const tab = terminal();
     seedAssetKind([{ id: "p", tabs: [tab], activeTabId: tab.id }], "winrm");
 
-    expect(closeActionHint(tab)).toBe("结束 WinRM 非交互进程");
+    expect(closeActionHint(tab)).toBe("结束 WinRM 命令");
 
     await requestCloseTab(tab.id);
 

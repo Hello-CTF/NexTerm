@@ -414,7 +414,7 @@ describe("AiSidebar automatic terminal_create opening", () => {
 
   const sendMessage = async () => {
     setInputValue(view!.container.querySelector("textarea")!, "Open a terminal");
-    click(view!.container.querySelector<HTMLButtonElement>('button[title="发送 (Enter)"]')!);
+    click(view!.container.querySelector<HTMLButtonElement>('button[title="发送（Enter）"]')!);
     await flush();
     const channel = mocks.channels[0];
     return { onEvent: (ev: Record<string, unknown>) => act(() => channel.onEvent(ev)) };

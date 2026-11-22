@@ -39,7 +39,7 @@ export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSync
             {otherNotes.length > 0 ? (
               <span
                 className="text-neutral-500"
-                title={t("空闲：无终端，30 分钟后断开；后台：仍有后台会话")}
+                title={t("空闲：没有打开的终端，30 分钟后自动断开；后台：仍有后台会话在运行")}
               >
                 {t("（另有 {join}）", { join: otherNotes.join("、") })}</span>
             ) : null}

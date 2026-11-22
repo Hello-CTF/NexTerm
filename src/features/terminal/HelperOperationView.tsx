@@ -659,7 +659,7 @@ export function HelperOperationView({
         <div className="flex flex-col gap-2 border-t border-neutral-800/60 pt-2">
           {onRetryPersistent && (
             <p id={retryNoteId} className="text-neutral-500">
-              {t("可重新尝试安装持久终端。")}
+              {t("可重试安装持久终端组件。")}
             </p>
           )}
           {onContinueOrdinary && (
@@ -684,7 +684,7 @@ export function HelperOperationView({
                 onClick={onRetryPersistent}
                 onKeyDown={activateFromKeyboard}
               >
-                {t("重试持久终端")}
+                {t("重试安装组件")}
               </button>
             )}
             {onContinueOrdinary && (

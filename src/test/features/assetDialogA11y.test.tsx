@@ -394,7 +394,7 @@ describe("asset form field accessible names and group placeholder (M205 finding 
     click(create);
     const labels = [...document.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent ?? "");
     expect(labels.some((t) => t.includes("导入 SSH 配置"))).toBe(true);
-    expect(labels.some((t) => t.includes("同步外部主机"))).toBe(true);
+    expect(labels.some((t) => t.includes("从外部来源同步主机"))).toBe(true);
     expect(labels.some((t) => t.includes("新建分组"))).toBe(true);
   });
 

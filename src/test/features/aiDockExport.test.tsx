@@ -95,7 +95,7 @@ describe("AI dock conversation export", () => {
     await flush();
     click(mounted.container.querySelector<HTMLButtonElement>('button[aria-label="更多"]')!);
     await flush();
-    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((candidate) => candidate.textContent?.includes("导出当前会话"));
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((candidate) => candidate.textContent?.includes("导出当前对话"));
     click(item!);
     await waitForRendered(() => expect(mocks.conversationExport).toHaveBeenCalled());
     expect(mocks.pickSavePath).toHaveBeenCalledWith("Investigate-nginx.md");

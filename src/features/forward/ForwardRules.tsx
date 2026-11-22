@@ -228,7 +228,7 @@ export function ForwardRules({
       {expanded && (
         <div id={panelId} className={`overflow-auto overscroll-contain border-t border-neutral-800/60 px-3 py-2 ${compact ? "max-h-[min(60dvh,32rem)] [padding-bottom:calc(0.5rem+var(--nx-safe-bottom,0px))]" : "max-h-72"}`}>
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <span className="text-[11px] text-neutral-500">{t("仅 local 固定端口；只监听 127.0.0.1，不自动启动。")}</span>
+            <span className="text-[11px] text-neutral-500">{t("仅限本地转发；只监听 127.0.0.1，不会自动启动。")}</span>
             <div className="nx-spacer" />
             <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={refreshRules} disabled={busy !== null}>
               <IconRefresh size={11} />

@@ -232,7 +232,7 @@ describe("AiSidebar board lifecycle", () => {
 
   async function send(text: string) {
     setInputValue(view!.container.querySelector("textarea")!, text);
-    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
   }
 

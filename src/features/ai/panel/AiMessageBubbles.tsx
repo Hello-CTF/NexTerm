@@ -266,6 +266,7 @@ function InteractionRecord({ item }: { item: ConfirmItem | QuestionItem }) {
   );
 }
 
+// Matches the backend refusal text exactly, half-width colon included; it is not display copy.
 const POLICY_DENIED_PREFIX = t("权限策略已拒绝: ");
 const USER_DENIED_TEXT = t("用户拒绝了此操作");
 

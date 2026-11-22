@@ -1520,11 +1520,11 @@ describe("closing a local terminal follows explicit capability and preference", 
 
     const unknown = { ...terminal("unknown"), retainable: undefined };
     seed([{ id: "p", tabs: [unknown], activeTabId: unknown.id }], "local");
-    expect(closeActionHint(unknown)).toBe("终端未连上，只移除标签页");
-    expect(closeTabHint(unknown)).toBe("关闭标签页（终端未连上，只移除标签页）");
+    expect(closeActionHint(unknown)).toBe("终端未连接，仅关闭标签页");
+    expect(closeTabHint(unknown)).toBe("关闭标签页（终端未连接，仅关闭标签页）");
 
     const regular = { ...terminal("regular"), retainable: false };
     seed([{ id: "p", tabs: [regular], activeTabId: regular.id }], "local");
-    expect(closeActionHint(regular)).toBe("结束本地进程");
+    expect(closeActionHint(regular)).toBe("结束本机进程");
   });
 });

@@ -475,7 +475,7 @@ describe("FileTree row gestures", () => {
     );
     await mountReady();
     click(row("sub"));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("会话已在服务端删除"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("连接已失效"));
     contextMenu(row("a.txt"));
     const remove = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
       (item) => item.textContent?.startsWith("删除"),

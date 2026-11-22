@@ -180,7 +180,7 @@ export function AppRail({
           {
             key: "forward",
             label: t("端口转发"),
-            hint: t("将远程端口转发到本地：本地端口映射或 SOCKS5 代理"),
+            hint: t("本地转发、远程转发和 SOCKS5 代理"),
             icon: IconNetwork,
             onClick: openForward,
           },

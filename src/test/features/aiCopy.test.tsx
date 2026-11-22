@@ -133,7 +133,7 @@ describe("M134 AI copy", () => {
 
   it("names the confirm-card help icon and exposes the help as the card description", async () => {
     setInputValue(composer(), "Run a command");
-    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
     emit({
       type: "confirmRequired",
@@ -271,7 +271,7 @@ describe("M134 AI copy", () => {
     });
     await flush();
     setInputValue(composer(), "A 运行任务");
-    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
     setInputValue(composer(), "A 未发送秘密");
     await flush();

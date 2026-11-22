@@ -205,8 +205,8 @@ export function ServicesPanel({
               <article key={host.result.sessionId} className="border-b border-neutral-800/70 px-3 py-3" data-session-id={host.result.sessionId}>
                 <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
                   <h3 className="font-medium text-neutral-200">{hostName}</h3>
-                  {host.systemd === "unsupported" ? <span className="nx-badge nx-badge-amber">{t("unsupported：无 systemd")}</span> : (
-                    <span className={host.result.status === "success" ? "text-green-300" : "text-red-300"}>{host.result.status === "success" ? (windows ? t("{length} 个 Windows 服务", { length: host.units.length }) : t("{length} 个 unit", { length: host.units.length })) : t("加载失败")}</span>
+                  {host.systemd === "unsupported" ? <span className="nx-badge nx-badge-amber">{t("不支持：主机无 systemd")}</span> : (
+                    <span className={host.result.status === "success" ? "text-green-300" : "text-red-300"}>{host.result.status === "success" ? (windows ? t("{length} 个 Windows 服务", { length: host.units.length }) : t("{length} 个服务单元", { length: host.units.length })) : t("加载失败")}</span>
                   )}
                   {host.result.truncated && <span className="nx-badge nx-badge-amber">{t("输出截断，列表可能不完整")}</span>}
                   <span className="nx-hint">{host.result.sessionId}</span>

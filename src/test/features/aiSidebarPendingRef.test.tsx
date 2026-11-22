@@ -137,7 +137,7 @@ describe("AiSidebar pending references", () => {
     const textarea = view!.container.querySelector("textarea")!;
     expect(textarea.value).not.toBe("");
     expect(view!.container.textContent).toContain("命令块 #3");
-    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
     expect(mocks.chat).toHaveBeenCalledTimes(1);
     const args = mocks.chat.mock.calls[0][0];

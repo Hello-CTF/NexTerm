@@ -391,7 +391,7 @@ describe("AiSidebar edit and resend", () => {
     );
 
     setInputValue(composerOf(view!), "第三问");
-    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
     await flushUntil(() => mocks.messages.mock.calls.length >= 2);
     await flushUntil(() => hasEditButton(view!, "第三问"));
 

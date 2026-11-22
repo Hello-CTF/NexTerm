@@ -211,7 +211,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
         }}
       >
         <div className="nx-modal-header shrink-0">
-          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">{t("同步外部主机列表")}</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">{t("从外部来源同步主机列表")}</span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           <p className="nx-hint mb-3">
@@ -343,7 +343,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                               <span className="break-all font-mono text-neutral-100">{item.name}</span>
                               <span className="ml-2 text-neutral-500">{item.kind}</span>
                               <div className="mt-0.5 break-all text-[11px] text-neutral-500">
-                                {item.host || target || t("仅清单记录")}
+                                {item.host || target || t("仅记录，不可连接")}
                               </div>
                             </span>
                           </label>

@@ -384,9 +384,9 @@ export function closeActionHint(t: AppTab): string | undefined {
   if (t.kind !== "terminal" || !t.tabId || t.dead || t.exited) return undefined;
   const block = detachBlockOf(t, useUi.getState().sessions, assetKindForTab(t));
   if (block === "exec") return tr("结束容器内命令进程");
-  if (block === "winrm") return tr("结束 WinRM 非交互进程");
-  if (block === "local") return tr("结束本地进程");
-  if (block === "unattached") return tr("终端未连上，只移除标签页");
+  if (block === "winrm") return tr("结束 WinRM 命令");
+  if (block === "local") return tr("结束本机进程");
+  if (block === "unattached") return tr("终端未连接，仅关闭标签页");
   if (block === "regular" || block === "unknown") return tr("结束进程");
   const action = getTerminalPrefs().closeAction;
   if (action === "kill") return tr("结束进程");

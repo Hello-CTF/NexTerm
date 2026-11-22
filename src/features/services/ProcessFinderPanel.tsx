@@ -258,7 +258,7 @@ export function ProcessFinderPanel({
         }}>
           <span className="pb-2 text-[11px] text-neutral-400">{t("{host} · 目标 {address}:{port}", { host: forwardDraft.host, address: forwardDraft.address, port: forwardDraft.port })}</span>
           <label className="flex flex-col gap-1 text-[11px] text-neutral-500">{t("本地监听端口")}
-            <input className="nx-input nx-input-sm w-28 font-mono" value={forwardDraft.listenPort} aria-label={t("finder 本地监听端口")} inputMode="numeric" onChange={(event) => setForwardDraft({ ...forwardDraft, listenPort: event.target.value })} />
+            <input className="nx-input nx-input-sm w-28 font-mono" value={forwardDraft.listenPort} aria-label={t("本地监听端口")} inputMode="numeric" onChange={(event) => setForwardDraft({ ...forwardDraft, listenPort: event.target.value })} />
           </label>
           <button type="submit" className="nx-btn nx-btn-primary nx-btn-sm" disabled={forwardBusy}><IconNetwork size={12} />{forwardBusy ? t("正在保存…") : t("保存规则")}</button>
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={forwardBusy} onClick={() => setForwardDraft(null)}>{t("取消")}</button>
@@ -335,7 +335,7 @@ export function ProcessFinderPanel({
             })}
           </>
         )}
-        {killer.result && <ServiceOperationResults batch={killer.result} title={t("kill 逐目标结果")} />}
+        {killer.result && <ServiceOperationResults batch={killer.result} title={t("结束进程结果（逐台）")} />}
       </div>
     </section>
   );
