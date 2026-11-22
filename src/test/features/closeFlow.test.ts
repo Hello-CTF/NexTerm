@@ -264,6 +264,20 @@ describe("closing all workspaces", () => {
     expect(applyPreconfirmedClose(grown, { action: "kill", confirmed })).toBe(false);
     expect(grown.preferredKills).toEqual([]);
   });
+
+  it("confirms again when a terminal confirmed to keep running would now be ended", () => {
+    // Confirmed as one to move to the background; before the close it turned out to be a regular SSH terminal.
+    const confirmed = collectWorkspaceClose([terminal("t1")], "ssh", "session", "w1");
+    expect(confirmed.detachable.map((tab) => tab.id)).toEqual(["t1"]);
+    const regular = collectWorkspaceClose([terminal("t1", { durable: false, retainable: false })], "ssh", "session", "w1");
+    expect(regular.blocked.map((tab) => tab.id)).toEqual(["t1"]);
+    expect(applyPreconfirmedClose(regular, { action: "detach", confirmed })).toBe(false);
+
+    // The other way round is covered: a terminal confirmed as ending may go to the background instead.
+    const confirmedEnding = collectWorkspaceClose([terminal("t1", { durable: false, retainable: false })], "ssh", "session", "w1");
+    const nowDetachable = collectWorkspaceClose([terminal("t1")], "ssh", "session", "w1");
+    expect(applyPreconfirmedClose(nowDetachable, { action: "detach", confirmed: confirmedEnding })).toBe(true);
+  });
 });
 
 describe("closing a tab", () => {

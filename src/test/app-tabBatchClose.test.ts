@@ -82,9 +82,9 @@ describe("partial failures during batch close", () => {
     expect(tabById("t1")).toBeUndefined();
     expect(tabById("t3")).toBeUndefined();
     expect(tabById("t2")?.closeError).toBe("连接已断开，请重新连接后再试");
-    const texts = useUi.getState().toasts.map((t) => t.text);
-    expect(texts.some((t) => t.includes("终端操作失败：连接已断开，请重新连接后再试"))).toBe(true);
-    expect(texts).toContain("1 个标签页未能关闭，已保留并在标签页上标出原因");
+    // One error notice for the batch, carrying the reason.
+    const errors = useUi.getState().toasts.filter((t) => t.kind === "error").map((t) => t.text);
+    expect(errors).toEqual(["1 个标签页未能关闭，已保留并在标签页上标出原因：连接已断开，请重新连接后再试"]);
   });
 
   it("asks once for the whole batch, and Cancel closes nothing and reports no failure", async () => {
