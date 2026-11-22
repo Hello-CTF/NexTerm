@@ -43,8 +43,9 @@ type taskStopper interface {
 }
 
 const (
-	updateNoticeTaskRestart = "约 %d 秒后替换程序文件并重新启动计划任务"
-	updateNoticeTaskManual  = "约 %d 秒后替换程序文件；随后请重启设备代理的计划任务或服务，以载入新版本"
+	// The replace script waits for this command's process to exit, not for a fixed delay.
+	updateNoticeTaskRestart = "本命令退出后即替换程序文件并重新启动计划任务"
+	updateNoticeTaskManual  = "本命令退出后即替换程序文件；随后请重启设备代理的计划任务或服务，以载入新版本"
 	// updateNoticeHealth follows a notice that the service restarts on its own: the replace script then waits for the new agent.
 	updateNoticeHealth = "新版本须在启动后 %d 秒内连上服务端，否则会自动恢复当前版本；结果记录在数据目录的 " + upgradeLogName
 )
@@ -208,7 +209,7 @@ func cliUpdate(args []string, getenv func(string) string, stdout, stderr io.Writ
 		inJob, jobErr := cliProcessInJob()
 		if !upgrader.LastReplaceDetached() && (inJob || jobErr != nil) {
 			fmt.Fprintln(stderr, "agent update: 当前终端由设备代理的计划任务拉起，结束任务会一并终止替换脚本，已跳过；请在不经过设备代理的终端重新执行 agent update，或替换完成后手动重启计划任务")
-			fmt.Fprintf(stdout, updateNoticeTaskManual+"\n", replaceScriptDelaySeconds)
+			fmt.Fprintln(stdout, updateNoticeTaskManual)
 			break
 		}
 		var stopErr error = errors.New("当前服务管理器不支持结束计划任务")
@@ -216,17 +217,17 @@ func cliUpdate(args []string, getenv func(string) string, stdout, stderr io.Writ
 			stopErr = stopper.Stop(ctx)
 		}
 		if stopErr == nil {
-			fmt.Fprintf(stdout, updateNoticeTaskRestart+"\n", replaceScriptDelaySeconds)
+			fmt.Fprintln(stdout, updateNoticeTaskRestart)
 			fmt.Fprintf(stdout, updateNoticeHealth+"\n", replaceHealthTimeoutSeconds)
 			break
 		}
 		printCLIError(stderr, "agent update: 无法结束正在运行的计划任务：", stopErr)
-		fmt.Fprintf(stdout, updateNoticeTaskManual+"\n", replaceScriptDelaySeconds)
+		fmt.Fprintln(stdout, updateNoticeTaskManual)
 	case state.Installed:
-		fmt.Fprintf(stdout, "约 %d 秒后替换程序文件并自动重启后台服务\n", replaceScriptDelaySeconds)
+		fmt.Fprintln(stdout, "本命令退出后即替换程序文件并自动重启后台服务")
 		fmt.Fprintf(stdout, updateNoticeHealth+"\n", replaceHealthTimeoutSeconds)
 	default:
-		fmt.Fprintf(stdout, "约 %d 秒后替换程序文件；后台服务未安装，如设备代理正在手动运行，请自行重启\n", replaceScriptDelaySeconds)
+		fmt.Fprintln(stdout, "本命令退出后即替换程序文件；后台服务未安装，如设备代理正在手动运行，请自行重启")
 	}
 	return ExitOK
 }

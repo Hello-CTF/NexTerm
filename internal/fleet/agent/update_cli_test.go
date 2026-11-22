@@ -401,6 +401,8 @@ func TestUpdateWindowsEndsTaskOnlyWhenSafe(t *testing.T) {
 
 // noticePrefix returns the fixed part of a notice template after its leading "%d" seconds.
 func noticePrefix(template string) string {
-	_, rest, _ := strings.Cut(template, "%d")
-	return strings.TrimSuffix(rest, "\n")
+	if _, rest, found := strings.Cut(template, "%d"); found {
+		return strings.TrimSuffix(rest, "\n")
+	}
+	return template
 }

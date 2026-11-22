@@ -305,7 +305,7 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 	case err == nil:
 		return ExitOK
 	case errors.Is(err, errUpgradeStaged):
-		fmt.Fprintln(stdout, "agent: 协议版本不兼容，已下载并校验新版本，稍后将自动完成替换并启动服务")
+		fmt.Fprintln(stdout, "agent: 已下载并校验新版本，稍后将自动完成替换并启动服务")
 		return ExitOK
 	case errors.Is(err, ErrRevoked):
 		fmt.Fprintln(stderr, "agent: 设备已被吊销，已停止运行；如需重新接入，请执行 agent enroll")

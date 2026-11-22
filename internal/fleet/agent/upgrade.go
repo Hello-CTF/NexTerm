@@ -39,9 +39,6 @@ const (
 	maxReleaseVersionLength   = 64
 	defaultUpgradeMaxAttempts = 3
 	defaultUpgradeBackoff     = 5 * time.Second
-	// replaceScriptDelaySeconds is the delay the update command announces before the swap; the replace script waits
-	// for the upgrading process to exit rather than sleeping a fixed time.
-	replaceScriptDelaySeconds = 3
 	// replaceWaitTimeoutSeconds bounds how long the replace script waits for the upgrading process to exit.
 	replaceWaitTimeoutSeconds = 60
 	// replaceHealthTimeoutSeconds bounds how long the replace script waits for the restarted agent to report a

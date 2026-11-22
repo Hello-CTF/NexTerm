@@ -489,7 +489,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 			var failed *selfUpgradeFailedError
 			if errors.As(err, &failed) && ctx.Err() == nil {
 				// The control channel stays refused, so the sync endpoint is the only way to tell the server why.
-				r.setUpgradeFailure(failed.cause.Error())
+				r.setUpgradeFailure(upgradeAttemptFailure(failed.version, failed.cause))
 				r.syncOnce(ctx)
 			}
 			return err
@@ -1055,7 +1055,7 @@ func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
 			return
 		}
 		r.logger.Error("self-upgrade failed; staying on the current binary for manual intervention", "target_version", serverVersion, "error", err)
-		r.fatal(&selfUpgradeFailedError{cause: err})
+		r.fatal(&selfUpgradeFailedError{version: serverVersion, cause: err})
 		return
 	}
 	r.logger.Info("self-upgrade staged; deferred replace will swap the binary and restart the service", "target_version", serverVersion)
@@ -1066,7 +1066,8 @@ func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
 // release, so an agent no longer stays on the build it was installed with until the protocol changes. A server of an
 // older release, a prerelease (RC stays a manual `update --version`), a dev build on either side, an embedded agent
 // without an upgrader, and a version that was rolled back recently are left alone. Each version is tried once per
-// run; a failed attempt only logs, and a staged upgrade restarts the agent like a protocol-driven one.
+// run; a failed attempt is reported through the service state until the next attempt, and a staged upgrade restarts
+// the agent like a protocol-driven one.
 func (r *Runtime) followServerVersion(ctx context.Context, serverVersion string) {
 	if r.upgrader == nil || !followsRelease(version.Version, serverVersion) {
 		return
@@ -1089,6 +1090,8 @@ func (r *Runtime) followServerVersion(ctx context.Context, serverVersion string)
 		if err := r.upgrader.Upgrade(ctx, serverVersion); err != nil {
 			if ctx.Err() == nil {
 				r.logger.Warn("upgrade to the server's release failed; staying on the current version", "target_version", serverVersion, "error", err)
+				// The next sync carries the failure, as it does for a rolled-back upgrade.
+				r.setUpgradeFailure(upgradeAttemptFailure(serverVersion, err) + "；设备代理下次启动时会重试")
 			}
 			return
 		}
@@ -1246,7 +1249,16 @@ func sleepContext(ctx context.Context, duration time.Duration) bool {
 
 // selfUpgradeFailedError is ErrProtocolMismatch carrying why the automatic upgrade did not happen, so callers can print the
 // cause without parsing the message.
-type selfUpgradeFailedError struct{ cause error }
+type selfUpgradeFailedError struct {
+	version string
+	cause   error
+}
+
+// upgradeAttemptFailure renders an automatic upgrade that failed before anything was replaced. Every upgrade failure
+// reported in the service state starts with "自动升级到 ", which the device list uses to tell it from a service error.
+func upgradeAttemptFailure(version string, err error) string {
+	return fmt.Sprintf("自动升级到 %s 失败：%v", version, err)
+}
 
 func (e *selfUpgradeFailedError) Error() string {
 	return ErrProtocolMismatch.Error() + ": " + e.cause.Error()
