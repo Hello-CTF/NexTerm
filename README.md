@@ -46,7 +46,7 @@
 | iOS / iPadOS (预览版) | [TestFlight](https://testflight.apple.com/join/ds62pzPz) |
 | Linux 服务端 | 见[部署服务端](#部署服务端) |
 
-移动端为预览版，完成真机签名验收前不作为正式支持平台。桌面版自动检查更新，并在安装前验证 Minisign 签名。
+移动端为预览版，完成真机签名验收前不作为正式支持平台。桌面版自动检查更新，并在安装前验证 Minisign 签名；更新在重启应用时生效。通过 .deb 安装的 Linux 版本提示下载新的软件包，而不在应用内替换系统文件。
 
 <details>
 <summary>安装提示</summary>
