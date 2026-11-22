@@ -1,5 +1,11 @@
 /* Rounded screen/notch adaptation: the background extends into the curved areas, interactive content avoids the status bar and gesture bar.
    --nx-inset-* is injected by the native side (Android env() does not include the gesture bar); falls back to iOS env() values when not injected */
+/* With the soft keyboard open the root ends above the keyboard, which covers the home indicator and gesture bar, so
+   nothing reserves the bottom inset (it would show as an empty strip between the key bar and the keyboard). */
+html[data-nx-keyboard="open"] {
+  --nx-safe-bottom: 0px;
+}
+
 .nx-fullscreen-safe-bottom,
 #root > .h-dvh {
   padding-bottom: var(--nx-safe-bottom);

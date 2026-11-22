@@ -202,13 +202,27 @@
     --nx-header-stack: 47px;
   }
 
+  /* The rail never scrolls sideways; it scrolls vertically only when even the shrunken buttons do not fit. */
   .nx-rail {
+    overflow-x: hidden;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
   }
 
+  .nx-rail::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 44px touch targets that give up height (down to 32px) on short screens, so the whole rail fits a phone. */
   .nx-rail-btn {
     width: 44px;
     height: 44px;
+  }
+
+  .nx-rail > .nx-rail-btn {
+    flex-shrink: 1;
+    min-height: 32px;
   }
 
   .nx-rail-btn.is-active::before {
@@ -486,6 +500,9 @@
   font-size: calc(17px * var(--nx-ui-text-factor));
 }
 
+/* Rail tooltips need a hovering pointer: a tap leaves :hover stuck on touch screens, and the tooltip would widen the
+   scrollable rail. */
+@media (hover: hover) {
   .nx-rail-btn[data-tip]:hover::after,
   .nx-rail-btn[data-tip]:focus-visible::after {
     content: attr(data-tip);
@@ -514,6 +531,7 @@
     from { opacity: 0; }
     to { opacity: 1; }
   }
+}
 
 .nx-app[data-nx-landscape-full="true"] .nx-rail,
 .nx-app[data-nx-landscape-full="true"] .nx-app-header {

@@ -70,6 +70,11 @@ describe("app safe-area shell", () => {
     expect(root.style.getPropertyValue("height")).toContain("--nx-vv-height");
     expect(root.style.getPropertyValue("top")).toContain("--nx-vv-top");
   });
+
+  it("drops the bottom inset while the soft keyboard covers it", () => {
+    const open = requireStyleRule(rules, 'html[data-nx-keyboard="open"]', "--nx-safe-bottom");
+    expect(open.style.getPropertyValue("--nx-safe-bottom").trim()).toBe("0px");
+  });
 });
 
 describe("context menu sheet safe area", () => {
