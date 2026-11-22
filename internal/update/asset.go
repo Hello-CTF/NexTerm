@@ -36,6 +36,29 @@ func matchAsset(release Release, goos, goarch string) (Asset, bool) {
 	return Asset{}, false
 }
 
+// assetNameFor is the exact package name a release of version carries for this platform, as the release build
+// names it: nexterm-desktop_<os>_<arch>_<version>.<ext>.
+func assetNameFor(goos, goarch, version string) (string, bool) {
+	var platform, suffix string
+	switch goos {
+	case "windows":
+		platform, suffix = "windows", ".exe"
+	case "darwin":
+		platform, suffix = "macos", ".dmg"
+	case "linux":
+		platform, suffix = "linux", ".deb"
+	default:
+		return "", false
+	}
+	if goarch != "amd64" && goarch != "arm64" {
+		return "", false
+	}
+	if version == "" || strings.ContainsAny(version, "/\\") {
+		return "", false
+	}
+	return "nexterm-desktop_" + platform + "_" + goarch + "_" + version + suffix, true
+}
+
 func parseSHA256SUMS(reader io.Reader) (map[string]string, error) {
 	sums := make(map[string]string)
 	scanner := bufio.NewScanner(reader)

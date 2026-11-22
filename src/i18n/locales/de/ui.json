@@ -6867,7 +6867,6 @@
   "重做 ({value}+Shift+Z)": "Wiederholen ({value}+Umschalt+Z)",
   "重启": "Neu starten",
   "重启失败": "Neustart fehlgeschlagen",
-  "重启失败：{restartError}": "Neustart fehlgeschlagen: {restartError}",
   "重启失败：{restartError}。请手动退出并重新打开应用。": "Neustart fehlgeschlagen: {restartError}. Beenden Sie die App manuell und öffnen Sie sie erneut.",
   "重启容器 {name}？\n\n容器会先停止再启动，期间它对外提供的服务会中断；正在运行的进程会退出，容器数据保留。": "Container {name} neu starten?\n\nDer Container wird zuerst gestoppt und dann gestartet; die von ihm angebotenen Dienste sind währenddessen nicht erreichbar, laufende Prozesse werden beendet, die Containerdaten bleiben erhalten.",
   "重启持久终端组件（结束 {value}）": "Komponente für persistente Terminals neu starten (beendet {value})",

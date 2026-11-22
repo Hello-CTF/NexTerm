@@ -4,7 +4,7 @@ import { ProgressBar } from "../ui/DownloadProgress";
 import { IconClose, IconDownload, IconLoader } from "../ui/icons";
 import { useUi } from "./store";
 import { useUpdate } from "./useUpdate";
-import { installPhaseLabel, RESTART_NOTE } from "./updateText";
+import { installPhaseLabel, RESTART_NOTE, restartErrorText } from "./updateText";
 import { t } from "../i18n";
 
 const BANNER_CLASS =
@@ -13,7 +13,7 @@ const BANNER_CLASS =
 export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void }) {
   const {
     status, readyVersion, skippedVersion, dismissedVersion, restartDeferred, install,
-    dismissVersion, deferRestart, restart, restarting, restartError,
+    dismissVersion, deferRestart, restart, restarting, restartError, restartFailure, readyApplied,
   } = useUpdate();
   const installError = install.error;
   useEffect(() => {
@@ -49,9 +49,11 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
       <div className={BANNER_CLASS} role="region" aria-label={t("软件更新")}>
         <IconDownload size={13} className="shrink-0 text-green-300" />
         <span className="min-w-0 truncate" title={RESTART_NOTE}>
-          {t("v{readyVersion} 下载完成，重启时安装", { readyVersion })}
+          {readyApplied
+            ? t("v{readyVersion} 已安装，重启应用后生效", { readyVersion })
+            : t("v{readyVersion} 下载完成，重启时安装", { readyVersion })}
         </span>
-        {restartError && <span className="shrink-0 text-red-300">{t("重启失败：{restartError}", { restartError })}</span>}
+        {restartError && <span className="min-w-0 truncate text-red-300" title={restartError}>{restartErrorText(restartFailure, restartError)}</span>}
         <div className="nx-spacer" />
         <button
           type="button"
@@ -60,7 +62,7 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
           title={RESTART_NOTE}
           onClick={() => void restart()}
         >
-          {restarting ? t("正在安装并重启…") : t("立即重启并安装")}
+          {restarting ? (readyApplied ? t("正在重启…") : t("正在安装并重启…")) : readyApplied ? t("立即重启") : t("立即重启并安装")}
         </button>
         <button
           type="button"

@@ -86,49 +86,60 @@ func (m *Manager) fetchReleases(ctx context.Context) ([]Release, error) {
 	return releases, nil
 }
 
-func (m *Manager) fetchChecksums(ctx context.Context, release Release) (map[string]string, error) {
+// checksums is a release's SHA256SUMS as fetched: the exact manifest and signature bytes are kept so a staged
+// package can be verified against them again, offline, before it is applied.
+type checksums struct {
+	sums      map[string]string
+	manifest  []byte
+	signature []byte
+}
+
+func (m *Manager) fetchChecksums(ctx context.Context, release Release) (checksums, error) {
 	trust, required, err := m.minisignTrust()
 	if err != nil {
-		return nil, err
+		return checksums{}, err
 	}
 	checksumAsset, ok := findReleaseAsset(release, checksumsAssetName)
 	if !ok || checksumAsset.BrowserDownloadURL == "" {
-		return nil, fmt.Errorf("release %s 缺少 %s", release.TagName, checksumsAssetName)
+		return checksums{}, fmt.Errorf("release %s 缺少 %s", release.TagName, checksumsAssetName)
 	}
 	var signatureAsset Asset
 	if required {
 		signatureAsset, ok = findReleaseAsset(release, checksumSignatureAssetName)
 		if !ok || signatureAsset.BrowserDownloadURL == "" {
-			return nil, fmt.Errorf("release %s 缺少 %s，签名验证已启用", release.TagName, checksumSignatureAssetName)
+			return checksums{}, fmt.Errorf("release %s 缺少 %s，签名验证已启用", release.TagName, checksumSignatureAssetName)
 		}
 	}
-
-	response, err := m.fetchReleaseAsset(ctx, checksumAsset)
+	contents, err := m.fetchReleaseAssetBytes(ctx, checksumAsset, maxChecksumManifestSize)
 	if err != nil {
-		return nil, err
+		return checksums{}, err
 	}
-	defer response.Body.Close()
-	if !required {
-		sums, err := parseSHA256SUMS(response.Body)
+	var signature []byte
+	if required {
+		signature, err = m.fetchReleaseAssetBytes(ctx, signatureAsset, maxMinisignSignatureSize)
 		if err != nil {
-			return nil, fmt.Errorf("解析 %s 失败: %w", checksumsAssetName, err)
+			return checksums{}, err
 		}
-		return sums, nil
 	}
+	sums, err := verifyChecksums(contents, signature, trust, required, release.version())
+	if err != nil {
+		return checksums{}, err
+	}
+	return checksums{sums: sums, manifest: contents, signature: signature}, nil
+}
 
-	contents, err := readReleaseAsset(response.Body, checksumAsset.Name, maxChecksumManifestSize)
-	if err != nil {
-		return nil, err
+// verifyChecksums checks the manifest's minisign signature when signatures are required, binding it to version
+// through the trusted comment so the signed sums of another release cannot be replayed, then parses it.
+func verifyChecksums(manifest, signature []byte, trust releasesig.PublicKey, required bool, version string) (map[string]string, error) {
+	if required {
+		if len(signature) == 0 {
+			return nil, fmt.Errorf("缺少 %s，签名验证已启用", checksumSignatureAssetName)
+		}
+		if err := releasesig.Verify(manifest, signature, trust, releasesig.ChecksumsTrustedComment(version)); err != nil {
+			return nil, fmt.Errorf("%s 的 minisign 验证失败: %w", checksumsAssetName, err)
+		}
 	}
-	signature, err := m.fetchReleaseAssetBytes(ctx, signatureAsset, maxMinisignSignatureSize)
-	if err != nil {
-		return nil, err
-	}
-	expectedComment := releasesig.ChecksumsTrustedComment(release.version())
-	if err := releasesig.Verify(contents, signature, trust, expectedComment); err != nil {
-		return nil, fmt.Errorf("%s 的 minisign 验证失败: %w", checksumsAssetName, err)
-	}
-	sums, err := parseSHA256SUMS(bytes.NewReader(contents))
+	sums, err := parseSHA256SUMS(bytes.NewReader(manifest))
 	if err != nil {
 		return nil, fmt.Errorf("解析 %s 失败: %w", checksumsAssetName, err)
 	}

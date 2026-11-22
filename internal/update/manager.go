@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -59,12 +60,21 @@ type Status struct {
 // downloaded, verified and staged, and it is applied by the next Restart. Restart sets Installed once it applied a
 // staged package and Restarted once the app relaunches.
 type Result struct {
-	Ready             bool   `json:"ready"`
+	Ready bool `json:"ready"`
+	// Failure tells a Restart that failed apart: FailureApply installed nothing, FailureRelaunch means the
+	// package (if any) is installed and only the relaunch failed.
+	Failure           string `json:"failure,omitempty"`
 	Installed         bool   `json:"installed"`
 	Restarted         bool   `json:"restarted"`
 	Version           string `json:"version"`
 	UnavailableReason string `json:"unavailableReason"`
 }
+
+// Restart failure kinds reported in Result.Failure.
+const (
+	FailureApply    = "apply"
+	FailureRelaunch = "relaunch"
+)
 
 // Install states reported by State besides the progress phases.
 const (
@@ -167,6 +177,7 @@ func (m *Manager) emit(ctx context.Context, progress Progress) {
 // earlier run that was never restarted is reported as ready.
 func (m *Manager) State() InstallState {
 	m.loadStaged()
+	m.dropOffChannel(context.Background())
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	state := m.state
@@ -221,8 +232,9 @@ func (m *Manager) Check(ctx context.Context) Status {
 
 // resolved is the release a check settled on, with the package and the verified checksums an install uses.
 type resolved struct {
-	asset Asset
-	sums  map[string]string
+	asset     Asset
+	sums      map[string]string
+	checksums checksums
 }
 
 // check finds the newest release on the channel that is newer than the running version and complete for this
@@ -267,11 +279,11 @@ func (m *Manager) check(ctx context.Context, channel ReleaseChannel) (Status, *r
 			}
 			continue
 		}
-		sums, err := m.fetchChecksums(ctx, release)
+		fetched, err := m.fetchChecksums(ctx, release)
 		if err != nil {
 			return fail(fmt.Errorf("获取校验和失败: %w", err).Error())
 		}
-		if _, ok := sums[asset.Name]; !ok {
+		if _, ok := fetched.sums[asset.Name]; !ok {
 			return fail(fmt.Sprintf("%s 缺少 %s 的校验和", checksumsAssetName, asset.Name))
 		}
 		status.Available = true
@@ -288,7 +300,7 @@ func (m *Manager) check(ctx context.Context, channel ReleaseChannel) (Status, *r
 				status.UnavailableReason = reason
 			}
 		}
-		return status, &resolved{asset: asset, sums: sums}
+		return status, &resolved{asset: asset, sums: fetched.sums, checksums: fetched}
 	}
 	return status, nil
 }
@@ -353,8 +365,15 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 		return Result{}, userErrorf(UserErrorBadParam, "待安装版本 %s 与最新版本 %s 不一致", version, status.Version)
 	}
 	asset := found.asset
-	if staged, ok := m.stagedPackage(); ok && staged.Version == status.Version && staged.SHA256 == found.sums[asset.Name] {
-		if err := staged.verify(m.stageDir()); err == nil {
+	// Only a package named exactly as the release build names it can be staged: the restart accepts no other.
+	if !(stagedPackage{Version: status.Version, AssetName: asset.Name}).validFor(m.GOOS, m.GOARCH) {
+		restore()
+		return Result{}, userErrorf(UserErrorIO, "安装包 %s 的名称与版本 %s 不符", asset.Name, status.Version)
+	}
+	m.dropOffChannel(ctx)
+	if staged, ok := m.stagedPackage(); ok && staged.Version == status.Version && staged.AssetName == asset.Name {
+		if digest, err := m.stagedDigest(staged); err == nil && digest == found.sums[asset.Name] &&
+			hashMatches(staged.path(m.stageDir()), digest) == nil {
 			m.markReady(staged.Version)
 			return Result{Ready: true, Version: staged.Version}, nil
 		}
@@ -368,7 +387,7 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 	}
 	m.report(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Total: asset.Size}, false)
 	stageDir := m.stageDir()
-	if err := os.MkdirAll(stageDir, 0o700); err != nil {
+	if err := prepareStageDir(stageDir); err != nil {
 		return failed(PhaseDownload, 0, asset.Size, err)
 	}
 	directory, err := os.MkdirTemp(stageDir, ".download-")
@@ -387,8 +406,10 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 	if err := m.checkPackage(ctx, archive); err != nil {
 		return failed(PhaseVerify, asset.Size, asset.Size, err)
 	}
-	staged := stagedPackage{Version: status.Version, AssetName: asset.Name, SHA256: found.sums[asset.Name]}
-	if err := stagePackage(stageDir, archive, staged); err != nil {
+	staged := stagedPackage{Version: status.Version, AssetName: asset.Name}
+	if err := stagePackage(stageDir, archive, staged, found.checksums); err != nil {
+		// Staging removed the previous package first, so nothing is ready any more.
+		m.discardStaged()
 		return failed(PhaseVerify, asset.Size, asset.Size, userErrorf(UserErrorIO, "保存更新包失败: %w", err))
 	}
 	m.mu.Lock()
@@ -457,27 +478,48 @@ func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string
 }
 
 // Restart applies a staged package, then relaunches the app into it: the same order as an install followed by a
-// restart, done only when the user chose to restart. The package is verified against its recorded SHA-256 again
-// and refused (and discarded) when it changed or is not newer than the running version. A failed apply leaves the
-// app as it was and keeps the package; a successful one removes it.
+// restart, done only when the user chose to restart. The package is verified again against the signed checksum
+// manifest staged with it, bound to the staged version, and copied into a private directory while it is hashed;
+// the installer runs on that copy. A package that fails verification, is not newer than the running build, does
+// not belong to this platform or is a release candidate off the selected channel is refused and discarded. A
+// failed apply leaves the app as it was and keeps the package; a successful one removes it.
 func (m *Manager) Restart(ctx context.Context) Result {
 	if m.RestartFunc == nil {
 		return Result{UnavailableReason: "服务端模式不支持应用内重启"}
 	}
+	ctx = context.WithoutCancel(ctx)
 	if !m.installing.CompareAndSwap(false, true) {
 		return Result{UnavailableReason: "正在安装更新，请等待安装完成后再重启"}
 	}
 	defer m.installing.Store(false)
 	m.loadStaged()
+	applyFailed := func(reason string) Result {
+		m.updateState(func(state *InstallState) {
+			state.Phase = StateFailed
+			state.Error = reason
+		})
+		return Result{Failure: FailureApply, UnavailableReason: reason}
+	}
+	m.mu.Lock()
+	expected := m.state.ReadyVersion
+	m.mu.Unlock()
+	staged, ok := m.stagedPackage()
+	if ok {
+		if problem := m.stagedProblem(ctx, staged); problem != "" {
+			m.discardStaged()
+			return applyFailed(problem)
+		}
+	} else if expected != "" {
+		// The interface offered an install that is no longer staged: relaunching would report an update that
+		// never happened.
+		m.discardStaged()
+		return applyFailed("已下载的更新包不见了，请重新下载")
+	}
 	result := Result{}
-	if staged, ok := m.stagedPackage(); ok {
+	if ok {
 		target, err := m.applyStaged(ctx, staged)
 		if err != nil {
-			m.updateState(func(state *InstallState) {
-				state.Phase = StateFailed
-				state.Error = err.Error()
-			})
-			return Result{UnavailableReason: err.Error()}
+			return applyFailed(err.Error())
 		}
 		m.mu.Lock()
 		m.restartTarget = target
@@ -493,10 +535,12 @@ func (m *Manager) Restart(ctx context.Context) Result {
 		target = m.ExePath
 	}
 	if target == "" {
+		result.Failure = FailureRelaunch
 		result.UnavailableReason = "无法确定当前可执行文件路径"
 		return result
 	}
 	if err := m.RestartFunc(ctx, target); err != nil {
+		result.Failure = FailureRelaunch
 		result.UnavailableReason = "重启失败: " + err.Error()
 		return result
 	}
@@ -506,17 +550,23 @@ func (m *Manager) Restart(ctx context.Context) Result {
 
 func (m *Manager) applyStaged(ctx context.Context, staged stagedPackage) (string, error) {
 	directory := m.stageDir()
-	if !isNewerVersion(staged.Version, m.CurrentVersion) {
-		m.discardStaged()
-		return "", userErrorf(UserErrorIO, "已下载的更新 %s 不比当前版本新，已丢弃", staged.Version)
-	}
-	if err := staged.verify(directory); err != nil {
+	digest, err := m.stagedDigest(staged)
+	if err != nil {
 		m.discardStaged()
 		return "", userErrorf(UserErrorIO, "已下载的更新包校验失败，已丢弃，请重新下载: %w", err)
 	}
+	archive, cleanup, err := copyVerified(staged.path(directory), directory, digest)
+	if err != nil {
+		if errors.Is(err, errStagedTampered) {
+			m.discardStaged()
+			return "", userErrorf(UserErrorIO, "已下载的更新包校验失败，已丢弃，请重新下载: %w", err)
+		}
+		return "", userErrorf(UserErrorIO, "读取已下载的更新包失败: %w", err)
+	}
+	defer cleanup()
 	taskID := ids.New()
 	m.report(ctx, Progress{TaskID: taskID, Phase: PhaseInstall}, false)
-	target, err := m.applyInstall(ctx, staged.path(directory))
+	target, err := m.applyInstall(ctx, archive)
 	if err != nil {
 		m.report(ctx, Progress{TaskID: taskID, Phase: PhaseInstall, Done: true, Error: err.Error()}, false)
 		return "", err

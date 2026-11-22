@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => {
     restart: vi.fn(),
     getChannel: vi.fn(),
     setChannel: vi.fn(),
+    state: vi.fn(),
     confirmDialog: vi.fn(),
   };
 });
@@ -26,6 +27,7 @@ vi.mock("../ipc/commands", async (importOriginal) => {
       restart: mocks.restart,
       getChannel: mocks.getChannel,
       setChannel: mocks.setChannel,
+      state: mocks.state,
     },
   };
 });
@@ -141,6 +143,19 @@ describe("UpdateCard update channel", () => {
     await flushUntil(() => mocks.check.mock.calls.length > 0);
     expect(mocks.confirmDialog).not.toHaveBeenCalled();
     expect(mocks.setChannel).toHaveBeenCalledWith("stable");
+    await flushUntil(() => !useUpdateStore.getState().checking && !useUpdateStore.getState().channelSaving);
+  });
+
+  it("drops the restart offer for a staged release candidate after switching to stable", async () => {
+    resetStore(makeStatus({ releaseChannel: "rc" }));
+    useUpdateStore.setState({ readyVersion: "0.3.0-rc.1" });
+    mocks.setChannel.mockResolvedValue({ channel: "stable" });
+    mocks.check.mockResolvedValue(makeStatus());
+    mocks.state.mockResolvedValue({ phase: "idle", version: "", taskId: "", transferred: 0, total: 0, error: "", readyVersion: "" });
+    mounted = mount(createElement(UpdateCard));
+    click(channelButton("稳定版"));
+    await flushUntil(() => useUpdateStore.getState().readyVersion === null);
+    expect(mocks.state).toHaveBeenCalled();
     await flushUntil(() => !useUpdateStore.getState().checking && !useUpdateStore.getState().channelSaving);
   });
 

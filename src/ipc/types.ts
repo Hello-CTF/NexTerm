@@ -325,5 +325,7 @@ export type UpdateReleaseChannel = "stable" | "rc";
 
 export type UpdateChannelDto = { channel: string, };
 
-export type UpdateResultDto = { ready?: boolean, installed: boolean, restarted: boolean, version: string,
+// failure tells a failed restart apart: "apply" installed nothing, "relaunch" means the update (if any) is installed
+// and only the relaunch failed.
+export type UpdateResultDto = { ready?: boolean, failure?: string, installed: boolean, restarted: boolean, version: string,
 unavailableReason: string, };

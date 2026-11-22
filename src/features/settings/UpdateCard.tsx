@@ -12,7 +12,7 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 import type { UpdateReleaseChannel } from "../../ipc/types";
-import { RESTART_NOTE } from "../../app/updateText";
+import { RESTART_NOTE, restartErrorText } from "../../app/updateText";
 import { UpdateLink } from "../../app/UpdateLink";
 import {
   effectiveReleaseChannel,
@@ -61,7 +61,7 @@ function externalChannelNote(channel: string | undefined): string {
 
 export function UpdateCard() {
   const update = useUpdate();
-  const { status, checking, checkError, install, readyVersion, restarting, restartError } =
+  const { status, checking, checkError, install, readyVersion, restarting, restartError, restartFailure, readyApplied } =
     update;
   const verdict = updateVerdict(update);
   const badge = verdictBadge(verdict);
@@ -270,9 +270,11 @@ export function UpdateCard() {
         <div className="nx-alert nx-alert-success mt-3 flex items-start gap-2">
           <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1">
-            {t("v{readyVersion} 下载完成，重启时安装。", { readyVersion })}
+            {readyApplied
+              ? t("v{readyVersion} 已安装，重启应用后生效。", { readyVersion })
+              : t("v{readyVersion} 下载完成，重启时安装。", { readyVersion })}
             <span className="mt-0.5 block text-neutral-400">{RESTART_NOTE}</span>
-            {restartError && <span className="mt-0.5 block text-red-300">{t("重启失败：{restartError}。请手动退出并重新打开应用。", { restartError })}</span>}
+            {restartError && <span className="mt-0.5 block text-red-300">{restartErrorText(restartFailure, restartError)}</span>}
           </span>
           {DESKTOP && (
             <button
@@ -283,7 +285,7 @@ export function UpdateCard() {
               onClick={() => void update.restart()}
             >
               <IconRestart size={12} />
-              {restarting ? t("正在安装并重启…") : t("立即重启并安装")}
+              {restarting ? (readyApplied ? t("正在重启…") : t("正在安装并重启…")) : readyApplied ? t("立即重启") : t("立即重启并安装")}
             </button>
           )}
         </div>
@@ -291,7 +293,7 @@ export function UpdateCard() {
       {restartError && !readyVersion && (
         <div className="nx-alert nx-alert-danger mt-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{t("安装失败：{error}。可选择「重试」，仍失败，请前往 Releases 页面手动下载。", { error: restartError })}</span>
+          <span className="min-w-0 flex-1 break-words">{restartErrorText(restartFailure, restartError)}</span>
         </div>
       )}
     </section>

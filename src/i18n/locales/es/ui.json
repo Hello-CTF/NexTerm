@@ -6930,7 +6930,6 @@
   "重做 ({value}+Shift+Z)": "Rehacer ({value}+Shift+Z)",
   "重启": "Reiniciar",
   "重启失败": "Error al reiniciar",
-  "重启失败：{restartError}": "Error al reiniciar: {restartError}",
   "重启失败：{restartError}。请手动退出并重新打开应用。": "Error al reiniciar: {restartError}. Cierre y vuelva a abrir la aplicación manualmente.",
   "重启容器 {name}？\n\n容器会先停止再启动，期间它对外提供的服务会中断；正在运行的进程会退出，容器数据保留。": "¿Reiniciar el contenedor {name}?\n\nEl contenedor se detiene y luego se inicia; durante ese tiempo se interrumpen los servicios que ofrece al exterior. Los procesos en ejecución terminarán y los datos del contenedor se conservan.",
   "重启持久终端组件（结束 {value}）": "Reiniciar el componente de terminal persistente (finaliza {value})",

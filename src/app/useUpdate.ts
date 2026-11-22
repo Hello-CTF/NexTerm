@@ -36,6 +36,11 @@ export interface UpdateState {
   readyVersion: string | null;
   restarting: boolean;
   restartError: string | null;
+  // restartFailure says whether a failed restart installed nothing ("apply") or installed the update and only
+  // failed to relaunch ("relaunch").
+  restartFailure: "apply" | "relaunch" | null;
+  // readyApplied: the restart installed readyVersion but the app did not relaunch; only a relaunch is left.
+  readyApplied: boolean;
   // skippedVersion persists ("跳过此版本"); dismissedVersion only hides the banner until the next launch.
   skippedVersion: string | null;
   dismissedVersion: string | null;
@@ -75,6 +80,8 @@ let checkSequence = 0;
 // the outcome. Without it (after a reload) progress completion is resolved through app_update_state.
 let installCallPending = false;
 let recoveryRelease: (() => void) | null = null;
+// restartPending is set while this interface awaits app_restart, whose result reports any failure.
+let restartPending = false;
 
 const SKIPPED_VERSION_KEY = "nexterm.update.v1";
 
@@ -103,6 +110,8 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
   readyVersion: null,
   restarting: false,
   restartError: null,
+  restartFailure: null,
+  readyApplied: false,
   skippedVersion: loadSkippedVersion(),
   dismissedVersion: null,
   restartDeferred: false,
@@ -142,7 +151,8 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
       set({ channelSaving: false, channelError: describeError(e) });
       return false;
     }
-    await get().check(true);
+    // Switching to stable discards a staged release candidate; the sync drops its restart offer.
+    await Promise.all([get().check(true), get().syncInstallState()]);
     return true;
   },
 
@@ -185,16 +195,29 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
 
   restart: async () => {
     if (get().restarting) return;
-    set({ restarting: true, restartError: null });
+    set({ restarting: true, restartError: null, restartFailure: null });
+    restartPending = true;
+    let relaunched = false;
     try {
       const result = await appUpdateApi.restart();
-      if (result.restarted) return;
-      set({ restarting: false, restartError: result.unavailableReason ? translateMessage(result.unavailableReason) : t("重启失败") });
+      if (result.restarted) {
+        relaunched = true;
+        return;
+      }
+      set({
+        restarting: false,
+        restartError: result.unavailableReason ? translateMessage(result.unavailableReason) : t("重启失败"),
+        restartFailure: result.failure === "apply" ? "apply" : "relaunch",
+        readyApplied: get().readyApplied || result.installed,
+      });
     } catch (e) {
-      set({ restarting: false, restartError: describeError(e) });
+      set({ restarting: false, restartError: describeError(e), restartFailure: "relaunch" });
+    } finally {
+      // A refused or failed install at restart may have discarded the package or applied it without relaunching;
+      // the failure is already shown as restartError, so the sync does not report it a second time.
+      if (!relaunched) await get().syncInstallState();
+      restartPending = false;
     }
-    // A refused or failed install at restart may have discarded the package or applied it without relaunching.
-    await get().syncInstallState();
   },
 
   skipVersion: (version) => {
@@ -236,6 +259,7 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
       recoveryRelease ??= acquireProgressListener();
       set({
         readyVersion,
+        readyApplied: false,
         install: {
           active: true,
           phase: progressPhase(state.phase),
@@ -250,6 +274,7 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
     releaseRecovery();
     set({
       readyVersion,
+      readyApplied: state.phase === "installed",
       install: { ...idleInstall, error: reportFailure && state.phase === "failed" && state.error ? translateMessage(state.error) : null },
     });
   },
@@ -266,7 +291,7 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
     // The end of an install, failed or completed, is settled by the install() result while this interface awaits
     // it, and by the backend state otherwise; an error here would only race that result into a second report.
     if (event.error || (event.done && event.phase === "install")) {
-      if (!installCallPending) void get().syncInstallState({ reportFailure: true });
+      if (!installCallPending) void get().syncInstallState({ reportFailure: !restartPending });
       return;
     }
     set({

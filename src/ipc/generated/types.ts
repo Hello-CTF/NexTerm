@@ -3837,6 +3837,7 @@ export type UpdateChannelResponse = {
 
 export type UpdateResult = {
   ready: boolean;
+  failure?: string;
   installed: boolean;
   restarted: boolean;
   version: string;
