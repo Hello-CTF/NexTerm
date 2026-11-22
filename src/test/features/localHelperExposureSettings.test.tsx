@@ -111,7 +111,7 @@ describe("local terminal exposure setting", () => {
 
   it("turns exposure off without asking and shows why it stopped", async () => {
     mocks.getExposure.mockResolvedValue({ enabled: true, state: "online", deviceId: "desk-1" });
-    mocks.setExposure.mockResolvedValue({ enabled: false, state: "revoked", reason: "服务端已吊销此设备" });
+    mocks.setExposure.mockResolvedValue({ enabled: false, state: "revoked", reason: "服务端已撤销此设备" });
     const view = mount(createElement(LocalHelperExposureSettings));
     try {
       await flush();
@@ -120,7 +120,7 @@ describe("local terminal exposure setting", () => {
       await flush();
       expect(mocks.ask).not.toHaveBeenCalled();
       expect(mocks.setExposure).toHaveBeenCalledWith(false);
-      expect(view.container.textContent).toContain("服务端已吊销此设备");
+      expect(view.container.textContent).toContain("服务端已撤销此设备");
     } finally {
       view.unmount();
     }

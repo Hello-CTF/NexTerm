@@ -923,12 +923,12 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                 </div>
                 <div>
                   <label className="nx-setting-label mb-1.5 flex items-center gap-2" htmlFor={scrollbackSelectId} data-setting="terminal-scrollback">
-                    {t("终端回滚行数")}
+                    {t("滚动历史行数")}
                     <SyncScopeBadge scope="local" />
                   </label>
                   <Select
                     id={scrollbackSelectId}
-                    ariaLabel={t("终端回滚行数")}
+                    ariaLabel={t("滚动历史行数")}
                     className="w-full sm:w-auto"
                     value={terminalPrefs.scrollback.toString()}
                     options={TERMINAL_SCROLLBACK_OPTIONS.map((lines) => ({

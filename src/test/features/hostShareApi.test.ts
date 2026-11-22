@@ -105,9 +105,9 @@ describe("browser host share terminal connection", () => {
 
   it("forwards revocation errors and terminal close frames", () => {
     const { socket, errors, closes } = connect();
-    socket.emit(JSON.stringify({ type: "error", code: "forbidden", message: "主机分享已吊销" }));
+    socket.emit(JSON.stringify({ type: "error", code: "forbidden", message: "主机分享已撤销" }));
     socket.emitClose(1008, "share terminated", true);
-    expect(errors).toEqual([{ code: "forbidden", message: "主机分享已吊销" }]);
+    expect(errors).toEqual([{ code: "forbidden", message: "主机分享已撤销" }]);
     expect(closes).toEqual([{ code: 1008, reason: "share terminated", wasClean: true }]);
   });
 

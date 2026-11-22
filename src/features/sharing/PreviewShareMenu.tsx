@@ -244,7 +244,7 @@ export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChan
               />
               {t("允许控制")}
             </label>
-            {!WEB && <span className="text-xs text-neutral-500">{t("桌面中继创建的预览暂不支持控制")}</span>}
+            {!WEB && <span className="text-xs text-neutral-500">{t("通过桌面版创建的预览暂不支持远程控制")}</span>}
           </div>
           {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
           {createdUrl && (
@@ -282,7 +282,7 @@ export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChan
                         className="rounded-md px-2 py-0.5 max-sm:min-h-9 text-red-400 hover:bg-neutral-800"
                         onClick={() => void revoke(link.id)}
                       >
-                        {t("吊销")}
+                        {t("撤销")}
                       </button>
                     </span>
                   </div>

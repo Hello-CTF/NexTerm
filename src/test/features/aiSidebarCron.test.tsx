@@ -218,7 +218,7 @@ describe("AiSidebar cron entry point", () => {
     click(cronButton(view!));
     await flushUntil(() => textOf(view!).includes("每日巡检"));
 
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flushUntil(() => textOf(view!).includes("Conversation A"));
     click(view!.container.querySelector('button[aria-label="删除会话「Conversation A」"]')!);
     await flushUntil(() => mocks.conversationDelete.mock.calls.length > 0);

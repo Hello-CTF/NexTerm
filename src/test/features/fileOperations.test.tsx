@@ -1621,7 +1621,7 @@ describe("name preflight checks for new files and folders", () => {
 
   for (const [label, ariaLabel, rpc] of [
     ["new file", "新建文件", "create"],
-    ["new directory", "新建目录", "mkdir"],
+    ["new directory", "新建文件夹", "mkdir"],
   ] as const) {
     it(`FileTree ${label} rejects dangerous names before joinPath`, async () => {
       mounted = mountTree();
@@ -1648,7 +1648,7 @@ describe("name preflight checks for new files and folders", () => {
 describe("existing names for new files and folders", () => {
   for (const [label, ariaLabel, rpc] of [
     ["new file", "新建文件", "create"],
-    ["new directory", "新建目录", "mkdir"],
+    ["new directory", "新建文件夹", "mkdir"],
   ] as const) {
     it(`FileTree ${label} refuses a name the listing already holds and never writes`, async () => {
       mounted = mountTree();
@@ -1741,7 +1741,7 @@ describe("selection and expansion state after FileTree navigation", () => {
     clickBarAction(mounted.container, "新建文件");
     await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(SID, "/fresh.txt"));
 
-    click(mounted.container.querySelector('button[aria-label="回到家目录 (~)"]')!);
+    click(mounted.container.querySelector('button[aria-label="回到主目录（~）"]')!);
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
     expect(rowByPath(mounted.container, "~/sub").getAttribute("aria-expanded")).toBe("false");
   });
@@ -1751,7 +1751,7 @@ describe("selection and expansion state after FileTree navigation", () => {
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
     await enterSubdirectory();
     click(rowByPath(mounted.container, "~/sub/a.txt"));
-    click(mounted.container.querySelector('button[aria-label="回到家目录 (~)"]')!);
+    click(mounted.container.querySelector('button[aria-label="回到主目录（~）"]')!);
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
 
     expect(mounted.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
@@ -1770,7 +1770,7 @@ describe("selection and expansion state after FileTree navigation", () => {
 
     expect(mounted.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
     mocks.promptText.mockResolvedValue("fresh-dir");
-    clickBarAction(mounted.container, "新建目录");
+    clickBarAction(mounted.container, "新建文件夹");
     await waitFor(() => expect(mocks.mkdir).toHaveBeenCalledWith(SID, "~/fresh-dir"));
   });
 });
@@ -2329,7 +2329,7 @@ describe("delete and discard confirmations (R42 destructive dialogs)", () => {
     expect(
       mocks.askChoice.mock.calls[0]?.[1]?.choices.map((choice: { label: string }) => choice.label),
     ).toEqual([
-      "只读分块查看",
+      "用日志查看器打开（只读）",
       "编辑整个文件",
     ]);
     const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
@@ -2396,7 +2396,7 @@ describe("delete and discard confirmations (R42 destructive dialogs)", () => {
     expect(mocks.askChoice.mock.calls[0]?.[0]).toContain("20MB");
     expect(
       mocks.askChoice.mock.calls[0]?.[1]?.choices.map((choice: { label: string }) => choice.label),
-    ).toEqual(["只读分块查看"]);
+    ).toEqual(["用日志查看器打开（只读）"]);
   });
 
   it("FileEditor oversized binary file: refuses without a dialog", async () => {
@@ -2525,7 +2525,7 @@ describe("context menus: blank-area entries and wiring", () => {
     openTreeBlankMenu();
     const labels = menuLabels();
     expect(labels.some((t) => t.includes("打包下载"))).toBe(false);
-    expect(labels.some((t) => t.includes("新建空白文件"))).toBe(true);
+    expect(labels.some((t) => t.includes("新建文件"))).toBe(true);
     mounted.unmount();
 
     seedSessionKind("ssh");
@@ -2554,14 +2554,14 @@ describe("context menus: blank-area entries and wiring", () => {
     for (const label of [
       "上传到当前目录",
       "上传文件夹到当前目录",
-      "新建目录",
-      "新建空白文件",
+      "新建文件夹",
+      "新建文件",
       "刷新",
     ]) {
       expect(labels.some((t) => t.includes(label)), label).toBe(true);
     }
     mocks.promptText.mockResolvedValue("blank.txt");
-    clickMenuItem(mounted!.container, "新建空白文件");
+    clickMenuItem(mounted!.container, "新建文件");
     await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(SID, "~/blank.txt"));
     await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(1));
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已创建"));

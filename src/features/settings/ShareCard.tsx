@@ -63,7 +63,7 @@ function permissionBadge(permission: SharePermission): { text: string; tone: str
 }
 
 function shareState(expiresAt: number, revokedAt: number | undefined, now: number): { text: string; tone: string } {
-  if (revokedAt) return { text: t("已吊销"), tone: "nx-badge-red" };
+  if (revokedAt) return { text: t("已撤销"), tone: "nx-badge-red" };
   if (now >= expiresAt) return { text: t("已过期"), tone: "nx-badge-amber" };
   return { text: t("有效"), tone: "nx-badge-green" };
 }
@@ -77,7 +77,7 @@ function ShareUnsupported() {
         <span className="nx-badge nx-badge-amber">{t("登录服务端账号后可用")}</span>
       </div>
       <p className="nx-hint">
-        {t("主机分享需要服务端账号。在「设置 → 账号同步」中登录服务端账号后，即可将已接入的受管设备分享给其他注册用户。")}
+        {t("主机分享需要服务端账号。在「设置 → 账号与同步」中登录服务端账号后，即可将已接入的受管设备分享给其他注册用户。")}
       </p>
       <div className="mt-3">
         <button
@@ -85,7 +85,7 @@ function ShareUnsupported() {
           className="nx-btn nx-btn-outline nx-btn-sm"
           onClick={() => showSettingsSection("settings-account")}
         >
-          {t("前往「账号同步」登录")}
+          {t("前往「账号与同步」登录")}
         </button>
       </div>
     </section>
@@ -278,15 +278,15 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
     // The epoch must be captured before the confirmation opens: if the account switches while the dialog is open, the old account's row must not be revoked in the new session.
     const epoch = accountEpoch.current;
     const ok = await ask(
-      t("确定要吊销这条主机分享吗？\n\n「{recipient_username}」将无法再通过此分享在「{value}」上新建终端，进行中的连接也将尽快断开。", { recipient_username: share.recipient_username, value: deviceName(share.device_id) }),
-      { title: t("吊销主机分享"), kind: "warning" },
+      t("确定要撤销这条主机分享吗？\n\n「{recipient_username}」将无法再通过此分享在「{value}」上新建终端，进行中的连接也将尽快断开。", { recipient_username: share.recipient_username, value: deviceName(share.device_id) }),
+      { title: t("撤销主机分享"), kind: "warning" },
     );
     if (!ok) return;
     if (epoch !== accountEpoch.current) return;
     try {
       await sharingClient().revokeHostShare(share.id);
       if (epoch !== accountEpoch.current) return;
-      pushToast("success", t("已吊销「{recipient_username}」的主机分享", { recipient_username: share.recipient_username }));
+      pushToast("success", t("已撤销「{recipient_username}」的主机分享", { recipient_username: share.recipient_username }));
       load();
     } catch (e) {
       if (epoch !== accountEpoch.current) return;
@@ -422,7 +422,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
                 )}
                 {canRevoke && !s.revoked_at && (
                   <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void revokeHostShare(s)}>
-                    {t("吊销")}
+                    {t("撤销")}
                   </button>
                 )}
               </div>
@@ -439,7 +439,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          {t("列表由服务端按账号过滤：普通用户仅可查看自己授予或接收的分享，超级管理员可查看全部。吊销立即生效；主机分享不会向访问者暴露主机密码或私钥。")}
+          {t("列表由服务端按账号过滤：普通用户仅可查看自己授予或接收的分享，超级管理员可查看全部。撤销立即生效；主机分享不会向访问者暴露主机密码或私钥。")}
         </div>
       </div>
       {activeShare && (

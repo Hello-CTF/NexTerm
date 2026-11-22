@@ -176,7 +176,7 @@ func (s *Service) RevokeHostShare(ctx context.Context, identity *account.Identit
 	outcome, reason := "allow", ""
 	var decision error
 	if identity.UserID != share.OwnerID && identity.UserID != device.UserID {
-		outcome, reason, decision = "deny", "not_owner", ipc.NewError(ipc.CodeForbidden, "无权限吊销该分享")
+		outcome, reason, decision = "deny", "not_owner", ipc.NewError(ipc.CodeForbidden, "无权限撤销该分享")
 	}
 	auditErr := s.audit(ctx, auditKindHostRevoke, auditPayload{
 		Action: "revoke", ShareID: share.ID, DeviceID: share.DeviceID, OwnerID: share.OwnerID,
@@ -272,7 +272,7 @@ func (s *Service) AuthorizeTerminalOpen(ctx context.Context, identity *account.I
 		return nil, err
 	}
 	if grant.revoked {
-		return deny("device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销"))
+		return deny("device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已撤销"))
 	}
 	if grant.localHelper {
 		return deny("local_helper", errLocalHelperNotShareable)
@@ -390,11 +390,11 @@ func (s *Service) RevalidateHostAccess(ctx context.Context, grant *HostGrant) (*
 func hostShareDenyMessage(reason string) string {
 	switch reason {
 	case "revoked":
-		return "主机分享已吊销"
+		return "主机分享已撤销"
 	case "expired":
 		return "主机分享已过期"
 	case "device_revoked":
-		return "设备已吊销"
+		return "设备已撤销"
 	case "owner_mismatch":
 		return "设备归属与授权不一致"
 	case "device_not_found":

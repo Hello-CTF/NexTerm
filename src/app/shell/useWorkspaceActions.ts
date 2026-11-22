@@ -46,7 +46,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
 
   const openLocalTerminal = useCallback(async () => {
     if (isMobileShell()) {
-      pushToast("info", t("移动端不支持本地终端，请双击资产连接远程主机"));
+      pushToast("info", t("移动端不支持本机终端，请双击资产连接远程主机"));
       return;
     }
     const epoch = useUi.getState().workspaceRuntimeEpoch;
@@ -257,7 +257,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
       return;
     }
     if (isMobileShell()) {
-      pushToast("info", t("移动端不支持本地终端，请双击左侧资产连接远程主机"));
+      pushToast("info", t("移动端不支持本机终端，请双击左侧资产连接远程主机"));
       return;
     }
     void openLocalTerminal();

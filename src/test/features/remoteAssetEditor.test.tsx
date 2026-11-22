@@ -129,7 +129,7 @@ function chooseKind(label: string): void {
 }
 
 function chooseVia(label: string): void {
-  chooseSelectOption(mounted!.container, "通过跳板连接", label);
+  chooseSelectOption(mounted!.container, "通过跳板机连接", label);
 }
 
 function fillRequiredFields(name = "orders-db"): void {
@@ -289,8 +289,8 @@ describe("AssetEditor remote desktop kinds", () => {
     mocks.listAssets.mockResolvedValue([sshAsset("ssh-a", "gateway-a")]);
     mountEditor();
     chooseKind("VNC");
-    await flushUntil(() => mounted!.container.querySelector('button[aria-label="通过跳板连接"]') !== null);
-    const trigger = mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="通过跳板连接"]')!;
+    await flushUntil(() => mounted!.container.querySelector('button[aria-label="通过跳板机连接"]') !== null);
+    const trigger = mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="通过跳板机连接"]')!;
     click(trigger);
     await flushUntil(() => mounted!.container.querySelectorAll('[role="listbox"] [role="option"]').length === 3);
     const labels = [...mounted!.container.querySelectorAll('[role="listbox"] [role="option"]')].map((o) => o.textContent ?? "");
@@ -307,7 +307,7 @@ describe("AssetEditor remote desktop kinds", () => {
   it("keeps unknown options and the jump when an existing RDP asset is edited", async () => {
     mocks.listAssets.mockResolvedValue([sshAsset("ssh-a", "gateway-a")]);
     mountEditor(makeAsset({ kind: "rdp", port: 3389, username: "admin", options: { viaAssetId: "ssh-a", domain: "OLD", futureOption: "keep", icon: "server" } }));
-    await flushUntil(() => mounted!.container.querySelector('button[aria-label="通过跳板连接"]')?.textContent?.includes("gateway-a") === true);
+    await flushUntil(() => mounted!.container.querySelector('button[aria-label="通过跳板机连接"]')?.textContent?.includes("gateway-a") === true);
     expect(field("域").value).toBe("OLD");
     setInputValue(field("域"), "NEW");
     await save();

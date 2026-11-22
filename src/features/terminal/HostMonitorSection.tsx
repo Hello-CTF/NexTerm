@@ -174,7 +174,7 @@ export function HostMonitorSection({ workspace, visible }: { workspace: Workspac
   } else if (!sessionId || !connected) {
     body = <p className="nx-hint m-0 text-[11.5px]">{t("会话连接后显示主机指标。")}</p>;
   } else if (!sampled) {
-    body = <p className="nx-hint m-0 text-[11.5px]">{t("主机监控只支持 SSH、WinRM、本地会话和受管设备。")}</p>;
+    body = <p className="nx-hint m-0 text-[11.5px]">{t("主机监控只支持 SSH、WinRM、本机会话和受管设备。")}</p>;
   } else {
     body = <SessionMonitor sessionId={sessionId} active={visible} />;
   }

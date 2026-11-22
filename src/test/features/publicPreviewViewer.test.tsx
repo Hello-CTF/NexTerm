@@ -323,7 +323,7 @@ describe("PublicPreviewApp", () => {
     const view = await mountViewer();
     lastSocket().emitText({ type: "error", code: "revoked", message: "share link revoked" });
     await flush();
-    expect(view.container.textContent).toContain("预览链接已吊销");
+    expect(view.container.textContent).toContain("预览链接已撤销");
   });
 
   it("maps an ended error frame to ended copy", async () => {

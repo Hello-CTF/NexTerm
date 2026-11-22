@@ -268,7 +268,7 @@ describe("app shell modes", () => {
     expect(document.querySelector('[role="navigation"][aria-label="左侧栏"]')).not.toBeNull();
     expect(button("收起侧栏")).toBeNull();
     expect(document.documentElement.querySelector(".nx-app.is-compact")).toBeNull();
-    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("打开本地终端"))).toBe(true);
+    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("打开本机终端"))).toBe(true);
   });
 
   it("compact: the desktop chrome stays but sidebars open as overlays", async () => {
@@ -315,7 +315,7 @@ describe("app shell modes", () => {
     await openAssetsSidebar();
     expect(document.querySelector('[role="navigation"][aria-label="左侧栏"]')).not.toBeNull();
     expect(button("收起侧栏")).not.toBeNull();
-    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("打开本地终端"))).toBe(false);
+    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("打开本机终端"))).toBe(false);
   });
 
   it("mobile: launches on the status wall in the workspace area; the docks stay usable and the rail overview button toggles it", async () => {
@@ -325,7 +325,7 @@ describe("app shell modes", () => {
 
     const wall = () => document.querySelector("[data-status-wall]");
     const area = () => document.querySelector("[data-workspace-area]");
-    const home = () => button("会话总览");
+    const home = () => button("终端总览");
     expect(wall()).not.toBeNull();
     expect(area()?.classList.contains("hidden")).toBe(true);
     expect(home()?.getAttribute("aria-pressed")).toBe("true");
@@ -395,11 +395,11 @@ describe("app shell modes", () => {
     await flush();
     const wall = () => document.querySelector("[data-status-wall]");
     expect(wall()).toBeNull();
-    expect(button("会话总览")?.getAttribute("aria-pressed")).toBe("false");
-    act(() => button("会话总览")?.click());
+    expect(button("终端总览")?.getAttribute("aria-pressed")).toBe("false");
+    act(() => button("终端总览")?.click());
     expect(wall()).not.toBeNull();
-    expect(button("会话总览")?.getAttribute("aria-pressed")).toBe("true");
-    act(() => button("会话总览")?.click());
+    expect(button("终端总览")?.getAttribute("aria-pressed")).toBe("true");
+    act(() => button("终端总览")?.click());
     expect(wall()).toBeNull();
   });
 

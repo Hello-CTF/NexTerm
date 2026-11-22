@@ -158,10 +158,10 @@ describe("SettingsView responsive structure", () => {
     )!;
     expect(terminalToggle.getAttribute("aria-expanded")).toBe("false");
     expect(terminal.querySelector('[aria-label="终端 GPU 加速"]')).toBeNull();
-    expect(terminal.querySelector('button[aria-label="终端回滚行数"]')).toBeNull();
+    expect(terminal.querySelector('button[aria-label="滚动历史行数"]')).toBeNull();
     click(terminalToggle);
     expect(terminal.querySelector('[aria-label="终端 GPU 加速"]')).not.toBeNull();
-    expect(terminal.querySelector('button[aria-label="终端回滚行数"]')).not.toBeNull();
+    expect(terminal.querySelector('button[aria-label="滚动历史行数"]')).not.toBeNull();
 
     const aiModel = document.getElementById("settings-ai-model")!;
     const connToggle = [...aiModel.querySelectorAll("button")].find(

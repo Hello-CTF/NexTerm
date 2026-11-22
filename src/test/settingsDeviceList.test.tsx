@@ -71,8 +71,8 @@ describe("registered device list", () => {
     const text = () => view.container.textContent ?? "";
     expect(text()).toContain("device-1");
     expect(text()).not.toContain("device-2");
-    expect(text()).toContain("显示已吊销（2）");
-    const toggle = Array.from(view.container.querySelectorAll("label")).find((l) => l.textContent?.includes("显示已吊销"))!
+    expect(text()).toContain("显示已撤销（2）");
+    const toggle = Array.from(view.container.querySelectorAll("label")).find((l) => l.textContent?.includes("显示已撤销"))!
       .querySelector("input")!;
     act(() => toggle.click());
     await flush();

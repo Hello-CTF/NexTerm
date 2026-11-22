@@ -862,7 +862,7 @@ func TestSharePreviewRevokedInputFrame(t *testing.T) {
 		t.Fatalf("revoke: HTTP %d %v", call.status, call.body)
 	}
 	writePreviewInput(t, conn, "echo denied-rev-1\r")
-	expectPreviewErrorFrame(t, conn, "revoked", "分享链接已吊销", 10*time.Second)
+	expectPreviewErrorFrame(t, conn, "revoked", "分享链接已撤销", 10*time.Second)
 
 	// Non-terminal: the connection continues, the owner's output keeps arriving, and the rejected input never reached the terminal.
 	if err := f.manager.Write(context.Background(), tabID, "owner", []byte("echo after-rev-1\r")); err != nil {

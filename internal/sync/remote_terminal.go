@@ -138,7 +138,7 @@ func (p *RemoteProxy) DialHostShareTerminal(ctx context.Context, deviceID string
 }
 
 func (c *remoteClient) dialHostShareTerminal(ctx context.Context, deviceID string) (*websocket.Conn, error) {
-	conn, err := c.dialRemoteWS(ctx, "/share/devices/"+urlpkg.PathEscape(deviceID)+"/terminal", "共享主机终端")
+	conn, err := c.dialRemoteWS(ctx, "/share/devices/"+urlpkg.PathEscape(deviceID)+"/terminal", "主机分享")
 	if err != nil {
 		return nil, err
 	}

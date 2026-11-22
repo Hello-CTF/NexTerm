@@ -201,7 +201,7 @@ export function BroadcastPickerModal(props: {
           </div>
           {mix.mixed && (
             <p className="mt-2 text-[11.5px] text-amber-300">
-              {t("选中目标同时包含本地终端（{local} 个）与远程终端（{remote} 个）。", { local: mix.local, remote: mix.remote })}
+              {t("选中目标同时包含本机终端（{local} 个）与远程终端（{remote} 个）。", { local: mix.local, remote: mix.remote })}
             </p>
           )}
         </div>

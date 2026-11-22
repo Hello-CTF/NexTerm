@@ -281,14 +281,14 @@ export function AgentRosterPanel({
               </span>
               <span
                 className={`shrink-0 ${TONE_BADGE[presence.tone]}`}
-                title={presence.evidence ? formatEvidence(presence.evidence) : t("暂无依据")}
+                title={presence.evidence ? formatEvidence(presence.evidence) : t("暂无状态说明")}
               >
                 {presence.label}
               </span>
               {run ? (
                 <span
                   className={`shrink-0 ${TONE_BADGE[run.tone]}`}
-                  title={run.evidence ? formatEvidence(run.evidence) : t("暂无依据")}
+                  title={run.evidence ? formatEvidence(run.evidence) : t("暂无状态说明")}
                 >
                   {run.label}
                 </span>

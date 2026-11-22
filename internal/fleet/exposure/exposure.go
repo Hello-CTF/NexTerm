@@ -479,7 +479,7 @@ func (c *Controller) reconcile() {
 
 // accountChangedReason explains a stop after the linked account changed; the
 // earlier account still lists the device, offline, until it is revoked there.
-const accountChangedReason = "已更换同步账号，本机终端不再向原账号开放。原账号的设备列表中仍有这台设备（离线），建议在那里吊销；如需开放给当前账号，请重新开启"
+const accountChangedReason = "已更换同步账号，本机终端不再向原账号开放。原账号的设备列表中仍有这台设备（离线），建议在那里撤销；如需开放给当前账号，请重新开启"
 
 // pinnedBaseURLs is the only server the agent of an enrollment talks to: the
 // linked account's server, never an address the enroll response or the agent
@@ -493,7 +493,7 @@ func pinnedBaseURLs(account Account) []agent.BaseURLEntry {
 func (c *Controller) failClosed(ctx context.Context, deviceID, reason string) error {
 	if err := c.config.Host.Revoke(ctx, deviceID); err != nil {
 		c.config.Logger.Warn("revoke a device that must not stay enrolled", "device_id", deviceID, "error", err)
-		return fmt.Errorf("%s；自动吊销设备 %s 失败，请在设备列表中吊销：%v", reason, deviceID, err)
+		return fmt.Errorf("%s；自动撤销设备 %s 失败，请在设备列表中撤销：%v", reason, deviceID, err)
 	}
 	return errors.New(reason)
 }
@@ -610,7 +610,7 @@ func (c *Controller) agentExited(err error) {
 		if setErr := c.config.Host.SetEnabled(c.ctx, false); setErr != nil {
 			c.config.Logger.Warn("turn local terminal exposure off", "error", setErr)
 		}
-		c.stopped = &Status{State: StateRevoked, Reason: "服务端已吊销此设备，本机终端不再开放；重新开启会重新注册"}
+		c.stopped = &Status{State: StateRevoked, Reason: "服务端已撤销此设备，本机终端不再开放；重新开启会重新注册"}
 		c.setStatus(*c.stopped)
 	case errors.Is(err, agent.ErrProtocolMismatch):
 		c.fail("服务端的设备协议版本与本机不同，请将桌面端与服务端升级到同一版本")

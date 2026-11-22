@@ -87,7 +87,7 @@ function persistenceFootnote(scope: "remote" | "local" | "all"): string {
 }
 
 function summaryCopy(count: number): string {
-  return tr("{count} 个可恢复", { count });
+  return tr("{count} 个可接管", { count });
 }
 
 function ago(ms: number): string {
@@ -122,7 +122,7 @@ function statusView(tab: BackgroundTab, muted: boolean): StatusView {
   return {
     label: "—",
     hint: tab.durable || tab.remote
-      ? tr("该主机上的 NexTerm 组件未开启状态检测")
+      ? tr("该主机上的持久终端组件未开启状态检测")
       : tr("临时终端不会报告状态"),
     tone: "muted",
   };
@@ -924,7 +924,7 @@ export function BackgroundSessions({
                     : noHostConnected
                       ? tr("有 {length} 台主机未连接，连接后才能查看", { length: unconnectedSessions.length })
                     : showAll
-                      ? tr("没有可恢复的后台会话")
+                      ? tr("没有可接管的后台会话")
                       : hostScope === "local"
                         ? tr("本机没有在后台运行的终端")
                         : tr("该主机上没有在后台运行的终端")}
@@ -936,10 +936,10 @@ export function BackgroundSessions({
                       : showAll
                         ? tr("请先从资产树打开目标主机，才能查看它上面的后台会话")
                         : hostScope === "local"
-                          ? tr("转到后台运行或由 AI 在后台创建的本机终端会列在这里，退出应用后结束")
+                          ? tr("转入后台或由 AI 在后台创建的本机终端会列在这里，退出应用后结束")
                           : ownerWorkspace?.assetKind === "ssh"
                             ? tr("持久终端关闭标签页后会继续在主机上运行并出现在这里；临时终端关闭后会结束")
-                            : tr("关闭标签页时选择「转到后台运行」，终端会继续在主机上运行并出现在这里")}
+                            : tr("关闭标签页时选择「转入后台」，终端会继续在主机上运行并出现在这里")}
                   </div>
                   {noHostConnected && !needsReconnect && (
                     <button className="nx-btn nx-btn-primary nx-btn-sm mt-2" disabled={desktopChecking || reconnecting} onClick={() => void connectAll()}>

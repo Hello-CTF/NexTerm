@@ -314,7 +314,7 @@ function workspaceCloseLines(summary: WorkspaceCloseSummary, withDecision: boole
     lines.push(tr("· {length} 个运行中的终端将转入后台", { length: summary.detachable.length }));
   }
   if (unconfirmed > 0) {
-    lines.push(tr("· {unconfirmed} 个终端无法确认状态，主机上可能仍在运行，将转入后台会话", { unconfirmed }));
+    lines.push(tr("· {unconfirmed} 个终端无法确认状态，主机上可能仍在运行，将转入后台", { unconfirmed }));
   }
   return lines;
 }
@@ -390,21 +390,21 @@ export function closeActionHint(t: AppTab): string | undefined {
   if (block === "regular" || block === "unknown") return tr("结束进程");
   const action = getTerminalPrefs().closeAction;
   if (action === "kill") return tr("结束进程");
-  if (action === "detach") return tr("转入后台运行");
-  return tr("转入后台运行或结束进程");
+  if (action === "detach") return tr("转入后台");
+  return tr("转入后台或结束进程");
 }
 
 export function closeTabHint(t: AppTab): string {
   if (t.kind === "remote") return tr("关闭标签页（断开后会话结束）");
   if (t.kind !== "terminal" || !t.tabId || t.dead) return tr("关闭标签页");
-  if (isUnconfirmedDurableExit(t)) return tr("关闭标签页（转入后台会话）");
+  if (isUnconfirmedDurableExit(t)) return tr("关闭标签页（转入后台）");
   if (t.exited) return tr("关闭标签页（进程已结束）");
   const action = closeActionHint(t);
   return action ? tr("关闭标签页（{action}）", { action }) : tr("关闭标签页");
 }
 
 const CLOSE_CHOICE_OPTIONS: ChoiceOption[] = [
-  { key: "detach", label: tr("转到后台运行"), hint: tr("进程继续运行，可在「后台会话」随时接管"), primary: true },
+  { key: "detach", label: tr("转入后台"), hint: tr("进程继续运行，可在「后台会话」随时接管"), primary: true },
   { key: "kill", label: tr("直接关闭"), hint: tr("结束进程，无法恢复"), danger: true },
 ];
 

@@ -82,7 +82,7 @@ describe("command palette keybinding hints", () => {
   it("shows the default bindings with their descriptions", async () => {
     await show();
     expect(optionHint("快速连接…")).toBe("Ctrl+Shift+K · 只看主机 · Tab 切换");
-    expect(optionHint("打开本地终端")).toBe("当前设备");
+    expect(optionHint("打开本机终端")).toBe("当前设备");
     expect(optionHint("向下分屏")).toBe("Ctrl+Shift+D · 拆分当前窗格");
     expect(optionHint("向右分屏")).toBe("Ctrl+Shift+\\ · 拆分当前窗格");
   });
@@ -95,7 +95,7 @@ describe("command palette keybinding hints", () => {
     });
     await show();
     expect(optionHint("快速连接…")).toBe("Alt+Q · 只看主机 · Tab 切换");
-    expect(optionHint("打开本地终端")).toBe("当前设备");
+    expect(optionHint("打开本机终端")).toBe("当前设备");
     expect(optionHint("向下分屏")).toBe("Alt+S · 拆分当前窗格");
 
     const quick = matchAppKeybinding(
@@ -120,7 +120,7 @@ describe("command palette keybinding hints", () => {
     await show();
     expect(optionHint("快速连接…")).toBe("只看主机 · Tab 切换");
     expect(optionHint("向下分屏")).toBe("拆分当前窗格");
-    expect(optionHint("打开本地终端")).toBe("当前设备");
+    expect(optionHint("打开本机终端")).toBe("当前设备");
   });
 
   it("reads persisted overrides in the storage format on load", async () => {
@@ -131,7 +131,7 @@ describe("command palette keybinding hints", () => {
     act(() => loadKeybindings());
     await show();
     expect(optionHint("快速连接…")).toBe("Alt+Q · 只看主机 · Tab 切换");
-    expect(optionHint("打开本地终端")).toBe("当前设备");
+    expect(optionHint("打开本机终端")).toBe("当前设备");
     expect(optionHint("向下分屏")).toBe("Alt+S · 拆分当前窗格");
     expect(getKeybinding("quickConnect")).toBe("Alt+q");
     expect(getKeybinding("closeTab")).toBe("Ctrl+Alt+w");

@@ -381,7 +381,7 @@ func (h *previewInputHandler) rejectInput(err error) {
 	var frame previewErrorFrame
 	switch {
 	case errors.Is(err, sharing.ErrPreviewRevoked):
-		frame = previewErrorFrame{Type: "error", Code: "revoked", Message: "分享链接已吊销"}
+		frame = previewErrorFrame{Type: "error", Code: "revoked", Message: "分享链接已撤销"}
 	case errors.Is(err, sharing.ErrPreviewExpired):
 		frame = previewErrorFrame{Type: "error", Code: "expired", Message: "分享链接已过期"}
 	case errors.Is(err, sharing.ErrPreviewInvalid):
@@ -417,7 +417,7 @@ func previewTermination(err error) (string, string) {
 	case errors.Is(err, sharing.ErrPreviewExpired):
 		return "expired", "分享链接已过期"
 	case errors.Is(err, sharing.ErrPreviewRevoked):
-		return "revoked", "分享链接已吊销"
+		return "revoked", "分享链接已撤销"
 	case errors.Is(err, sharing.ErrPreviewInvalid), errors.Is(err, sharing.ErrTokenNotFound):
 		return "not_found", "分享链接无效"
 	case errors.Is(err, session.ErrTabNotFound), errors.Is(err, session.ErrTabClosed):

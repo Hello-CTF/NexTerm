@@ -63,7 +63,7 @@ func TestConnectClosesNewDatabaseHandleWhenAccountSessionWasRevoked(t *testing.T
 	}
 	ctx := ipc.WithUserID(t.Context(), "account-a")
 	ctx = ipc.WithAccountSessionCheck(ctx, func(context.Context) error {
-		return ipc.NewError(ipc.CodeForbidden, "会话已吊销")
+		return ipc.NewError(ipc.CodeForbidden, "会话已撤销")
 	})
 	_, err := service.Connect(ctx, ConnectArgs{Inline: &InlineConnection{Kind: "redis", Host: "db.example"}})
 	var accessErr *ipc.Error

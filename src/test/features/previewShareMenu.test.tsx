@@ -82,7 +82,7 @@ describe("PreviewShareMenu", () => {
     expect(view.container.textContent).toContain("进行中的预览");
     expect(view.container.textContent).not.toContain("one-shot-token");
     const revokeCallsBefore = mocks.fetch.mock.calls.filter((call) => String(call[0]).includes("/revoke")).length;
-    clickButton(view.container, "吊销");
+    clickButton(view.container, "撤销");
     await flush();
     const revokeCalls = mocks.fetch.mock.calls.filter((call) => String(call[0]).includes("/revoke"));
     expect(revokeCalls.length).toBe(revokeCallsBefore + 1);

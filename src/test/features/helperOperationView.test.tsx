@@ -144,13 +144,13 @@ describe("HelperOperationView", () => {
       compatibility: "compatible",
     });
 
-    const local = sectionByLabel(view.container, "本地携带版本");
+    const local = sectionByLabel(view.container, "本机内置版本");
     expect(definition(local, "发布版本")).toBe("v1.4.0");
     expect(definition(local, "提交")).toBe("local-commit");
     expect(definition(local, "协议")).toBe("7");
     expect(definition(local, "SHA-256")).toBe(LOCAL_SHA);
 
-    const running = sectionByLabel(view.container, "远端运行版本");
+    const running = sectionByLabel(view.container, "主机上运行的版本");
     expect(definition(running, "发布版本")).toBe("v1.3.9");
     expect(definition(running, "提交")).toBe("running-commit");
     expect(definition(running, "协议")).toBe("7");
@@ -174,7 +174,7 @@ describe("HelperOperationView", () => {
       compatibility: "compatible",
     });
 
-    expect(() => sectionByLabel(view.container, "本地携带版本")).toThrow();
+    expect(() => sectionByLabel(view.container, "本机内置版本")).toThrow();
     const local = sectionByLabel(view.container, "本机 NexTerm 版本");
     const running = sectionByLabel(view.container, "设备代理版本");
     expect(definition(local, "发布版本")).toBe("1.4.3");
@@ -191,21 +191,21 @@ describe("HelperOperationView", () => {
       runningVersion: { known: true, release: "1.2.9", commit: "running-commit", protocol: 2, sha256: RUNNING_SHA },
       compatibility: "compatible",
     });
-    const local = sectionByLabel(view.container, "本地携带版本");
-    const running = sectionByLabel(view.container, "远端运行版本");
+    const local = sectionByLabel(view.container, "本机内置版本");
+    const running = sectionByLabel(view.container, "主机上运行的版本");
     expect(local.querySelectorAll("button")).toHaveLength(2);
     expect(running.querySelectorAll("button")).toHaveLength(2);
 
-    click(buttonByLabel(local, "复制本地携带版本的提交"));
+    click(buttonByLabel(local, "复制本机内置版本的提交"));
     await flush();
     expect(clipboard.copyText).toHaveBeenCalledWith("local-commit");
-    expect(liveText(local)).toContain("已复制本地携带版本的提交");
+    expect(liveText(local)).toContain("已复制本机内置版本的提交");
 
-    click(buttonByLabel(running, "复制远端运行版本的SHA-256"));
+    click(buttonByLabel(running, "复制主机上运行的版本的SHA-256"));
     await flush();
     expect(clipboard.copyText).toHaveBeenLastCalledWith(RUNNING_SHA);
-    expect(liveText(running)).toContain("复制远端运行版本的SHA-256失败");
-    expect(buttonByLabel(running, "复制远端运行版本的SHA-256").textContent).toBe("复制失败");
+    expect(liveText(running)).toContain("复制主机上运行的版本的SHA-256失败");
+    expect(buttonByLabel(running, "复制主机上运行的版本的SHA-256").textContent).toBe("复制失败");
   });
 
   it("announces a repeated copy of the same value again and clears the announcement afterwards", async () => {
@@ -241,8 +241,8 @@ describe("HelperOperationView", () => {
       compatibility: "compatible",
     });
 
-    expect(() => sectionByLabel(view.container, "本地携带版本")).toThrow();
-    expect(() => sectionByLabel(view.container, "远端运行版本")).toThrow();
+    expect(() => sectionByLabel(view.container, "本机内置版本")).toThrow();
+    expect(() => sectionByLabel(view.container, "主机上运行的版本")).toThrow();
     const version = sectionByLabel(view.container, "组件版本");
     expect(version.textContent).toContain("版本 1.2.9 · 提交 b3fe0b5 · 协议 2（本地与主机一致）");
     expect(view.container.textContent?.split("1.2.9")).toHaveLength(2);
@@ -325,11 +325,11 @@ describe("HelperOperationView", () => {
       runningVersion: { known: false },
       compatibility: "unknown",
     });
-    const local = sectionByLabel(view.container, "本地携带版本");
+    const local = sectionByLabel(view.container, "本机内置版本");
     expect(definition(local, "发布版本")).toBe("1.2.9");
     expect(local.querySelector("[data-differs]")).toBeNull();
-    expect(sectionByLabel(view.container, "远端运行版本").textContent).toContain("无法确认");
-    expect(terms(sectionByLabel(view.container, "远端运行版本"))).toEqual([]);
+    expect(sectionByLabel(view.container, "主机上运行的版本").textContent).toContain("无法确认");
+    expect(terms(sectionByLabel(view.container, "主机上运行的版本"))).toEqual([]);
   });
 
   it("says an update is available when the protocol matches but the release differs", () => {
@@ -341,7 +341,7 @@ describe("HelperOperationView", () => {
       update: { status: "available" },
     });
     expect(view.container.textContent).toContain("协议兼容，可继续使用；有可用更新。");
-    expect(differs(sectionByLabel(view.container, "本地携带版本"), "发布版本")).toBe(true);
+    expect(differs(sectionByLabel(view.container, "本机内置版本"), "发布版本")).toBe(true);
     expect(statusText(view.container)).toBe("持久终端已就绪");
     expect(sectionByLabel(view.container, "组件更新").textContent).toContain("有可用更新");
   });
@@ -367,7 +367,7 @@ describe("HelperOperationView", () => {
     });
 
     expect(statusText(view.container)).toBe("vendor_specific_stage");
-    expect(differs(sectionByLabel(view.container, "本地携带版本"), "协议")).toBe(true);
+    expect(differs(sectionByLabel(view.container, "本机内置版本"), "协议")).toBe(true);
     expect(view.container.textContent).toContain("协议不兼容（本地 3，主机 2）");
     expect(view.container.textContent).toContain("持久终端暂不可用");
     expect(view.container.textContent).toContain("不会自动替换");
@@ -657,7 +657,7 @@ describe("HelperOperationView", () => {
 
   it("shows where a consented replacement failed and what it already did", () => {
     const stopped = renderView({ replaceFailure: { stage: "start", stopped: true, forced: true, rolledBack: true, cause: "did not start" } });
-    const section = sectionByLabel(stopped.container, "组件升级失败");
+    const section = sectionByLabel(stopped.container, "持久终端组件更新失败");
     expect(section.querySelector("[role=alert]")?.textContent).toContain("会话已终止");
     expect(section.textContent).toContain("已重新启动旧版组件，原会话不会恢复");
     expect(section.textContent).toContain("强制结束");
@@ -667,6 +667,6 @@ describe("HelperOperationView", () => {
     mounted = undefined;
 
     const refused = renderView({ replaceFailure: { stage: "terminate", stopped: false, forced: false, rolledBack: false } });
-    expect(sectionByLabel(refused.container, "组件升级失败").textContent).toContain("它和其中的会话仍在运行");
+    expect(sectionByLabel(refused.container, "持久终端组件更新失败").textContent).toContain("它和其中的会话仍在运行");
   });
 });

@@ -1515,8 +1515,8 @@ describe("closing a local terminal follows explicit capability and preference", 
   it("hints use the explicit local capability instead of only the session kind", () => {
     const tab = { ...terminal(), retainable: true };
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }], "local");
-    expect(closeActionHint(tab)).toBe("转入后台运行");
-    expect(closeTabHint(tab)).toBe("关闭标签页（转入后台运行）");
+    expect(closeActionHint(tab)).toBe("转入后台");
+    expect(closeTabHint(tab)).toBe("关闭标签页（转入后台）");
 
     const unknown = { ...terminal("unknown"), retainable: undefined };
     seed([{ id: "p", tabs: [unknown], activeTabId: unknown.id }], "local");

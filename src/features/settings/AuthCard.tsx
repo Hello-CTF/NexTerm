@@ -197,8 +197,8 @@ export function AuthCard({ sync }: { sync?: ReactNode } = {}) {
 
   const revokeDevice = async (device: AccountDevice) => {
     const actionAccount = accountKey;
-    const ok = await ask(t("确定要吊销设备「{name}」吗？\n\n吊销后，该设备将立即退出登录，且无法恢复。", { name: device.name }), {
-      title: t("吊销设备"),
+    const ok = await ask(t("确定要撤销设备「{name}」吗？\n\n撤销后，该设备将立即退出登录，且无法恢复。", { name: device.name }), {
+      title: t("撤销设备"),
       kind: "warning",
     });
     if (!ok || !actionAccount || accountKeyRef.current !== actionAccount) return;
@@ -210,10 +210,10 @@ export function AuthCard({ sync }: { sync?: ReactNode } = {}) {
           await authApi.deviceRevoke(device.id);
         }
         if (accountKeyRef.current !== actionAccount) return;
-        pushToast("success", t("已吊销「{name}」，该设备已退出登录", { name: device.name }));
+        pushToast("success", t("已撤销「{name}」，该设备已退出登录", { name: device.name }));
         void loadDevices();
       } catch (e) {
-        if (accountKeyRef.current === actionAccount) pushToast("error", t("吊销失败：{value}。请重试。", { value: describeError(e) }));
+        if (accountKeyRef.current === actionAccount) pushToast("error", t("撤销失败：{value}。请重试。", { value: describeError(e) }));
       }
     });
   };
@@ -551,7 +551,7 @@ export function AuthCard({ sync }: { sync?: ReactNode } = {}) {
           </button>
         </div>
         <p className="nx-hint mb-3">
-          {t("吊销后，该设备的登录会话立即失效。")}
+          {t("撤销后，该设备的登录会话立即失效。")}
         </p>
 
         {devicesError && (
@@ -572,7 +572,7 @@ export function AuthCard({ sync }: { sync?: ReactNode } = {}) {
         {devices && revokedCount > 0 && (
           <label className="nx-hint mb-2 flex items-center gap-1.5 text-[11px]">
             <input type="checkbox" checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} />
-            {t("显示已吊销（{revokedCount}）", { revokedCount })}</label>
+            {t("显示已撤销（{revokedCount}）", { revokedCount })}</label>
         )}
 
         {devices && visibleDevices.length > 0 && (
@@ -589,18 +589,18 @@ export function AuthCard({ sync }: { sync?: ReactNode } = {}) {
                   </span>
                   <DeviceKind kind={d.kind} />
                   <span className={`nx-badge shrink-0 ${revoked ? "nx-badge-red" : "nx-badge-green"}`}>
-                    {revoked ? t("已吊销") : t("生效中")}
+                    {revoked ? t("已撤销") : t("生效中")}
                   </span>
                   <span className="nx-hint shrink-0 text-[11px]">{t("最近活动 {value}", { value: formatTime(d.last_seen_at) })}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
                     disabled={revoked || pending !== null}
                     aria-busy={pending === `device:${d.id}`}
-                    title={revoked ? t("已吊销") : pending !== null && pending !== `device:${d.id}` ? t("正在处理另一项操作，请稍候") : t("吊销后该设备立即退出登录")}
+                    title={revoked ? t("已撤销") : pending !== null && pending !== `device:${d.id}` ? t("正在处理另一项操作，请稍候") : t("撤销后该设备立即退出登录")}
                     onClick={() => void revokeDevice(d)}
                   >
                     <IconTrash size={11} />
-                    {pending === `device:${d.id}` ? t("正在吊销…") : t("吊销")}
+                    {pending === `device:${d.id}` ? t("正在撤销…") : t("撤销")}
                   </button>
                 </div>
               );

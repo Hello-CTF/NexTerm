@@ -104,7 +104,7 @@ func (a *Accounts) RevokeDevice(ctx context.Context, userID, deviceID string) er
 				return ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
 			}
 			if row.RevokedAt != nil {
-				return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+				return ipc.NewError(ipc.CodeForbidden, "设备已撤销")
 			}
 			now := a.now()
 			info, err := userDevice.WithContext(ctx).
@@ -114,7 +114,7 @@ func (a *Accounts) RevokeDevice(ctx context.Context, userID, deviceID string) er
 				return dbError(err)
 			}
 			if info.RowsAffected == 0 {
-				return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+				return ipc.NewError(ipc.CodeForbidden, "设备已撤销")
 			}
 			userSession := query.Use(tx).UserSession
 			if _, err := userSession.WithContext(ctx).

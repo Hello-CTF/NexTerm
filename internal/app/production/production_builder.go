@@ -299,7 +299,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 					}
 					return listed.Agent.StateDigest, nil
 				}
-				return "", ipc.NewError(ipc.CodeNotFound, "设备不存在或已吊销")
+				return "", ipc.NewError(ipc.CodeNotFound, "设备不存在或已撤销")
 			},
 			RemoteSessions: func(ctx context.Context, waitMS int) (session.AggregateList, error) {
 				// The linked account decides which devices this desktop sees;

@@ -330,7 +330,7 @@ describe("Device management view - role differences", () => {
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("登录后方可查看") ?? false);
 
-    expect(document.body.textContent).toContain("登录入口位于「设置 → 账号同步」的「账号」卡片");
+    expect(document.body.textContent).toContain("登录入口位于「设置 → 账号与同步」的「账号」卡片");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/fleet") || c.url.startsWith("/device"))).toHaveLength(0);
   });
@@ -1104,7 +1104,7 @@ describe("Device management view - enrollment code issuance", () => {
     expect(enrollCalls[0].body).toEqual({ ttl_ms: 900_000 });
 
     const text = document.body.textContent ?? "";
-    expect(text).toContain("接入码仅可使用一次，设备凭证只保存在设备上。");
+    expect(text).toContain("接入码仅可使用一次，设备凭据只保存在设备上。");
     expect(text).toContain("接入码 15 分钟后失效");
     expect(text).toContain("无法读取服务端版本");
     expect(text).toContain("随用户登录自动启动");
@@ -1582,7 +1582,7 @@ describe("Device management view - card layout", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("web-01"));
 
-    expect(card?.textContent).not.toContain("吊销");
+    expect(card?.textContent).not.toContain("撤销");
     expect(card?.textContent).not.toContain("期望自启动");
     expect(card?.querySelector("time")?.getAttribute("title")).toBe(formatTime(AGENT_DEVICE.agent.last_seen_at));
     expect(card?.textContent).toContain("Linux");

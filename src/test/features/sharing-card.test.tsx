@@ -351,7 +351,7 @@ describe("ShareCard lists and states", () => {
     expect(text).toContain("只读");
     expect(text).toContain("读写");
     expect(text).toContain("有效");
-    expect(text).toContain("已吊销");
+    expect(text).toContain("已撤销");
     expect(text).toContain("已过期");
     expect(text).toContain("通过设备代理在已接入的受管设备上新建终端");
     expect(text.match(/主机密码或私钥/g)).toHaveLength(1);
@@ -497,8 +497,8 @@ describe("ShareCard revocation", () => {
     await flushUntil(() => document.body.textContent?.includes("分享给 alice") ?? false);
 
     const card = shareCard();
-    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("分享给 alice") && !d.textContent?.includes("已吊销"));
-    const revokeButton = [...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销");
+    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("分享给 alice") && !d.textContent?.includes("已撤销"));
+    const revokeButton = [...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "撤销");
     click(revokeButton as HTMLButtonElement);
     await flushUntil(() => calls.some((c) => c.url === "/share/host-shares/hs-1/revoke"));
 
@@ -507,9 +507,9 @@ describe("ShareCard revocation", () => {
     await flushUntil(() => calls.filter((c) => c.url === "/share/host-shares" && c.method === "GET").length >= 2);
 
     // hs-4 is revoked: no revoke button in the row anymore
-    const revokedRow = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("分享给 alice") && d.textContent?.includes("已吊销"));
+    const revokedRow = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("分享给 alice") && d.textContent?.includes("已撤销"));
     expect(revokedRow).toBeDefined();
-    expect([...(revokedRow?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "吊销")).toBe(false);
+    expect([...(revokedRow?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "撤销")).toBe(false);
   });
 
   it("does not send a revoke request when confirmation is canceled", async () => {
@@ -520,8 +520,8 @@ describe("ShareCard revocation", () => {
     await flushUntil(() => document.body.textContent?.includes("分享给 alice") ?? false);
 
     const card = shareCard();
-    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("分享给 alice") && !d.textContent?.includes("已吊销"));
-    click([...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
+    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("分享给 alice") && !d.textContent?.includes("已撤销"));
+    click([...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "撤销") as HTMLButtonElement);
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
     await flush();
 
@@ -540,8 +540,8 @@ describe("ShareCard account isolation while confirmation is open", () => {
     await flushUntil(() => document.body.textContent?.includes("分享给 alice") ?? false);
 
     const card = shareCard();
-    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("分享给 alice") && !d.textContent?.includes("已吊销"));
-    click([...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
+    const row = [...(card?.querySelectorAll("div.border-b") ?? [])].find((d) => d.textContent?.includes("分享给 alice") && !d.textContent?.includes("已撤销"));
+    click([...(row?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "撤销") as HTMLButtonElement);
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
 
     // The confirm dialog is still open: switch to a regular user, confirm only afterwards - the old account's revoke must not be fired.

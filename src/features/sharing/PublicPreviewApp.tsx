@@ -24,7 +24,7 @@ interface ErrorCopy {
 
 const CONNECT_FAILED_COPY: ErrorCopy = {
   title: t("无法连接预览终端"),
-  detail: t("链接可能无效、已过期或已吊销，也可能是网络异常。请核对链接是否完整后重试。"),
+  detail: t("链接可能无效、已过期或已撤销，也可能是网络异常。请核对链接是否完整后重试。"),
   retryable: true,
 };
 
@@ -33,7 +33,7 @@ function errorCopy(failure: PreviewFailure): ErrorCopy {
     case "expired":
       return { title: t("预览链接已过期"), detail: t("请让分享者重新生成链接后再打开。"), retryable: false };
     case "revoked":
-      return { title: t("预览链接已吊销"), detail: t("分享者已停止本次分享，可向其确认是否重新分享。"), retryable: false };
+      return { title: t("预览链接已撤销"), detail: t("分享者已停止本次分享，可向其确认是否重新分享。"), retryable: false };
     case "not_found":
       return { title: t("预览链接无效"), detail: t("请核对链接是否完整，或向分享者确认预览状态。"), retryable: false };
     case "ended":

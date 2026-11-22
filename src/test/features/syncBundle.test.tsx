@@ -354,13 +354,13 @@ describe("SyncBundleCard import", () => {
 describe("SyncBundleCard section references", () => {
   it("refers to the account sync section above rather than calling it asset sync", async () => {
     await mountCard();
-    expect(text()).toContain("与上方「账号同步」的推送和拉取互不影响");
+    expect(text()).toContain("与上方「账号与同步」的推送和拉取互不影响");
     expect(text()).not.toContain("「资产同步」");
   });
 
   it("shows only the description and export/import buttons by default, expanding each area on demand", async () => {
     mounted = withClient(createElement(SyncBundleCard));
-    expect(text()).toContain("与上方「账号同步」的推送和拉取互不影响");
+    expect(text()).toContain("与上方「账号与同步」的推送和拉取互不影响");
     expect(mounted!.container.querySelector("#bundle-password")).toBeNull();
     expect(
       [...mounted!.container.querySelectorAll("button")].some(

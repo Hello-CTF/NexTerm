@@ -279,7 +279,7 @@ func TestSyncMapsServerFailureShape(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"ok":false,"error":{"code":"forbidden","message":"设备已吊销"}}`))
+		w.Write([]byte(`{"ok":false,"error":{"code":"forbidden","message":"设备已撤销"}}`))
 	}))
 	defer server.Close()
 	client, err := NewEndpointClient(BaseURLEntry{URL: server.URL})
@@ -293,7 +293,7 @@ func TestSyncMapsServerFailureShape(t *testing.T) {
 	if !errors.As(err, &serverError) {
 		t.Fatalf("Sync error = %v, want *ServerError", err)
 	}
-	if serverError.Status != http.StatusForbidden || serverError.Code != "forbidden" || !strings.Contains(serverError.Message, "吊销") {
+	if serverError.Status != http.StatusForbidden || serverError.Code != "forbidden" || !strings.Contains(serverError.Message, "撤销") {
 		t.Fatalf("server error = %+v", serverError)
 	}
 	if !isForbidden(err) {

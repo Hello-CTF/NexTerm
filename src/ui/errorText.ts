@@ -23,7 +23,7 @@ const ERROR_CODE_TEXT: Record<string, string> = {
   forbidden: t("无权执行该操作"),
   conflict: t("内容已被其他操作修改，请刷新后重试"),
   metadata_conflict: t("名称已被其他操作修改，请刷新后重试"),
-  mfa_enrollment_required: t("需要先绑定二次验证，请在账号设置中完成绑定后再继续"),
+  mfa_enrollment_required: t("需要先绑定两步验证，请在账号设置中完成绑定后再继续"),
   cancelled: t("操作已取消"),
   needs_confirm: t("该操作需要确认后才能继续"),
   ssh: t("SSH 连接或操作失败，请检查主机地址、账号和网络后重试"),

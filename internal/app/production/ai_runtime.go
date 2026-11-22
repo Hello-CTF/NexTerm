@@ -496,7 +496,7 @@ func (r *productionScopeResolver) validateDeviceScope(ctx context.Context, devic
 		return ipc.WrapError(ipc.CodeForbidden, "AI 终端范围中的设备不存在；请重新选择主机后再试", errStaleDeviceScope)
 	}
 	if row.RevokedAt != nil {
-		return ipc.WrapError(ipc.CodeForbidden, "设备「"+row.Name+"」已吊销，无法使用它的终端；请重新连接或选择其他主机", errStaleDeviceScope)
+		return ipc.WrapError(ipc.CodeForbidden, "设备「"+row.Name+"」已撤销，无法使用它的终端；请重新连接或选择其他主机", errStaleDeviceScope)
 	}
 	return nil
 }

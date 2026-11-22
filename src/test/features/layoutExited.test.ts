@@ -261,7 +261,7 @@ describe("remote layout preserves exited terminal state", () => {
 
     // An exit without proof (the layout carries no exit status) may still run on the host, so it detaches and
     // the confirmation says so; only the live-and-attached tab closes without a question.
-    if (currentExited) expect(mocks.ask.mock.calls[0]?.[0]).toContain("主机上可能仍在运行，将转入后台会话");
+    if (currentExited) expect(mocks.ask.mock.calls[0]?.[0]).toContain("主机上可能仍在运行，将转入后台");
     else expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "detach", "s");

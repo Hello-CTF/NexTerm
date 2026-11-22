@@ -184,7 +184,7 @@ describe("Settings search", () => {
 
     expect(mounted!.container.querySelector('[data-setting="terminal-scrollback"]')).toBeNull();
     search("回滚行数");
-    click(optionStartingWith("终端回滚行数")!);
+    click(optionStartingWith("滚动历史行数")!);
     await flush();
     expect(groupShown("terminal")).toBe(true);
     const scrollback = mounted!.container.querySelector<HTMLElement>('[data-setting="terminal-scrollback"]');

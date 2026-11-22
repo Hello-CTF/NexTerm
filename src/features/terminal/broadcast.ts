@@ -167,7 +167,7 @@ export function broadcastRiskMessage(count: number, mix: LocalRemoteMix): string
   ];
   if (mix.mixed) {
     base.push(
-      t("注意：目标同时包含本地终端（{local} 个）与远程终端（{remote} 个），同一条命令会在本机和远程主机上同时执行。", { local: mix.local, remote: mix.remote }),
+      t("注意：目标同时包含本机终端（{local} 个）与远程终端（{remote} 个），同一条命令会在本机和远程主机上同时执行。", { local: mix.local, remote: mix.remote }),
     );
   }
   return base.join("\n");

@@ -620,7 +620,7 @@ export function TerminalPane({
             choices: [
               { key: "once", label: tr("允许本次"), hint: tr("只写入这一次，下次再询问"), primary: true },
               { key: "session", label: tr("本会话允许"), hint: tr("该终端会话内不再询问") },
-              { key: "deny", label: tr("拒绝"), hint: tr("本会话内一律静默丢弃"), danger: true },
+              { key: "deny", label: tr("拒绝"), hint: tr("本会话内一律忽略写入请求"), danger: true },
             ],
           },
         );
@@ -1389,12 +1389,12 @@ export function TerminalPane({
         st.updateTab(storeTabId, { tabId: undefined });
         setKernelTabId(null);
         setEpoch((n) => n + 1);
-        pushToast("info", tr("原终端在服务端已不存在，已打开新终端"));
+        pushToast("info", tr("原终端已不存在，已为你打开新终端"));
         return;
       }
       st.updateTab(storeTabId, { dead: true });
       if (session?.kind === "ssh" || session?.kind === "device") {
-        st.failHelperRestore(storeTabId, tr("原持久终端恢复失败；远端进程是否存活仍未知"));
+        st.failHelperRestore(storeTabId, tr("原持久终端未能恢复，主机上的进程可能仍在运行"));
       }
       setKernelTabId(null);
       setAttachDead(true);
@@ -2116,13 +2116,13 @@ export function TerminalPane({
       : []),
     ...(effectiveWinrm ? ([{ kind: "item", label: tr("PowerShell 会话（WinRM）"), disabled: true }] satisfies MenuItem[]) : []),
     ...(containerId
-      ? ([{ kind: "item", label: execInterrupted ? tr("容器 exec 已结束") : tr("容器内 exec"), disabled: true }] satisfies MenuItem[])
+      ? ([{ kind: "item", label: execInterrupted ? tr("容器命令已结束") : tr("容器内命令"), disabled: true }] satisfies MenuItem[])
       : []),
     ...(throttleNow?.active
       ? ([{ kind: "item", label: tr("输出积压，画面可能有延迟"), disabled: true }] satisfies MenuItem[])
       : []),
     ...(throttleNow?.resyncing
-      ? ([{ kind: "item", label: tr("输出过快，正在重新同步"), disabled: true }] satisfies MenuItem[])
+      ? ([{ kind: "item", label: tr("输出过快，正在同步画面"), disabled: true }] satisfies MenuItem[])
       : []),
     ...(streamBacklog
       ? ([{ kind: "item", label: tr("解析积压，画面可能有延迟"), disabled: true }] satisfies MenuItem[])
@@ -2188,7 +2188,7 @@ export function TerminalPane({
             kind: "item",
             label: tr("预览链接"),
             icon: <IconGlobe size={13} />,
-            hint: previewActive ? tr("分享中") : tr("创建 / 管理"),
+            hint: previewActive ? tr("分享中") : tr("创建或管理预览链接"),
             onSelect: () => setPreviewOpenRequest((n) => n + 1),
           },
         ] satisfies MenuItem[])
@@ -2233,7 +2233,7 @@ export function TerminalPane({
             kind: "item",
             label: tr("命令列表"),
             icon: <IconList size={13} />,
-            hint: blocks.length > 0 ? tr("{length} 条", { length: blocks.length }) : tr("折叠输出 / 复制 / 定位"),
+            hint: blocks.length > 0 ? tr("{length} 条", { length: blocks.length }) : tr("折叠、复制或定位命令输出"),
             onSelect: toggleBlocksPanel,
           },
         ] satisfies MenuItem[])
@@ -2631,7 +2631,7 @@ export function TerminalPane({
         )}
         {throttleNow?.resyncing && (
           <span className="nx-badge" role="status" title={tr("输出速度较快，画面将自动同步，无需操作")}>
-            {tr("正在同步输出")}
+            {tr("输出过快，正在同步画面")}
           </span>
         )}
         {throttleNow?.recovered && (
@@ -2759,7 +2759,7 @@ export function TerminalPane({
             <span
               className="nx-dot nx-dot-pulse nx-term-more-dot ml-0.5 align-middle"
               role="img"
-              aria-label={tr("有状态需要查看，点开菜单")}
+              aria-label={tr("有提示需要查看，请打开菜单")}
               data-testid="toolbar-status-dot"
             />
           )}

@@ -93,13 +93,13 @@ export function AgentToolCard({
           {run && (
             <span
               className={TONE_BADGE[run.tone]}
-              title={run.evidence ? formatEvidence(run.evidence) : t("暂无依据")}
+              title={run.evidence ? formatEvidence(run.evidence) : t("暂无状态说明")}
             >
               {run.label}
             </span>
           )}
           {call.presence !== "attached" && (
-            <span className={TONE_BADGE[presence.tone]} title={presence.evidence ? formatEvidence(presence.evidence) : t("暂无依据")}>
+            <span className={TONE_BADGE[presence.tone]} title={presence.evidence ? formatEvidence(presence.evidence) : t("暂无状态说明")}>
               {presence.label}
             </span>
           )}

@@ -179,7 +179,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         : [
             {
               id: "local-terminal",
-              label: t("打开本地终端"),
+              label: t("打开本机终端"),
               hint: t("当前设备"),
               icon: IconTerminal,
               run: () => {

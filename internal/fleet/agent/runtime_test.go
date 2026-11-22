@@ -90,7 +90,7 @@ func newFakeFleetServer(t *testing.T) *fakeFleetServer {
 		if forbidden {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"ok":false,"error":{"code":"forbidden","message":"设备已吊销"}}`))
+			w.Write([]byte(`{"ok":false,"error":{"code":"forbidden","message":"设备已撤销"}}`))
 			return
 		}
 		_ = json.NewEncoder(w).Encode(response)

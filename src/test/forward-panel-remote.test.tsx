@@ -236,7 +236,7 @@ describe("ForwardPanel remote forwarding (-R)", () => {
     expect(row?.textContent).toContain("远程转发");
     expect(row?.textContent).toContain("127.0.0.1:18080");
     expect(row?.textContent).toContain("NexTerm 所在主机");
-    expect(mounted!.container.textContent).toContain("0 条静态转发 · 1 条远程转发 · 0 条 SOCKS5 代理");
+    expect(mounted!.container.textContent).toContain("0 条本地转发 · 1 条远程转发 · 0 条 SOCKS5 代理");
   });
 
   it("reports stop failures without claiming success", async () => {
@@ -353,7 +353,7 @@ describe("Forward settings", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     expect(settingsMounted.container.textContent).toContain("默认关闭");
     expect(settingsMounted.container.textContent).toContain("最多同时建立 4 个设备连接");
-    expect(settingsMounted.container.textContent).toContain("自动跳过生产项目资产");
+    expect(settingsMounted.container.textContent).toContain("自动跳过生产环境资产");
     expect(settingsMounted.container.textContent).toContain("仅本地固定端口转发，只监听 127.0.0.1");
     expect(settingsMounted.container.textContent).toContain("SOCKS5、远程转发和公共监听不支持自动启动");
   });

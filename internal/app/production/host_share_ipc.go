@@ -116,7 +116,7 @@ func (m *hostShareIPC) Start(ctx context.Context) error {
 
 func (m *hostShareIPC) Identity(ctx context.Context) (*syncservice.RemoteHostShareIdentity, error) {
 	if m.identity == nil {
-		return nil, ipc.NewError(ipc.CodeUnsupported, "共享主机终端仅在桌面远程账号下可用")
+		return nil, ipc.NewError(ipc.CodeUnsupported, "主机分享仅在桌面远程账号下可用")
 	}
 	identity, err := m.identity(ctx)
 	if err != nil {
@@ -136,7 +136,7 @@ func (m *hostShareIPC) Open(ctx context.Context, call *ipc.Call, deviceID, strea
 		return ipc.NewError(ipc.CodeBadParam, "streamId 必须与终端通道一致")
 	}
 	if m.dial == nil {
-		return ipc.NewError(ipc.CodeUnsupported, "共享主机终端仅在桌面远程账号下可用")
+		return ipc.NewError(ipc.CodeUnsupported, "主机分享仅在桌面远程账号下可用")
 	}
 	identity, err := m.Identity(ctx)
 	if err != nil {

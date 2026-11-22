@@ -304,7 +304,7 @@ describe("Device management - desktop logged in", () => {
 
     expect(mocks.issueEnrollCode).toHaveBeenCalledWith(15 * 60_000);
     const text = document.body.textContent ?? "";
-    expect(text).toContain("接入码仅可使用一次，设备凭证只保存在设备上。");
+    expect(text).toContain("接入码仅可使用一次，设备凭据只保存在设备上。");
     expect(text).toContain("--version '1.2.3'");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Windows") as HTMLButtonElement);
     expect(document.body.textContent).toContain("install-device.ps1");

@@ -202,7 +202,7 @@ func TestBridgeRelayPeriodicCheckClosesExpiredSession(t *testing.T) {
 func TestBridgeRelayRejectsSessionRevokedBeforeRegistration(t *testing.T) {
 	f, session, _ := newBridgeRelayFixture(t, "relay-late")
 	f.service.bridges.check = func(context.Context, string) (*account.Identity, error) {
-		return nil, ipc.NewError(ipc.CodeForbidden, "会话已吊销，请重新登录")
+		return nil, ipc.NewError(ipc.CodeForbidden, "会话已撤销，请重新登录")
 	}
 	if response := f.call(t, http.MethodGet, "/fleet/devices/"+f.deviceID+"/bridge", nil, session, ""); response.status != http.StatusUnauthorized {
 		t.Fatalf("relay after revocation: HTTP %d %v", response.status, response.body)
