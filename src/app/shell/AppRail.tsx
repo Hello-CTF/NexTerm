@@ -83,7 +83,7 @@ export function AppRail({
       key: "assets",
       label: t("资产"),
       hint: hasHost
-        ? t("临时切换到资产树；双击收起左侧栏")
+        ? t("切换到资产树，再点一次回到文件树；双击收起左侧栏")
         : t("管理主机和数据库；双击收起左侧栏"),
       icon: IconServer,
       onClick: () => {
