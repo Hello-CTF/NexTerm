@@ -1030,7 +1030,7 @@
   "主机健康探测不可用": "La comprobación de estado del host no está disponible",
   "主机分享": "Compartir host",
   "主机分享不存在": "El uso compartido del host no existe",
-  "主机分享仅在桌面远程账号下可用": "El terminal de host compartido solo está disponible con una cuenta remota de escritorio",
+  "主机分享仅在桌面远程账号下可用": "Compartir host solo está disponible con una cuenta remota de escritorio",
   "主机分享已撤销": "El uso compartido del host fue revocado",
   "主机分享已过期": "El uso compartido del host ha caducado",
   "主机名变更": "Cambio de nombre de host",
