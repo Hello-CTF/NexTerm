@@ -4,7 +4,8 @@ import { IconList, IconEdit, IconAlert, IconLoader, IconClose, IconImage, IconKe
 import { exportConversationMarkdown } from "../workbench/workbenchShared";
 import { ProductionWriteRiskNotice } from "../../production/ProductionWarning";
 import { DESKTOP } from "../../../ipc/env";
-import { isImeKeyEvent } from "../../../ui/DialogHost";
+import { isImeEnter } from "../../../ui/imeEnter";
+import { isMobileShell, useCoarsePointer } from "../../../app/shell";
 import { ComposerMoreMenu, type ComposerMoreItem } from "./ComposerMoreMenu";
 import { ModelSelector } from "../ModelSelector";
 import { UsageRing } from "../UsageRing";
@@ -38,6 +39,8 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
     void send();
   };
   const sendDisabled = (!input.trim() && images.length === 0) || editSubmitting;
+  // Soft keyboards have no Shift+Enter, so on touch screens Enter starts a new line and the send button sends.
+  const touch = useCoarsePointer() || isMobileShell();
   // The indicator names the mode tool calls here are decided with, and why it applies.
   const applied = perm ? appliedPermissionMode(perm.mode, aiScopeProduction?.production === true) : null;
   const permReason = applied?.capped
@@ -287,14 +290,21 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           ref={inputRef}
           className="nx-textarea pointer-coarse:text-[16px] max-h-40 min-h-[64px] w-full [@media(max-height:480px)]:h-9 [@media(max-height:480px)]:min-h-0"
           placeholder={
-            busy
-              ? t("运行中：Enter 发送补充指令，AI 会在当前步骤完成后收到")
-              : sessionId
-                ? DESKTOP
-                  ? t("向 NexTerm 提问（Enter 发送，Shift+Enter 换行），@ 引用，/ 命令与技能")
-                  : t("向 NexTerm 提问（Enter 发送，Shift+Enter 换行），@ 引用，/ 命令与技能，可粘贴图片")
-                : t("未连接会话（仍可全局提问）")
+            touch
+              ? busy
+                ? t("运行中：可发送补充指令，AI 会在当前步骤完成后收到")
+                : sessionId
+                  ? t("向 NexTerm 提问，@ 引用，/ 命令与技能")
+                  : t("未连接会话（仍可全局提问）")
+              : busy
+                ? t("运行中：Enter 发送补充指令，AI 会在当前步骤完成后收到")
+                : sessionId
+                  ? DESKTOP
+                    ? t("向 NexTerm 提问（Enter 发送，Shift+Enter 换行），@ 引用，/ 命令与技能")
+                    : t("向 NexTerm 提问（Enter 发送，Shift+Enter 换行），@ 引用，/ 命令与技能，可粘贴图片")
+                  : t("未连接会话（仍可全局提问）")
           }
+          enterKeyHint={touch ? "enter" : "send"}
           aria-label={t("消息输入")}
           value={input}
           rows={3}
@@ -308,7 +318,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
                 setSlashIndex((index) => (index + step + slashItems.length) % slashItems.length);
                 return;
               }
-              if ((e.key === "Enter" && !e.shiftKey && !isImeKeyEvent(e)) || e.key === "Tab") {
+              if ((e.key === "Enter" && !e.shiftKey && !isImeEnter(e)) || e.key === "Tab") {
                 e.preventDefault();
                 slashItems[Math.min(slashIndex, slashItems.length - 1)].run();
                 return;
@@ -321,7 +331,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
                 setAtIndex((index) => (index + step + atItems.length) % atItems.length);
                 return;
               }
-              if ((e.key === "Enter" && !e.shiftKey && !isImeKeyEvent(e)) || e.key === "Tab") {
+              if ((e.key === "Enter" && !e.shiftKey && !isImeEnter(e)) || e.key === "Tab") {
                 e.preventDefault();
                 pickRef(atItems[Math.min(atIndex, atItems.length - 1)]);
                 return;
@@ -333,7 +343,9 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
               return;
             }
             if (e.key === "Enter" && !e.shiftKey) {
-              if (isImeKeyEvent(e)) return;
+              if (isImeEnter(e)) return;
+              // A hardware keyboard on a touch screen still sends with Ctrl/Cmd+Enter.
+              if (touch && !e.ctrlKey && !e.metaKey) return;
               e.preventDefault();
               if (busy) void steer();
               else if (editing) void submitEditResend();
@@ -384,6 +396,11 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
               loadSummary={() => modelApi.usageSummary()}
             />
             <ComposerMoreMenu items={[...moreItems, ...exportItems]} />
+            {busy && touch && input.trim() && (
+              <button className="nx-send-btn" aria-label={t("发送")} title={t("发送")} onClick={() => void steer()}>
+                <IconSendArrow />
+              </button>
+            )}
             {busy ? (
               <button
                 className="nx-send-btn nx-send-btn-stop"
@@ -404,8 +421,8 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
               <button
                 className="nx-send-btn"
                 aria-label={editing ? t("编辑并重新发送") : t("发送")}
-                aria-keyshortcuts="Enter"
-                title={editing ? t("编辑并重新发送") : t("发送 (Enter)")}
+                aria-keyshortcuts={touch ? undefined : "Enter"}
+                title={editing ? t("编辑并重新发送") : touch ? t("发送") : t("发送 (Enter)")}
                 disabled={sendDisabled}
                 onClick={() => (editing ? void submitEditResend() : sendMessage())}
               >

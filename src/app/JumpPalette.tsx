@@ -21,6 +21,7 @@ import { assetApi, type Asset } from "../ipc/commands";
 import { WEB } from "../ipc/env";
 import { describeError } from "../ui/errorText";
 import { isEditableTarget, isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../ui/DialogHost";
+import { isImeEnter } from "../ui/imeEnter";
 import { useAssetVisibility } from "../features/explorer/assetVisibility";
 import { quickConnectScore, useConnectHistory } from "../features/explorer/connectHistory";
 import { useAssetReachability } from "../features/explorer/assetReachability";
@@ -730,7 +731,7 @@ export function JumpPalette({
       trapOverlayTab(event, modalRef.current);
       return;
     }
-    if (isImeKeyEvent(event)) return;
+    if (isImeEnter(event)) return;
     if (historyMode && event.key !== "Escape") {
       historyKeyRef.current?.(event);
       return;

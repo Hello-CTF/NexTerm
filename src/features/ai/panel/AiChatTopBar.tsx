@@ -3,6 +3,7 @@ import { IconSearch, IconClock, IconHistory, IconChevronUp, IconChevronDown, Ico
 import { ConversationArchiveDialog } from "../workbench/ConversationArchiveDialog";
 import type { AiChatCtx } from "./aiChatCtx";
 import { t } from "../../../i18n";
+import { isImeEnter } from "../../../ui/imeEnter";
 
 export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
   const { searchOpen, setSearchOpen, backgroundTaskTotal, tasksOpen, setTasksOpen, historyOpen, toggleHistory, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, loadConversations, conversations, openConversation, runStatusByConv, deleteConversation } = ctx;
@@ -56,7 +57,7 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
             autoFocus
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && !isImeEnter(e)) {
                 e.preventDefault();
                 jumpToMatch(e.shiftKey ? -1 : 1);
               } else if (e.key === "Escape") {

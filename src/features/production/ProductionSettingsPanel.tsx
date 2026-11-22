@@ -10,6 +10,7 @@ import {
   type ProductionSettingsUpdateRequest,
 } from "./productionSettings";
 import { t } from "../../i18n";
+import { isImeEnter } from "../../ui/imeEnter";
 
 // R-01/R-07 per-owner production safety settings: the configurable production
 // environment list and the surface connect opt-in pairs (cron, broadcast,
@@ -213,7 +214,7 @@ export function ProductionSettingsPanel() {
               disabled={settings === null || pendingKey !== null}
               onChange={(event) => setNameInput(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter") {
+                if (event.key === "Enter" && !isImeEnter(event)) {
                   event.preventDefault();
                   void addName();
                 }

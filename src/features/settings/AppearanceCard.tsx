@@ -50,6 +50,7 @@ import { IconChevronDown, IconChevronRight, IconMinus, IconMonitor, IconPlus, Ic
 import { Select } from "../../ui/Select";
 import { SyncScopeBadge } from "./SyncScopeBadge";
 import { LOCALE_NAMES, LOCALES, setLocale, storedLocale, t, type Locale } from "../../i18n";
+import { isImeEnter } from "../../ui/imeEnter";
 
 const FOLLOW_SYSTEM = "system";
 
@@ -195,7 +196,7 @@ function CustomSchemeRow({
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
-          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Enter" && !isImeEnter(e)) e.currentTarget.blur();
           if (e.key === "Escape") setDraft(scheme.name);
         }}
       />
@@ -408,7 +409,7 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
             onChange={(e) => setCustomFontDraft(e.target.value)}
             onBlur={commitCustomFont}
             onKeyDown={(e) => {
-              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Enter" && !isImeEnter(e)) e.currentTarget.blur();
             }}
           />
         )}

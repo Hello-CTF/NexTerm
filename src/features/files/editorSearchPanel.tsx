@@ -12,7 +12,7 @@ import {
   setSearchQuery,
 } from "@codemirror/search";
 import { IconArrowDown, IconArrowUp, IconChevronDown, IconChevronRight, IconClose, IconSearch } from "../../ui/icons";
-import { isImeKeyEvent } from "../../ui/imeKeyEvent";
+import { isImeEnter } from "../../ui/imeEnter";
 import { t } from "../../i18n";
 
 export const SEARCH_COUNT_LIMIT = 1000;
@@ -82,7 +82,7 @@ export function EditorSearchBar({ view, state }: { view: EditorView; state: Edit
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (isImeKeyEvent(e)) return;
+    if (isImeEnter(e)) return;
     if (runScopeHandlers(view, e.nativeEvent, "search-panel")) {
       e.preventDefault();
       return;

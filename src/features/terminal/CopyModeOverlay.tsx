@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState, useSyncExternalStore, type Key
 import type { Terminal } from "@xterm/xterm";
 import type { CopyModeController } from "./copyMode";
 import { t } from "../../i18n";
+import { isImeEnter } from "../../ui/imeEnter";
 
 interface CellGeometry {
   left: number;
@@ -26,7 +27,7 @@ function SearchPrompt({ direction, onSubmit, onCancel }: { direction: "forward" 
   useEffect(() => inputRef.current?.focus(), []);
   const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     event.stopPropagation();
-    if (event.nativeEvent.isComposing) return;
+    if (isImeEnter(event)) return;
     if (event.key === "Enter") {
       event.preventDefault();
       onSubmit(query);

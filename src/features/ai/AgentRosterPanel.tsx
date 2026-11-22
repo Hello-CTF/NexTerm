@@ -24,6 +24,7 @@ import {
 } from "./agentState";
 import type { AgentPresence, AgentRosterEntry } from "./agentTypes";
 import { t } from "../../i18n";
+import { isImeEnter } from "../../ui/imeEnter";
 
 const TONE_BADGE: Record<AgentStateTone, string> = {
   ok: "nx-badge nx-badge-green",
@@ -325,7 +326,7 @@ export function AgentRosterPanel({
                       setRenameError(null);
                     }}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter") commitRename(entry);
+                      if (event.key === "Enter" && !isImeEnter(event)) commitRename(entry);
                       if (event.key === "Escape") setRenaming(null);
                     }}
                   />

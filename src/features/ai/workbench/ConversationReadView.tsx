@@ -6,6 +6,7 @@ import { findItemMatches, stepMatch } from "../conversationSearch";
 import { IconAlert, IconChevronDown, IconChevronUp, IconRefresh, IconSearch } from "../../../ui/icons";
 import type { ConversationRecord } from "./useConversationRecord";
 import { t } from "../../../i18n";
+import { isImeEnter } from "../../../ui/imeEnter";
 
 // Long conversations show their newest items first; earlier ones load on request.
 export const READ_WINDOW = 300;
@@ -81,7 +82,7 @@ export function ConversationReadView({ record, running }: { record: Conversation
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter") {
+            if (event.key === "Enter" && !isImeEnter(event)) {
               event.preventDefault();
               jump(event.shiftKey ? -1 : 1);
             }

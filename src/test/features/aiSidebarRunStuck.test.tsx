@@ -81,6 +81,7 @@ import {
 } from "../../features/ai/AiSidebar";
 import { aiTabBusyIds, aiTabRunControls, clearAiTabRuns } from "../../features/ai/runOwnership";
 import { GLOBAL_AI_BOARD_KEY, useUi } from "../../app/store";
+import { installMatchMediaStub } from "../setup";
 
 let rafQueue: { cb: FrameRequestCallback; cancelled: boolean }[] = [];
 
@@ -976,5 +977,49 @@ describe("AiSidebar stuck busy-state fixes", () => {
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].id).toBe(before);
     expect(useUi.getState().aiBusy).toBe(true);
     expect(textOf(view!)).toContain("停止未确认");
+  });
+
+  it("on touch screens Enter starts a new line, the send button sends, and a send button steers a running task", async () => {
+    window.matchMedia = ((query: string) => ({
+      matches: query === "(pointer: coarse)",
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    })) as typeof window.matchMedia;
+    try {
+      act(() => {
+        view!.root.render(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
+      });
+      const textarea = () => view!.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="消息输入"]')!;
+      expect(textarea().getAttribute("enterkeyhint")).toBe("enter");
+      setInputValue(textarea(), "first line");
+      const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+      act(() => {
+        textarea().dispatchEvent(enter);
+      });
+      await flush();
+      // The default action (a new line) is left to the soft keyboard and nothing is sent.
+      expect(enter.defaultPrevented).toBe(false);
+      expect(mocks.chat).not.toHaveBeenCalled();
+
+      click(view!.container.querySelector<HTMLButtonElement>('button.nx-send-btn[aria-label="发送"]')!);
+      await flush();
+      expect(mocks.chat).toHaveBeenCalledTimes(1);
+      expect(mocks.chat.mock.calls[0][0].message).toBe("first line");
+
+      // While the task runs the stop button takes the send button's place; typed text gets its own send button.
+      expect(view!.container.querySelector('button.nx-send-btn[aria-label="发送"]')).toBeNull();
+      setInputValue(textarea(), "and check the logs");
+      click(view!.container.querySelector<HTMLButtonElement>('button.nx-send-btn[aria-label="发送"]')!);
+      await flush();
+      expect(mocks.steer).toHaveBeenCalledWith("job-1", "and check the logs");
+      expect(view!.container.querySelector('button.nx-send-btn-stop')).not.toBeNull();
+    } finally {
+      installMatchMediaStub();
+    }
   });
 });

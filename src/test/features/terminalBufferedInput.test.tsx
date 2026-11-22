@@ -17,6 +17,7 @@ import { saveQuickCommands, quickCommandBytes } from "../../features/terminal/qu
 import { TERMINAL_KEY_CATALOG, terminalKeySequence } from "../../features/terminal/terminalKeys";
 import { clearStickyModifiers } from "../../features/terminal/terminalInput/stickyModifiers";
 import { registerAccountPreferenceStore } from "../../app/preferences";
+import { configureImeCommitEnter } from "../../ui/imeEnter";
 
 let mounted: MountedView | null = null;
 let keys: string[];
@@ -280,5 +281,80 @@ describe("choice keys", () => {
     click(button("Alt 修饰键"));
     click(button("回车"));
     expect(keys).toEqual(["1", "y", "\x1b\r"]);
+  });
+});
+
+describe("buffered input with an input method", () => {
+  function compose(field: HTMLInputElement, type: "compositionstart" | "compositionend") {
+    act(() => {
+      field.dispatchEvent(new CompositionEvent(type, { bubbles: true }));
+    });
+  }
+
+  afterEach(() => {
+    configureImeCommitEnter({ webkit: null });
+    vi.useRealTimers();
+  });
+
+  it("ends a composition before a send button sends, then sends the final text and clears the field", async () => {
+    renderBar();
+    click(button("缓冲输入"));
+    const field = composer()!;
+    compose(field, "compositionstart");
+    setInputValue(field, "ls nihao");
+    click(button("发送并回车"));
+    // Nothing is sent and the field keeps the marked text while the input method still owns it.
+    expect(lines).toEqual([]);
+    expect(field.value).toBe("ls nihao");
+    expect(document.activeElement).toBe(field);
+
+    setInputValue(field, "ls 你好");
+    compose(field, "compositionend");
+    await flush();
+    expect(lines).toEqual([["ls 你好", true]]);
+    expect(field.value).toBe("");
+  });
+
+  it("still sends when the forced composition end never reports compositionend", () => {
+    vi.useFakeTimers();
+    renderBar();
+    click(button("缓冲输入"));
+    const field = composer()!;
+    compose(field, "compositionstart");
+    setInputValue(field, "echo かな");
+    click(button("发送但不回车"));
+    expect(lines).toEqual([]);
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(lines).toEqual([["echo かな", false]]);
+    expect(field.value).toBe("");
+  });
+
+  it("ignores the Enter WebKit delivers right after compositionend, and the next Enter sends", () => {
+    configureImeCommitEnter({ webkit: true });
+    renderBar();
+    click(button("缓冲输入"));
+    const field = composer()!;
+    compose(field, "compositionstart");
+    setInputValue(field, "cat 文档");
+    compose(field, "compositionend");
+    pressEnter(field, { keyCode: 13 } as KeyboardEventInit);
+    expect(lines).toEqual([]);
+    expect(field.value).toBe("cat 文档");
+    pressEnter(field);
+    expect(lines).toEqual([["cat 文档", true]]);
+  });
+
+  it("sends on an Enter right after compositionend where the engine reports the committing Enter as IME input", () => {
+    configureImeCommitEnter({ webkit: false });
+    renderBar();
+    click(button("缓冲输入"));
+    const field = composer()!;
+    compose(field, "compositionstart");
+    setInputValue(field, "ls");
+    compose(field, "compositionend");
+    pressEnter(field);
+    expect(lines).toEqual([["ls", true]]);
   });
 });

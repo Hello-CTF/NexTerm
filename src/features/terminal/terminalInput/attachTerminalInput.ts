@@ -4,7 +4,10 @@ import { getCtrlVPaste, getTerminalPrefs, type TerminalMacOptionMeta } from "../
 import { isMac, isWindows } from "../../../app/platform";
 import { attachImeTextInput } from "../imeTextInput";
 import { kittyKeyboardActive } from "./kittyKeyboard";
-import { COMPOSITION_COMMIT_WINDOW_MS, resolveKey, type KeyResolution } from "./resolveKey";
+import { COMPOSITION_COMMIT_WINDOW_MS, isWebKitEngine } from "../../../ui/imeEnter";
+import { resolveKey, type KeyResolution } from "./resolveKey";
+
+export { isWebKitEngine };
 
 export interface TerminalInputOptions {
   /** The kitty keyboard switch the terminal was created with (vtExtensions.kittyKeyboard). */
@@ -17,15 +20,6 @@ export interface TerminalInputOptions {
    * example command block navigation while an alternate-screen editor runs). All withheld actions act when omitted.
    */
   withholds?: (action: KeybindingActionId) => boolean;
-}
-
-/**
- * WebKit engines: desktop Safari, WKWebView (macOS desktop, iOS and iPadOS, where every browser is WebKit) and
- * WebKitGTK. Chromium-based engines (Chrome, Edge, WebView2, Android WebView) also carry "AppleWebKit" in their user
- * agent but name Chrome or Chromium, and Android browsers name Android.
- */
-export function isWebKitEngine(userAgent: string): boolean {
-  return /AppleWebKit\//.test(userAgent) && !/Chrome|Chromium|Android/.test(userAgent);
 }
 
 /**
