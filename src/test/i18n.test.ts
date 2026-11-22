@@ -142,6 +142,16 @@ describe("server catalog argument order", () => {
     );
   });
 
+  it("puts reordered checksum file names back in their places in Spanish", () => {
+    const es = compileServerCatalog(catalogs.find(([name]) => name === "es")![1]);
+    expect(translateServer(es, "SHA256SUMS 缺少 nexterm.deb 的校验和")).toBe(
+      "Falta la suma de verificación de nexterm.deb en SHA256SUMS",
+    );
+    expect(translateServer(es, "校验失败: SHA256SUMS 缺少 nexterm.deb 的校验和")).toContain(
+      "falta la suma de verificación de nexterm.deb en SHA256SUMS",
+    );
+  });
+
   it("never reuses unindexed verbs in a different order than the Chinese source", () => {
     const bad: string[] = [];
     for (const [locale, catalog] of catalogs) {
