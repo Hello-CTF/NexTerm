@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from "react";
 
-// The AI tabs waiting for the user: an approval to grant or a question to answer. Kept apart from the AI panel code
-// so the app header can show the flag without loading the panel.
+// The AI tabs waiting for the user: an approval to grant or a question to answer. The chat view sets it from its
+// pending card; runOwnership clears it when the run ends or the tab is closed, so a tab whose board is not mounted
+// keeps its flag. Kept apart from the AI panel code so the app header can show it without loading the panel.
 const waiting = new Set<string>();
 const listeners = new Set<() => void>();
 
@@ -17,6 +18,11 @@ function subscribe(listener: () => void): () => void {
   return () => {
     listeners.delete(listener);
   };
+}
+
+export function resetAiNeedsInputForTest(): void {
+  waiting.clear();
+  for (const listener of [...listeners]) listener();
 }
 
 export function aiNeedsInputCount(): number {

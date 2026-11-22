@@ -262,12 +262,13 @@ export function useChatRunSession(p: AiChatBase) {
     card.dataset.autoFocused = "";
     card.focus({ preventScroll: true });
   }, [confirmCard?.id]);
-  // A pending approval or question is the panel needing the user; the header shows it while the panel is closed.
+  // A pending approval or question is the panel needing the user; the header shows it while the panel is closed. The
+  // flag outlives this view: a tab of another workspace's board is unmounted while its request still waits, and the
+  // run-ownership layer clears it when the run ends or the tab closes.
   const needsInputCardId = confirmCard?.id ?? questionCard?.id ?? null;
   useEffect(() => {
     setAiTabNeedsInput(tabKey, needsInputCardId !== null);
   }, [tabKey, needsInputCardId]);
-  useEffect(() => () => setAiTabNeedsInput(tabKey, false), [tabKey]);
   const productionNames = confirmCard?.requiredEnvironmentNames;
   // The confirm state is bound to the owning card id and honored only while
   // that id is the current card: a directly replaced card starts locked in
