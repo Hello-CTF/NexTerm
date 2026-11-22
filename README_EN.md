@@ -46,7 +46,7 @@ Sync is not end-to-end encrypted: the password reaches the server at sign-in, so
 | iOS / iPadOS (preview) | [TestFlight](https://testflight.apple.com/join/ds62pzPz) |
 | Linux server | See [Deploy the server](#deploy-the-server) |
 
-Mobile builds are previews and are not officially supported until real-device signing is verified. The desktop app checks for updates and verifies their Minisign signature before installing.
+Mobile builds are previews and are not officially supported until real-device signing is verified. The desktop app checks for updates and verifies their Minisign signature before installing; an update takes effect when the app restarts. A Linux install from the .deb package is pointed to the new package instead of replacing system files in place.
 
 <details>
 <summary>Install tips</summary>
