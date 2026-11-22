@@ -10,6 +10,7 @@ import {
   takeOverBackgroundTab,
   useBackgroundSessionsAccess,
   visibleBackgroundTabs,
+  workspaceSessionMatches,
   type BackgroundScope,
   type BackgroundTab,
 } from "../../features/terminal/backgroundSessionsAccess";
@@ -169,10 +170,21 @@ function HostBackgroundTerminals({ workspaceId, paneId }: { workspaceId: string;
   const takeOver = async (tab: BackgroundTab) => {
     const key = backgroundTabKey(tab);
     setBusy(key);
-    // The terminal opens in the pane whose empty state was used.
-    if (paneId) useUi.getState().setActivePane(paneId, workspaceId);
     try {
-      const result = await takeOverBackgroundTab(tab);
+      const result = await takeOverBackgroundTab(tab, {
+        // Leaving the workspace while the session list loads drops the takeover instead of pulling the user back.
+        isCurrent: () => useUi.getState().activeWorkspaceId === workspaceId,
+        guard: (session) => {
+          // A listing up to one refresh old may name a session this workspace no longer holds.
+          const owner = useUi.getState().workspaces.find((item) => item.id === workspaceId);
+          const remoteOwner = resolveHostGate(owner, session, {}).remoteOwner;
+          if (!owner || owner.sessionId !== session.id || (remoteOwner && !workspaceSessionMatches(owner, session, {}))) {
+            throw new Error(t("该终端不属于当前主机，请重新连接后再接管"));
+          }
+          // The takeover adds the tab to the active pane right after this check: make that the pane that was used.
+          if (paneId && owner.panes.some((pane) => pane.id === paneId)) useUi.getState().setActivePane(paneId, workspaceId);
+        },
+      });
       if (!result.ok && "error" in result) {
         useUi.getState().pushToast("error", t("接管失败：{error}", { error: result.error }));
         setGeneration((value) => value + 1);
