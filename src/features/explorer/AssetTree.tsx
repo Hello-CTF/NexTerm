@@ -11,6 +11,7 @@ import {
   connectAsset,
   connectQuickTarget,
   deviceAssetId,
+  noticeLiveAssetEdit,
   useConnectionProblem,
   useSessionList,
   useUi,
@@ -1405,7 +1406,8 @@ export function AssetTree() {
           kind="asset"
           initial={editingAsset}
           onClose={() => setEditingAsset(null)}
-          onSaved={() => {
+          onSaved={(saved) => {
+            noticeLiveAssetEdit(editingAsset, saved);
             setEditingAsset(null);
             void qc.invalidateQueries({ queryKey: ["assets"] });
             void qc.invalidateQueries({ queryKey: ["asset-search"] });

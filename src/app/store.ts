@@ -140,6 +140,7 @@ export {
   connectDevice,
   deviceAssetId,
   isAssetConnecting,
+  noticeLiveAssetEdit,
   reconnectDeadHost,
   reopenRemoteDesktopTab,
   useConnectionProblem,

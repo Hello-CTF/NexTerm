@@ -40,7 +40,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 
 import { AssetEditor } from "../../features/explorer/AssetTree";
-import { useUi } from "../../app/store";
+import { noticeLiveAssetEdit, useUi } from "../../app/store";
+import type { Asset } from "../../ipc/commands";
 
 let mounted: MountedView | undefined;
 beforeEach(() => {
@@ -130,5 +131,58 @@ describe("AssetEditor duplicate-save prevention", () => {
     click(saveBtn);
     await flushUntil(() => !text().includes("name already exists") && !saveBtn.disabled);
     expect(mocks.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("AssetEditor edits of a connected asset", () => {
+  const initial: Asset = {
+    id: "a1",
+    groupId: null,
+    kind: "ssh",
+    name: "web-01",
+    host: "10.0.0.8",
+    port: 22,
+    username: "root",
+    authKind: "password",
+    keyPath: null,
+    credId: null,
+    options: {},
+    tags: "",
+    note: "",
+    sort: 0,
+    createdAt: 1,
+    updatedAt: 1,
+    deletedAt: null,
+    builtin: false,
+  };
+
+  async function saveEdit(edit: () => void): Promise<void> {
+    useUi.setState({
+      toasts: [],
+      pushToast: useUi.getInitialState().pushToast,
+      sessions: [{ id: "s1", assetId: "a1", name: "web-01", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
+      workspaces: [{
+        id: "ws1", kind: "session", title: "web-01", sessionId: "s1", assetId: "a1", assetKind: "ssh",
+        panes: [{ id: "p1", tabs: [], activeTabId: null }], activePaneId: "p1", closable: true,
+      }],
+    });
+    mocks.update.mockImplementation(async (input: Partial<Asset>) => ({ ...initial, ...input }));
+    const onSaved = vi.fn((saved?: Asset) => noticeLiveAssetEdit(initial, saved));
+    mounted = withClient(createElement(AssetEditor, { kind: "asset", initial, onClose: vi.fn(), onSaved }));
+    await flush();
+    edit();
+    clickButton(mounted.container, "保存");
+    await flushUntil(() => onSaved.mock.calls.length > 0);
+  }
+
+  it("stays quiet after a rename saved through the editor", async () => {
+    await saveEdit(() => fillName("web-renamed"));
+    expect(mocks.update.mock.calls[0][0]).toMatchObject({ name: "web-renamed", host: "10.0.0.8" });
+    expect(useUi.getState().toasts).toEqual([]);
+  });
+
+  it("says the live connection keeps the old settings after a host change", async () => {
+    await saveEdit(() => fillHost("10.0.0.9"));
+    expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual(["已保存，当前连接仍使用旧设置"]);
   });
 });
