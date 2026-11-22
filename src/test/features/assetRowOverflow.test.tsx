@@ -543,3 +543,65 @@ describe("one menu for right-click, overflow button and keyboard", () => {
     expect(menuSnapshot()).toEqual(viaContext);
   });
 });
+
+describe("asset row keyboard and remote desktop menu", () => {
+  function press(row: HTMLElement, key: string): KeyboardEvent {
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    act(() => {
+      row.focus();
+      row.dispatchEvent(event);
+    });
+    return event;
+  }
+
+  it("connects on Enter but not on Space", async () => {
+    stubPointer(false);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
+    const row = rowByName(mounted.container, "web-1");
+
+    expect(press(row, " ").defaultPrevented).toBe(true);
+    await flush();
+    expect(mocks.connect).not.toHaveBeenCalled();
+
+    press(row, "Enter");
+    await waitForRendered(() => expect(mocks.connect).toHaveBeenCalledWith("a1"));
+  });
+
+  it("offers a second connection to a remote desktop from the row menu", async () => {
+    stubPointer(false);
+    mocks.assetList.mockResolvedValue([{ ...WEB, id: "r1", kind: "rdp", name: "win-1", port: 3389 }]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("win-1"));
+    const row = rowByName(mounted.container, "win-1");
+
+    press(row, "Enter");
+    await waitForRendered(() => expect(useUi.getState().workspaces).toHaveLength(1));
+    press(row, "Enter");
+    await flush();
+    expect(useUi.getState().workspaces).toHaveLength(1);
+
+    act(() => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    });
+    await flush();
+    expect(menuLabels()).toContain("新建连接");
+    const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (candidate) => candidate.textContent?.includes("新建连接"),
+    );
+    click(item!);
+    await waitForRendered(() => expect(useUi.getState().workspaces).toHaveLength(2));
+    expect(useUi.getState().workspaces.every((workspace) => workspace.kind === "remote" && workspace.assetId === "r1")).toBe(true);
+  });
+
+  it("does not offer a second connection for a terminal host", async () => {
+    stubPointer(false);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
+    act(() => {
+      rowByName(mounted!.container, "web-1").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    });
+    await flush();
+    expect(menuLabels()).not.toContain("新建连接");
+  });
+});

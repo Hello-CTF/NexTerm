@@ -175,6 +175,7 @@ function inflightAssetKey(assetId: string, epoch: number, options?: ConnectAsset
     pendingWorkspaceKey(assetId),
     options?.silent === true,
     options?.preserveUserFocus === true,
+    options?.newConnection === true,
   ]);
 }
 
@@ -344,9 +345,23 @@ async function runConnectAsset(
   if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
   const { pushToast } = useUi.getState();
 
-  // A remote desktop is not a session of the terminal system: it opens its own workspace, and a second connection to
-  // the same asset is a second workspace.
-  if (asset.kind === "rdp" || asset.kind === "vnc") return openRemoteDesktopWorkspace(asset, epoch);
+  // A remote desktop is not a session of the terminal system: it opens its own workspace. Like other hosts, connecting
+  // again shows the workspace already open for the asset (reopening its desktop if that tab was closed); a second
+  // connection to the same asset is asked for explicitly and gets a second workspace.
+  if (asset.kind === "rdp" || asset.kind === "vnc") {
+    const open = options?.newConnection
+      ? undefined
+      : useUi.getState().workspaces.find((w) => w.kind === "remote" && w.assetId === asset.id && !w.deletedTarget);
+    if (!open) return openRemoteDesktopWorkspace(asset, epoch);
+    if (!open.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "remote"))) {
+      const outcome = await reopenRemoteDesktopTab(open.id);
+      if (outcome.ok && currentConnectionEpoch(epoch)) useUi.getState().bumpConnectFocusRevision();
+      return outcome;
+    }
+    focusConnectedWorkspace(open.id);
+    useConnectHistory.getState().record(asset.id);
+    return { ok: true };
+  }
 
   const existing = useUi.getState().workspaces.find((w) => w.assetId === asset.id);
   if (existing?.restorePending) {

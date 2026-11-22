@@ -1042,6 +1042,16 @@ export function AssetTree() {
       ...(connectable
         ? [{ kind: "item" as const, label: tr("连接"), icon: <IconPlay size={13} />, onSelect: () => void connectAsset(asset) }]
         : []),
+      // Connecting a remote desktop again shows its open workspace; a second, parallel connection is asked for here.
+      ...(connectable && (asset.kind === "rdp" || asset.kind === "vnc")
+        ? [{
+            kind: "item" as const,
+            label: tr("新建连接"),
+            icon: <IconPlus size={13} />,
+            hint: tr("另开一个工作区"),
+            onSelect: () => void connectAsset(asset, { newConnection: true }),
+          }]
+        : []),
       ...(detailLabel
         ? [{ kind: "item" as const, label: detailLabel, icon: <IconServer size={13} />, onSelect: () => openHostDetail(asset.id) }]
         : []),
@@ -1628,9 +1638,14 @@ function AssetRow({
       }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") {
+        if (e.key === "Enter") {
           e.preventDefault();
           if (!inventoryOnly) void connectAsset(asset);
+          return;
+        }
+        // Space is the tree's select key: on an asset row, whose focus already marks it, it never connects.
+        if (e.key === " ") {
+          e.preventDefault();
           return;
         }
         if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
