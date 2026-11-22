@@ -972,7 +972,6 @@
   "临时": "Temporal",
   "临时 SSH 会话没有资产 ID，不能保存转发规则": "Una sesión SSH temporal no tiene ID de recurso y no se pueden guardar reglas de reenvío",
   "临时 SSH 目标，重新连接时需要重新提供凭据": "Destino SSH temporal; al reconectar hay que volver a proporcionar las credenciales",
-  "临时切换到资产树；双击收起左侧栏": "Cambiar temporalmente al árbol de recursos; doble clic para contraer la barra lateral izquierda",
   "临时终端": "Terminal temporal",
   "临时终端不会报告状态": "Los terminales temporales no informan de su estado",
   "临时终端会断开，正在运行的程序会结束": "El terminal temporal se desconectará y los programas en ejecución finalizarán",
