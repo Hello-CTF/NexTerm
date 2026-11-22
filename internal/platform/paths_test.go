@@ -78,14 +78,12 @@ func TestServerDataDirPrecedence(t *testing.T) {
 	environment := map[string]string{"NEXTERM_DATA_DIR": filepath.Join(workingDir, "env")}
 	getenv := func(key string) string { return environment[key] }
 	for _, test := range []struct {
-		name       string
-		override   string
-		lazyCatVar bool
-		want       string
+		name     string
+		override string
+		want     string
 	}{
-		{name: "flag", override: "/flag", lazyCatVar: true, want: "/flag"},
-		{name: "environment", lazyCatVar: true, want: filepath.Join(workingDir, "env")},
-		{name: "lazycat", lazyCatVar: true, want: filepath.Join(string(filepath.Separator), "lzcapp", "var", "nexterm")},
+		{name: "flag", override: "/flag", want: "/flag"},
+		{name: "environment", want: filepath.Join(workingDir, "env")},
 		{name: "working directory", want: filepath.Join(workingDir, "data")},
 	} {
 		if test.name == "flag" || test.name == "environment" {
@@ -93,7 +91,7 @@ func TestServerDataDirPrecedence(t *testing.T) {
 		} else {
 			getenv = func(string) string { return "" }
 		}
-		got, err := serverDataDir(test.override, workingDir, test.lazyCatVar, getenv)
+		got, err := serverDataDir(test.override, workingDir, getenv)
 		if err != nil {
 			t.Fatalf("%s: %v", test.name, err)
 		}

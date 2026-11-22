@@ -960,7 +960,7 @@ describe("platform, update and biometric facade IPC contracts", () => {
 
 describe("forward runtime facade IPC contracts", () => {
   it("preserves all seven flat envelopes and existing result shapes", async () => {
-    const environment = { available: true, platform: "other", listenHost: "127.0.0.1" };
+    const environment = { listenHost: "127.0.0.1" };
     const spec = {
       id: "forward-1",
       sessionId: "session-1",

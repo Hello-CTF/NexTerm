@@ -15,7 +15,7 @@ Reply in the user's language. Keep this file limited to rules that prevent regre
 - `internal/sharing`, `internal/update`, `internal/forward`, `internal/mount`, `internal/docker`, `internal/fs`: sharing, updates, forwarding, mounts, containers, and file services.
 - `src`: React frontend; `src/ipc/bindings` contains generated Wails bindings.
 - `scripts`, `.github/scripts`, `.github/workflows`, `Taskfile.yml`: builds, tests, CI, and releases.
-- `website`: GitHub Pages site. `lazycat`: Lazycat package. `build`: native build configuration and mobile projects. `deploy/systemd`: server units.
+- `website`: GitHub Pages site. `build`: native build configuration and mobile projects. `deploy/systemd`: server units.
 
 Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` glibc-portable dynamic binary (purego loads ONNX Runtime; agent and helpers stay fully static), and the privacy runtime uses the latest ONNX Runtime 1.x (>= 1.23) resolved by `scripts/ai-privacy-runtime.mjs`; `NEXTERM_ORT_VERSION` pins a version. Linux CI and release jobs run on hosted Ubuntu runners (GTK/WebKitGTK packages in `.github/actions/linux-gui-deps`); the Linux desktop needs GTK >= 4.14 to compile and run. Exact versions and commands live in `go.mod`, `package.json`, and the workflows.
 
@@ -59,7 +59,7 @@ Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` glibc-
 
 - Branch from the latest `master` and merge back through a reviewed PR with passing gates. No force pushes or unreviewed pushes to `master`.
 - Prereleases use only `v<x.y.z>-rc.N` tags (N >= 1); they are GitHub prereleases and never Latest. Stable is the default update channel everywhere, RC is an opt-in per-machine setting that never syncs.
-- Release `v*` tags come from `master`. Keep `wails.json`, `package.json`, and `lazycat/package.yml` at `0.0.0`; release builds derive the version from the tag through `NEXTERM_RELEASE_VERSION`.
+- Release `v*` tags come from `master`. Keep `wails.json`, `package.json`, and `build/config.yml` at `0.0.0`; release builds derive the version from the tag through `NEXTERM_RELEASE_VERSION`.
 - Reused CI evidence must match the intended commit and ref. Versioned frontend, native, and mobile release artifacts must be built for that release; do not publish placeholder-version artifacts from master builds.
 - Release notes are generated from Conventional Commits plus `.github/release-template.md`. Do not add per-release notes commits or standing gap lists. Record verification limits in the change's PR or review report.
 - The Release workflow runs `.github/scripts/release-evidence.mjs` on the complete artifact set before it signs and uploads the draft. Publish the draft once the workflow succeeds; do not download and re-check the assets.

@@ -69,11 +69,7 @@ func ServerPaths(override string) (Paths, error) {
 	if err != nil {
 		return Paths{}, err
 	}
-	lazyCatVar := false
-	if info, statErr := os.Stat("/lzcapp/var"); statErr == nil {
-		lazyCatVar = info.IsDir()
-	}
-	dataDir, err := serverDataDir(override, workingDir, lazyCatVar, os.Getenv)
+	dataDir, err := serverDataDir(override, workingDir, os.Getenv)
 	if err != nil {
 		return Paths{}, err
 	}
@@ -110,15 +106,12 @@ func desktopDataDir(goos, home string) (string, error) {
 	}
 }
 
-func serverDataDir(override, workingDir string, lazyCatVar bool, getenv func(string) string) (string, error) {
+func serverDataDir(override, workingDir string, getenv func(string) string) (string, error) {
 	if override != "" {
 		return override, nil
 	}
 	if value := getenv("NEXTERM_DATA_DIR"); value != "" {
 		return value, nil
-	}
-	if lazyCatVar {
-		return filepath.Join(string(filepath.Separator), "lzcapp", "var", "nexterm"), nil
 	}
 	if workingDir == "" {
 		return "", fmt.Errorf("working directory is empty")

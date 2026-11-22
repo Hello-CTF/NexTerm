@@ -74,7 +74,7 @@ export function AuthCard({ sync }: { sync?: ReactNode } = {}) {
   const clearCleanupError = useAuth((s) => s.clearCleanupError);
   const visibleAccountError = authError ?? cleanupError;
 
-  // Platform-hosted mode (Lazycat): the account is auto-established with the platform login; the user holds no password and should not have a "logout".
+  // Platform-hosted mode (behind an authenticating gateway): the account is auto-established with the platform login; the user holds no password and should not have a "logout".
   // The next refresh after logout would be taken over by the platform session again; keeping the button only makes people think "logout" worked.
   const platformManaged = status?.auth === "platform";
 
@@ -260,7 +260,7 @@ export function AuthCard({ sync }: { sync?: ReactNode } = {}) {
             <span className="nx-card-title">{t("账号")}</span>
           </div>
           <p className="nx-hint mb-3">
-            {t("本实例部署在懒猫平台上，账号随平台登录自动建立，无需填写初始化码或密码。若看到此提示，请改用平台访问地址重新打开。")}
+            {t("本实例由平台托管，经前置网关认证访问，账号随平台登录自动建立，无需填写初始化码或密码。若看到此提示，请改用平台访问地址重新打开。")}
           </p>
         </section>
       );
@@ -361,7 +361,7 @@ export function AuthCard({ sync }: { sync?: ReactNode } = {}) {
 
         {platformManaged && (
           <p className="nx-hint mt-2">
-            {t("本实例部署在懒猫平台上，登录由平台负责，打开地址即使用当前账号，无需在此登录或退出。账号随平台登录自动建立，用于承载设备、分享等需要归属的功能。")}
+            {t("本实例由平台托管，登录由前置网关负责，打开地址即使用当前账号，无需在此登录或退出。账号随平台登录自动建立，用于承载设备、分享等需要归属的功能。")}
           </p>
         )}
 

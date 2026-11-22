@@ -135,7 +135,6 @@ func run(args []string) int {
 		Desktop:              true,
 		LocalHelper:          true,
 		SharedHelperStateDir: sharedHelperStateDir(invocation.DataDir, logger.Logger),
-		ForwardPlatform:      os.Getenv("NEXTERM_PLATFORM"),
 		RestartFunc: func(_ context.Context, target string) error {
 			if err := update.StartDetached(target, restartArgs(args, os.Getpid())); err != nil {
 				return err

@@ -46,7 +46,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers();
   document.body.replaceChildren();
-  mocks.forwardEnv.mockResolvedValue({ available: true, platform: "other", listenHost: "127.0.0.1" });
+  mocks.forwardEnv.mockResolvedValue({ listenHost: "127.0.0.1" });
   mocks.forwardList.mockResolvedValue([]);
   mocks.forwardCreateRemote.mockResolvedValue({ id: "f1", kind: "remote" });
   mocks.forwardRemove.mockResolvedValue(null);

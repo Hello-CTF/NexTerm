@@ -2592,7 +2592,6 @@
   "端口发现失败: ": "Port discovery failed: ",
   "端口发现未配置": "Port discovery is not configured",
   "端口必须在 1 到 65535 之间": "The port must be between 1 and 65535",
-  "端口转发在懒猫微服上暂不可用：请使用平台转发能力或 SSH 隧道": "Port forwarding is not available on Lazycat yet. Use the platform's forwarding feature or an SSH tunnel.",
   "端口转发需要支持 SSH direct-tcpip 的会话": "Port forwarding requires a session that supports SSH direct-tcpip",
   "端口需在 1-65535 之间": "The port must be between 1 and 65535",
   "符号链接指向扫描目录之外": "The symbolic link points outside the scanned directory",

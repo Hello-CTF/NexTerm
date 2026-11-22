@@ -2592,7 +2592,6 @@
   "端口发现失败: ": "Portermittlung fehlgeschlagen: ",
   "端口发现未配置": "Portermittlung nicht konfiguriert",
   "端口必须在 1 到 65535 之间": "Der Port muss zwischen 1 und 65535 liegen.",
-  "端口转发在懒猫微服上暂不可用：请使用平台转发能力或 SSH 隧道": "Portweiterleitung ist auf Lazycat vorerst nicht verfügbar. Verwenden Sie die Weiterleitungsfunktion der Plattform oder einen SSH-Tunnel.",
   "端口转发需要支持 SSH direct-tcpip 的会话": "Portweiterleitung erfordert eine Sitzung, die SSH direct-tcpip unterstützt.",
   "端口需在 1-65535 之间": "Der Port muss zwischen 1 und 65535 liegen.",
   "符号链接指向扫描目录之外": "Der symbolische Link zeigt aus dem durchsuchten Verzeichnis heraus",

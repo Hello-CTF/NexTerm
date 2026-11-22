@@ -317,7 +317,7 @@ export const authApi = {
   me: () => rememberedSessionRequest(request<AccountSession>("GET", "/auth/me")),
 
   // Handshake under platform-hosted mode (--auth=platform). The front gateway has already authenticated; only the
-  // "platform owner" session needs to be exchanged here. Without this, users would see the init/login screens, neither of which should appear on Lazycat.
+  // "platform owner" session needs to be exchanged here. Without this, users would see the init/login screens, neither of which should appear behind the gateway.
   platformSession: () => rememberedSessionRequest(request<AccountSession>("POST", "/auth/platform-session", undefined, { client: true })),
 
   logout: () => request<{ ok: boolean }>("POST", "/auth/logout", {}, { csrf: true }),

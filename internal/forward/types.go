@@ -34,30 +34,18 @@ func (f DialerProviderFunc) CurrentDialer(ctx context.Context, sessionID string)
 }
 
 type Policy struct {
-	Desktop  bool
-	Platform string
+	Desktop bool
 }
 
 type Environment struct {
-	Available  bool   `json:"available"`
-	Platform   string `json:"platform"`
 	ListenHost string `json:"listenHost"`
-	Reason     string `json:"reason,omitempty"`
 }
 
 func (p Policy) Environment() Environment {
 	if p.Desktop {
-		return Environment{Available: true, Platform: "other", ListenHost: "127.0.0.1"}
+		return Environment{ListenHost: "127.0.0.1"}
 	}
-	if strings.EqualFold(strings.TrimSpace(p.Platform), "lazycat") {
-		return Environment{
-			Available:  false,
-			Platform:   "lazycat",
-			ListenHost: "0.0.0.0",
-			Reason:     "端口转发在懒猫微服上暂不可用：请使用平台转发能力或 SSH 隧道",
-		}
-	}
-	return Environment{Available: true, Platform: "other", ListenHost: "0.0.0.0"}
+	return Environment{ListenHost: "0.0.0.0"}
 }
 
 func (e Environment) exposed() bool {

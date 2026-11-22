@@ -116,7 +116,7 @@ beforeEach(() => {
   mocks.stats.mockResolvedValue(STATS_JSON_LINES);
   mocks.listDir.mockResolvedValue([]);
   mocks.imagePull.mockResolvedValue(undefined);
-  mocks.env.mockResolvedValue({ available: true, platform: "other", listenHost: "127.0.0.1" });
+  mocks.env.mockResolvedValue({ listenHost: "127.0.0.1" });
   mocks.list.mockResolvedValue([]);
   mocks.create.mockResolvedValue({
     id: "f1",

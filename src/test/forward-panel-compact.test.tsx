@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
     () => ({ width, height: 600, top: 0, left: 0, right: width, bottom: 600, x: 0, y: 0, toJSON: () => ({}) }),
   );
-  mocks.forwardEnv.mockResolvedValue({ available: true, platform: "other", listenHost: "127.0.0.1" });
+  mocks.forwardEnv.mockResolvedValue({ listenHost: "127.0.0.1" });
   mocks.forwardList.mockResolvedValue([
     { id: "f1", sessionId: "s", kind: "local", listenHost: "127.0.0.1", listenPort: 13306, targetHost: "db.internal", targetPort: 3306, status: "active" },
   ]);

@@ -67,7 +67,7 @@ beforeEach(() => {
   document.body.replaceChildren();
   mocks.dockerPs.mockResolvedValue([]);
   mocks.dockerImages.mockResolvedValue([]);
-  mocks.forwardEnv.mockResolvedValue({ available: true, listenHost: "127.0.0.1" });
+  mocks.forwardEnv.mockResolvedValue({ listenHost: "127.0.0.1" });
   mocks.forwardList.mockResolvedValue([]);
   mocks.mountList.mockResolvedValue([]);
   mocks.auditQuery.mockResolvedValue([]);

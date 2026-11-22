@@ -286,9 +286,8 @@ func run(args []string) int {
 			Logger: logger.Logger,
 			Events: broker,
 		},
-		DataDir:         paths.DataDir,
-		Desktop:         false,
-		ForwardPlatform: os.Getenv("NEXTERM_PLATFORM"),
+		DataDir: paths.DataDir,
+		Desktop: false,
 		DB: store.BackendConfig{
 			Backend:      dbBackend,
 			DSN:          invocation.DBDSN,
@@ -619,7 +618,7 @@ contract and print the initial password to this console exactly once,
 only after the account was actually created. With no
 NEXTERM_ADMIN_PASSWORD a cryptographically random password is generated
 and must be changed at first login; a supplied initial password is kept
-as-is (no forced rotation) so install systems such as LazyCat can inject
+as-is (no forced rotation) so automated install systems can inject
 it. Never prints on upgrade, existing-account or re-run paths, and never
 persists the password to env files, disk or logs.
 

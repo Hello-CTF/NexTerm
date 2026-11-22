@@ -7,25 +7,18 @@ import (
 
 func TestPolicyEnvironment(t *testing.T) {
 	tests := []struct {
-		name      string
-		policy    Policy
-		available bool
-		platform  string
-		host      string
+		name   string
+		policy Policy
+		host   string
 	}{
-		{name: "desktop ignores server platform", policy: Policy{Desktop: true, Platform: "lazycat"}, available: true, platform: "other", host: "127.0.0.1"},
-		{name: "server", policy: Policy{}, available: true, platform: "other", host: "0.0.0.0"},
-		{name: "empty platform", policy: Policy{Platform: " "}, available: true, platform: "other", host: "0.0.0.0"},
-		{name: "LazyCat case insensitive", policy: Policy{Platform: " LazyCat "}, available: false, platform: "lazycat", host: "0.0.0.0"},
+		{name: "desktop", policy: Policy{Desktop: true}, host: "127.0.0.1"},
+		{name: "server", policy: Policy{}, host: "0.0.0.0"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			environment := test.policy.Environment()
-			if environment.Available != test.available || environment.Platform != test.platform || environment.ListenHost != test.host {
+			if environment.ListenHost != test.host {
 				t.Fatalf("environment = %+v", environment)
-			}
-			if !test.available && environment.Reason == "" {
-				t.Fatal("unavailable environment has no reason")
 			}
 		})
 	}

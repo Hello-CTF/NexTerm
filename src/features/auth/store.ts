@@ -285,7 +285,7 @@ export const useAuth = create<AuthState>((set, get) => ({
         syncPreferenceStore(true);
       } catch (e) {
         if (isAccountChangedError(e)) return;
-        // Platform-hosted mode (Lazycat): the gateway has already authenticated via the platform; exchange the "platform owner" session here.
+        // Platform-hosted mode: the fronting gateway has already authenticated via the platform; exchange the "platform owner" session here.
         // Users see neither login nor the init code - opening the app means being the owner.
         if (status.auth === "platform") {
           try {

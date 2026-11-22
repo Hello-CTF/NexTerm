@@ -258,20 +258,6 @@ func TestExposedSOCKSLoopbackNeedsNoAcknowledgement(t *testing.T) {
 	}
 }
 
-func TestLazyCatFailsClosedBeforeSessionLookup(t *testing.T) {
-	provider := &switchProvider{err: errors.New("must not be called")}
-	service := NewService(Config{Provider: provider, Policy: Policy{Platform: "LAZYCAT"}})
-	t.Cleanup(func() { _ = service.Close() })
-	_, err := service.CreateSocks(t.Context(), CreateSocksArgs{SessionID: "missing", AcknowledgeRisk: true})
-	var appErr *ipc.Error
-	if !errors.As(err, &appErr) || appErr.Code != ipc.CodeUnsupported {
-		t.Fatalf("LazyCat error = %v", err)
-	}
-	if provider.callCount() != 0 {
-		t.Fatal("LazyCat creation performed session lookup")
-	}
-}
-
 func TestCreateValidation(t *testing.T) {
 	service := newLoopbackService(t, &switchProvider{dialer: &recordingDialer{}})
 	for _, test := range []struct {

@@ -1,3 +1,0 @@
-package_override:
-  package: cloud.lazycat.app.nexterm.dev
-  name: NexTerm（开发版）

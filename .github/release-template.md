@@ -45,8 +45,4 @@ tar.gz 内只有 `nexterm-agent`、zip 内只有 `nexterm-agent.exe` 单个可�
 
 服务端默认要求登录且只监听回环地址；`--auth off` 会关闭账号与访问控制，不能用于公网。公网部署、备份与数据库选项见 [README 的「部署服务端」](https://github.com/Hello-CTF/NexTerm#部署服务端)。
 
-**懒猫微服**
-
-在微服的应用中心安装，无需从本 Release 下载：构建过程需要访问私有镜像仓库，凭证仅保存在微服侧，因此无法由这条 Release 流水线构建。
-
 macOS 首次打开被系统拦截时的处理方法见 [README 的「下载」](https://github.com/Hello-CTF/NexTerm#下载)。

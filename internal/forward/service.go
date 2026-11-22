@@ -103,9 +103,6 @@ func (s *Service) Environment() Environment {
 }
 
 func (s *Service) CreateLocal(ctx context.Context, args CreateLocalArgs) (Spec, error) {
-	if err := s.available(); err != nil {
-		return Spec{}, err
-	}
 	if strings.TrimSpace(args.SessionID) == "" {
 		return Spec{}, ipc.BadParam(errors.New("会话 ID 不能为空"))
 	}
@@ -132,9 +129,6 @@ func (s *Service) CreateLocal(ctx context.Context, args CreateLocalArgs) (Spec, 
 }
 
 func (s *Service) CreateSocks(ctx context.Context, args CreateSocksArgs) (Spec, error) {
-	if err := s.available(); err != nil {
-		return Spec{}, err
-	}
 	if strings.TrimSpace(args.SessionID) == "" {
 		return Spec{}, ipc.BadParam(errors.New("会话 ID 不能为空"))
 	}
@@ -156,9 +150,6 @@ func (s *Service) CreateSocks(ctx context.Context, args CreateSocksArgs) (Spec, 
 }
 
 func (s *Service) CreateRemote(ctx context.Context, args CreateRemoteArgs) (Spec, error) {
-	if err := s.available(); err != nil {
-		return Spec{}, err
-	}
 	if strings.TrimSpace(args.SessionID) == "" {
 		return Spec{}, ipc.BadParam(errors.New("会话 ID 不能为空"))
 	}
@@ -206,13 +197,6 @@ func (s *Service) hostFor(ctx context.Context, sessionID string) (string, error)
 		return "", session.IPCError(err)
 	}
 	return hostID, nil
-}
-
-func (s *Service) available() error {
-	if s.env.Available {
-		return nil
-	}
-	return ipc.NewError(ipc.CodeUnsupported, s.env.Reason)
 }
 
 func (s *Service) validateSession(ctx context.Context, sessionID string) (base.Dialer, error) {

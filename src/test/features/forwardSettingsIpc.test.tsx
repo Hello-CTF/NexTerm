@@ -74,7 +74,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
   mockSettingsCalls();
-  mocks.forwardEnv.mockResolvedValue({ available: true, platform: "other", listenHost: "127.0.0.1" });
+  mocks.forwardEnv.mockResolvedValue({ listenHost: "127.0.0.1" });
   mocks.forwardList.mockResolvedValue([]);
   useUi.setState({ pushToast: mocks.toast, sessions: [], accountEpoch: 0 });
 });

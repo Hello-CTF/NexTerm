@@ -44,7 +44,7 @@ Sync is not end-to-end encrypted: the password reaches the server at sign-in, so
 | Linux desktop (amd64 / arm64) | `nexterm-desktop_linux_<arch>_x.y.z.deb` |
 | Android (arm64, preview) | `nexterm-desktop_android_arm64_x.y.z.apk` |
 | iOS / iPadOS (preview) | [TestFlight](https://testflight.apple.com/join/ds62pzPz) |
-| Linux server / LazyCat MicroServer | See [Deploy the server](#deploy-the-server) / App Store (amd64 only) |
+| Linux server | See [Deploy the server](#deploy-the-server) |
 
 Mobile builds are previews and are not officially supported until real-device signing is verified. The desktop app checks for updates and verifies their Minisign signature before installing.
 

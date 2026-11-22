@@ -165,9 +165,6 @@ func ruleRuntimeMatches(row store.ForwardRuleRow, spec Spec) bool {
 }
 
 func (s *Service) StartRule(ctx context.Context, id, sessionID string) (Rule, error) {
-	if err := s.available(); err != nil {
-		return Rule{}, err
-	}
 	rules, err := s.ruleStore()
 	if err != nil {
 		return Rule{}, err

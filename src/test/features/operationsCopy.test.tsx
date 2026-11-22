@@ -134,7 +134,7 @@ beforeEach(() => {
     error: null,
   });
   mocks.redisScan.mockResolvedValue([0, []]);
-  mocks.env.mockResolvedValue({ available: true, platform: "other", listenHost: "127.0.0.1" });
+  mocks.env.mockResolvedValue({ listenHost: "127.0.0.1" });
   mocks.list.mockResolvedValue([
     {
       id: "f1",

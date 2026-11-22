@@ -1106,10 +1106,7 @@ export type Entry = {
 };
 
 export type Environment = {
-  available: boolean;
-  platform: string;
   listenHost: string;
-  reason?: string;
 };
 
 export type ExecBatch = {

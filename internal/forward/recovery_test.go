@@ -310,21 +310,3 @@ func TestSavedRuleAutoStartPersistsAcrossServiceRebuild(t *testing.T) {
 		t.Fatalf("auto-start after rebuild = %+v, %v", started, err)
 	}
 }
-
-func TestRecoverAutoStartRulesUnavailableEnvironment(t *testing.T) {
-	fixture := newSavedRuleFixture(t)
-	fixture.saveAutoStartRule(t, fixture.asset.ID, freeSavedRulePort(t), true)
-	service := NewService(Config{
-		Provider: fixture.manager,
-		Rules:    fixture.db,
-		Policy:   Policy{Platform: "lazycat"},
-	})
-	t.Cleanup(func() { _ = service.Close() })
-	outcomes := service.RecoverAutoStartRules(fixture.ctx, []RecoveryDevice{{
-		AssetID: fixture.asset.ID,
-		Connect: func(context.Context) (string, error) { return fixture.connected.ID, nil },
-	}})
-	if len(outcomes) != 1 || outcomes[0].Err == nil {
-		t.Fatalf("outcomes = %+v", outcomes)
-	}
-}
