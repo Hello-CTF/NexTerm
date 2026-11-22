@@ -26,6 +26,11 @@ export function registerTerminalBufferProbe(tabId: string, probe: () => "normal"
   };
 }
 
+// terminalBufferInFront reports which buffer a mounted terminal shows; undefined when it is not mounted.
+export function terminalBufferInFront(tabId: string): "normal" | "alternate" | undefined {
+  return bufferProbes.get(tabId)?.();
+}
+
 function copyAction(command: string) {
   return {
     label: t("复制命令"),

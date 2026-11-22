@@ -49,7 +49,9 @@ import { useLongPress, useMultiSelect } from "./useMultiSelect";
 import { chmodSupport, extractSupported, packDownloadSupported, validateEntryName, windowsReadOnly } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { conflictCaseInsensitive, findConflict } from "./transferQueue";
-import { useCwdFollow, type CwdFollowControl } from "./cwdFollow";
+import { pickFollowedTabId, useCwdFollow, type CwdFollowControl } from "./cwdFollow";
+import { terminalBufferInFront } from "../terminal/insertCommand";
+import { tabAwareness } from "../../app/sessionAwarenessStore";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
 import { folderDownloadAvailable, startFolderDownload } from "./folderDownload";
 import { noteHtml5Drop, useNativeFileDrop } from "./nativeDrop";
@@ -1235,11 +1237,57 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     return shell;
   };
 
+  // The terminal the file view follows (the focused pane's terminal first) when it can still take input, otherwise the
+  // first live terminal of the session in focus order.
+  const currentTerminal = () => {
+    const st = useUi.getState();
+    const followed = pickFollowedTabId(st.workspaces, sessionId);
+    if (followed) {
+      const tab = st.workspaces
+        .filter((workspace) => workspace.sessionId === sessionId)
+        .flatMap((workspace) => workspace.panes)
+        .flatMap((pane) => pane.tabs)
+        .find((candidate) => candidate.kind === "terminal" && candidate.tabId === followed);
+      if (tab && !tab.dead && !tab.exited) return { id: tab.id, tabId: followed, shell: tab.shell ?? "unknown" };
+    }
+    return findWritableTerminal(sessionId);
+  };
+
+  const showTerminal = (storeTabId: string) => {
+    useUi.getState().setActiveTab(storeTabId);
+    // Focusing the terminal on a touch device would raise the on-screen keyboard.
+    if (coarse) return;
+    window.setTimeout(() => {
+      for (const workspace of useUi.getState().workspaces) {
+        const pane = workspace.panes.find((candidate) => candidate.tabs.some((tab) => tab.id === storeTabId));
+        if (!pane) continue;
+        document
+          .getElementById(`nx-tab-panel-${workspace.id}-${pane.id}-${storeTabId}`)
+          ?.querySelector<HTMLElement>(".xterm-helper-textarea")
+          ?.focus();
+        return;
+      }
+    }, 0);
+  };
+
   const cdTerminalTo = async (dir: string) => {
-    const target = findWritableTerminal(sessionId);
+    const target = currentTerminal();
     if (!target) {
       pushToast("info", t("当前工作区没有可用终端，已新建一个"));
       openTerminalAt(dir);
+      return;
+    }
+    // Text typed into a full-screen program or a running command would be read as its input, not as a shell command.
+    const openNew = { label: t("在新终端打开"), onSelect: () => openTerminalAt(dir) };
+    if (terminalBufferInFront(target.tabId) === "alternate") {
+      showTerminal(target.id);
+      pushToast("info", t("终端里正在运行全屏程序，未切换目录；请退出该程序后再试"), openNew);
+      return;
+    }
+    const awareness = tabAwareness(target.tabId);
+    if (awareness?.state === "running" && awareness.reason === "command_start") {
+      showTerminal(target.id);
+      pushToast("info", t("终端里有命令正在运行，未切换目录；请等命令结束后再试"), openNew);
       return;
     }
     const { command, failure } = directoryCommandFor(
@@ -1250,6 +1298,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       notifyDirectoryFailure(dir, failure);
       return;
     }
+    showTerminal(target.id);
     if (sessionKind === "winrm") {
       void sessionApi
         .lineExec(target.tabId, command)

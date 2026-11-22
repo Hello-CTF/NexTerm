@@ -94,6 +94,8 @@ vi.mock("../../ui/clipboard", async (importOriginal) => {
 
 import { FileTree } from "../../features/files/FileTree";
 import { resetCwdFollowForTest } from "../../features/files/cwdFollow";
+import { registerTerminalBufferProbe } from "../../features/terminal/insertCommand";
+import { useAwarenessStore } from "../../app/sessionAwarenessStore";
 import { useUi, type AppTab } from "../../app/store";
 import type { FileEntryDto } from "../../ipc/types";
 
@@ -920,5 +922,95 @@ describe("FileTree shell-aware terminal navigation", () => {
     const newTab = useUi.getState().workspaces[0]?.panes[0]?.tabs.find((tab) => tab.kind === "terminal" && tab.id !== "t1");
     expect(newTab?.pendingDirectory).toBe(dir);
     expect(mocks.termWrite).not.toHaveBeenCalled();
+  });
+});
+
+describe("FileTree open in the current terminal", () => {
+  const dir = "/srv/app";
+
+  beforeEach(() => mocks.termWrite.mockResolvedValue(undefined));
+  afterEach(() => useAwarenessStore.setState({ byTabId: new Map() }));
+
+  function seedTwoPanes(activePaneId: "p1" | "p2", patch: Partial<AppTab> = {}): void {
+    seedWorkspace({ assetId: "asset-1" });
+    const left: AppTab = { id: "t1", kind: "terminal", title: "left", sessionId: SID, tabId: "k1", shell: "posix", closable: true, ...patch };
+    const right: AppTab = { id: "t2", kind: "terminal", title: "right", sessionId: SID, tabId: "k2", shell: "posix", closable: true };
+    useUi.setState((state) => ({
+      workspaces: state.workspaces.map((workspace) => ({
+        ...workspace,
+        panes: [
+          { id: "p1", tabs: [left], activeTabId: "t1" },
+          { id: "p2", tabs: [right], activeTabId: "t2" },
+        ],
+        activePaneId,
+      })),
+    }));
+  }
+
+  async function openCurrent(): Promise<void> {
+    mocks.list.mockResolvedValue([{ ...entry("app", "dir"), path: dir }]);
+    mounted = mountTree();
+    await waitForRendered(() => expect(treeItem(dir)).toBeDefined());
+    act(() => {
+      treeItem(dir)!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    const item = [...mounted.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (candidate) => candidate.textContent?.includes("在当前终端打开"),
+    );
+    click(item!);
+    await flush();
+  }
+
+  function written(): string[] {
+    return mocks.termWrite.mock.calls.map((call) => `${String(call[0])}:${new TextDecoder().decode(call[1] as Uint8Array)}`);
+  }
+
+  it("writes to the terminal of the focused pane, not the first one in order", async () => {
+    seedTwoPanes("p2");
+    await openCurrent();
+    await waitForRendered(() => expect(written()).toEqual(["k2:cd '/srv/app'\n"]));
+    const ws = useUi.getState().workspaces[0];
+    expect(ws?.activePaneId).toBe("p2");
+    expect(ws?.panes.find((pane) => pane.id === "p2")?.activeTabId).toBe("t2");
+  });
+
+  it("skips a followed terminal that has exited and shows the live one it uses", async () => {
+    seedTwoPanes("p1", { exited: true });
+    await openCurrent();
+    await waitForRendered(() => expect(written()).toEqual(["k2:cd '/srv/app'\n"]));
+    expect(useUi.getState().workspaces[0]?.activePaneId).toBe("p2");
+  });
+
+  it("refuses while a full-screen program owns the terminal and offers a new terminal", async () => {
+    seedTwoPanes("p1");
+    const unregister = registerTerminalBufferProbe("k1", () => "alternate");
+    try {
+      await openCurrent();
+    } finally {
+      unregister();
+    }
+    expect(mocks.termWrite).not.toHaveBeenCalled();
+    const toast = useUi.getState().toasts.at(-1);
+    expect(toast?.text).toContain("全屏程序");
+    expect(toast?.action?.label).toBe("在新终端打开");
+  });
+
+  it("refuses while shell integration reports a running command", async () => {
+    seedTwoPanes("p1");
+    useAwarenessStore.setState({
+      byTabId: new Map([["k1", { state: "running", reason: "command_start", seen: true, notable: false, version: 1 }]]),
+    });
+    await openCurrent();
+    expect(mocks.termWrite).not.toHaveBeenCalled();
+    expect(toastTexts()).toContain("命令正在运行");
+  });
+
+  it("still writes when the terminal only reported output", async () => {
+    seedTwoPanes("p1");
+    useAwarenessStore.setState({
+      byTabId: new Map([["k1", { state: "running", reason: "output", seen: true, notable: false, version: 1 }]]),
+    });
+    await openCurrent();
+    await waitForRendered(() => expect(written()).toEqual(["k1:cd '/srv/app'\n"]));
   });
 });
