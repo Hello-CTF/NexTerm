@@ -221,7 +221,7 @@ func TestUpdateInstallEmitsProgressEvents(t *testing.T) {
 	response := dispatchHostKeyTest(t, production, "app_update_install", `null`)
 	var result update.Result
 	requireStoreTestResponse(t, response, &result)
-	if !result.Installed || !result.Restarted || result.Version != "0.3.0" {
+	if !result.Installed || result.Restarted || result.Version != "0.3.0" {
 		t.Fatalf("install result = %+v", result)
 	}
 	content, err := os.ReadFile(executable)
@@ -231,8 +231,20 @@ func TestUpdateInstallEmitsProgressEvents(t *testing.T) {
 	if string(content) != "new-binary-0.3.0" {
 		t.Fatalf("executable content = %q", content)
 	}
-	if restarted != executable {
-		t.Fatalf("restart target = %q", restarted)
+	if restarted != "" {
+		t.Fatalf("install must wait for an explicit restart, restarted %q", restarted)
+	}
+	response = dispatchHostKeyTest(t, production, "app_update_state", `null`)
+	var state update.InstallState
+	requireStoreTestResponse(t, response, &state)
+	if state.Phase != update.StateInstalled || state.InstalledVersion != "0.3.0" {
+		t.Fatalf("install state = %+v", state)
+	}
+	response = dispatchHostKeyTest(t, production, "app_restart", `null`)
+	var restart update.Result
+	requireStoreTestResponse(t, response, &restart)
+	if !restart.Restarted || restarted != executable {
+		t.Fatalf("restart = %+v, target = %q", restart, restarted)
 	}
 
 	recorder.mu.Lock()
@@ -274,6 +286,10 @@ func (f *fakeUpdateCommandManager) Install(context.Context, string) (update.Resu
 
 func (f *fakeUpdateCommandManager) Restart(context.Context) update.Result {
 	return update.Result{}
+}
+
+func (f *fakeUpdateCommandManager) State() update.InstallState {
+	return update.InstallState{Phase: update.StateIdle}
 }
 
 func TestUpdateInstallIPCPreservesKnownUserErrors(t *testing.T) {

@@ -97,7 +97,7 @@ func TestSignedReleaseAssetSizeBoundaries(t *testing.T) {
 	}
 }
 
-func TestInstallResolveAssetRevalidatesSignature(t *testing.T) {
+func TestInstallRevalidatesSignature(t *testing.T) {
 	tests := []struct {
 		name       string
 		failStatus bool
@@ -113,7 +113,7 @@ func TestInstallResolveAssetRevalidatesSignature(t *testing.T) {
 			validSignature := fixture.signature
 			badSignature := key.Sign([]byte("another manifest"), "NexTerm 0.3.0 SHA256SUMS")
 			server := newObservedReleaseServer(t, fixture, func(response http.ResponseWriter, attempt int64) {
-				if attempt <= 2 {
+				if attempt <= 1 {
 					_, _ = response.Write([]byte(validSignature))
 					return
 				}
@@ -141,15 +141,13 @@ func TestInstallResolveAssetRevalidatesSignature(t *testing.T) {
 			if status := manager.Check(context.Background()); !status.Available {
 				t.Fatalf("initial check = %+v", status)
 			}
+			// The signature changes after the check the user saw: Install verifies the signature it fetches itself.
 			result, err := manager.Install(context.Background(), "")
-			if err == nil {
-				t.Fatalf("resolveAsset must reject the changed signature, result = %+v", result)
+			if err != nil || result.Installed || result.UnavailableReason == "" {
+				t.Fatalf("Install must reject the changed signature, result = %+v, err = %v", result, err)
 			}
-			if result.Installed {
-				t.Fatalf("result = %+v", result)
-			}
-			if requests := server.signatureRequests.Load(); requests != 3 {
-				t.Fatalf("signature requests = %d, want initial Check, Install Check, then resolveAsset", requests)
+			if requests := server.signatureRequests.Load(); requests != 2 {
+				t.Fatalf("signature requests = %d, want the initial Check and the Install's own fetch", requests)
 			}
 			if requests := server.artifactRequests.Load(); requests != 0 {
 				t.Fatalf("artifact requests = %d, want 0; applyInstall must remain unreachable", requests)

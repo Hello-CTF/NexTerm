@@ -1822,6 +1822,16 @@ export type InheritedValueDTO = {
   reason: string;
 };
 
+export type InstallState = {
+  phase: string;
+  version: string;
+  taskId: string;
+  transferred: number;
+  total: number;
+  error: string;
+  installedVersion: string;
+};
+
 export type InventoryCandidateDTO = {
   key: string;
   kind: string;
@@ -3842,6 +3852,9 @@ export type UpdateStatus = {
   assetSize: number;
   canInstall: boolean;
   unavailableReason: string;
+  releaseUrl?: string;
+  downloadUrl?: string;
+  pendingVersion?: string;
   channel: string;
   releaseChannel: string;
   runningPrerelease: boolean;

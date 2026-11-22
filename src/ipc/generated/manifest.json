@@ -451,6 +451,12 @@
       "channel": false,
       "stream": "none"
     },
+    "app_update_state": {
+      "scope": "update",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "app_windows_build": {
       "scope": "platform",
       "nested": false,

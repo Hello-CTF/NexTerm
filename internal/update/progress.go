@@ -1,6 +1,7 @@
 package update
 
-// Progress has the same shape as the fs://progress payload, plus a phase distinguishing the download and install stages.
+// Progress has the same shape as the fs://progress payload, plus a phase distinguishing the download, verify and
+// install stages.
 type Progress struct {
 	TaskID      string `json:"taskId"`
 	Phase       string `json:"phase,omitempty"`
@@ -12,5 +13,6 @@ type Progress struct {
 
 const (
 	PhaseDownload = "download"
+	PhaseVerify   = "verify"
 	PhaseInstall  = "install"
 )

@@ -164,7 +164,7 @@ func TestInstallSignedReleaseReplacesBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Installed || !result.Restarted || result.Version != "0.3.0" {
+	if !result.Installed || result.Restarted || result.Version != "0.3.0" {
 		t.Fatalf("result = %+v", result)
 	}
 	content, err := os.ReadFile(executable)

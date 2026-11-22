@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -35,6 +36,13 @@ type Status struct {
 	AssetSize         int64  `json:"assetSize"`
 	CanInstall        bool   `json:"canInstall"`
 	UnavailableReason string `json:"unavailableReason"`
+	// ReleaseURL is the release page of Version; DownloadURL is its package for this platform, for a manual install
+	// when the app cannot install it itself.
+	ReleaseURL  string `json:"releaseUrl,omitempty"`
+	DownloadURL string `json:"downloadUrl,omitempty"`
+	// PendingVersion names a newer release that is published without this platform's package or its SHA256SUMS
+	// yet (a release still uploading). It is skipped rather than reported as a failed check.
+	PendingVersion string `json:"pendingVersion,omitempty"`
 	// Channel names how this platform receives updates when the app cannot install them itself (see
 	// externalChannel). It is empty where in-app updates apply, and it is not a failure.
 	Channel string `json:"channel"`
@@ -44,12 +52,38 @@ type Status struct {
 	RunningPrerelease bool           `json:"runningPrerelease"`
 }
 
+// Result reports an install or a restart. An install never restarts the app: Installed means the new version is
+// on disk and applies after Restart; only Restart sets Restarted.
 type Result struct {
 	Installed         bool   `json:"installed"`
 	Restarted         bool   `json:"restarted"`
 	Version           string `json:"version"`
 	UnavailableReason string `json:"unavailableReason"`
 }
+
+// Install states reported by State besides the progress phases.
+const (
+	StateIdle      = "idle"
+	StateInstalled = "installed"
+	StateFailed    = "failed"
+)
+
+// InstallState is the progress of the current or last install, kept by the process so a reloaded interface can
+// pick it up. Phase is idle, a progress phase while an install runs, installed or failed. InstalledVersion stays
+// set once a version is installed and waits for a restart, even when a later attempt fails.
+type InstallState struct {
+	Phase            string `json:"phase"`
+	Version          string `json:"version"`
+	TaskID           string `json:"taskId"`
+	Transferred      int64  `json:"transferred"`
+	Total            int64  `json:"total"`
+	Error            string `json:"error"`
+	InstalledVersion string `json:"installedVersion"`
+}
+
+// progressInterval bounds how often intermediate download progress is emitted; phase changes, completion and
+// errors are always emitted.
+const progressInterval = 200 * time.Millisecond
 
 // Manager is the in-app update entry point; every check failure degrades to Status.UnavailableReason
 // instead of returning an error to the caller. RestartFunc is injected by the wiring layer (desktop restarts the wails app); it is nil on the server.
@@ -71,8 +105,14 @@ type Manager struct {
 	// Nil means stable.
 	ChannelProvider func(context.Context) ReleaseChannel
 
+	installing atomic.Bool
+	// now is the clock that throttles progress events; nil means time.Now.
+	now func() time.Time
+
+	mu            sync.Mutex
+	state         InstallState
 	restartTarget string
-	installing    atomic.Bool
+	lastEmit      time.Time
 }
 
 func (m *Manager) releasesAPI() string {
@@ -94,10 +134,56 @@ func (m *Manager) httpClient() *http.Client {
 	return defaultClient
 }
 
+func (m *Manager) clock() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
+}
+
 func (m *Manager) emit(ctx context.Context, progress Progress) {
 	if m.Emit != nil {
 		m.Emit(ctx, progress)
 	}
+}
+
+// State returns the current or last install, so a reloaded interface can resume showing it.
+func (m *Manager) State() InstallState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.state
+	if state.Phase == "" {
+		state.Phase = StateIdle
+	}
+	return state
+}
+
+func (m *Manager) updateState(change func(*InstallState)) {
+	m.mu.Lock()
+	change(&m.state)
+	m.mu.Unlock()
+}
+
+// report records progress in the state and emits it; intermediate download ticks are throttled to
+// progressInterval, every other event is emitted.
+func (m *Manager) report(ctx context.Context, progress Progress, throttle bool) {
+	m.mu.Lock()
+	m.state.Phase = progress.Phase
+	m.state.TaskID = progress.TaskID
+	m.state.Transferred = progress.Transferred
+	m.state.Total = progress.Total
+	if progress.Error != "" {
+		m.state.Phase = StateFailed
+		m.state.Error = progress.Error
+	}
+	now := m.clock()
+	if throttle && !m.lastEmit.IsZero() && now.Sub(m.lastEmit) < progressInterval {
+		m.mu.Unlock()
+		return
+	}
+	m.lastEmit = now
+	m.mu.Unlock()
+	m.emit(ctx, progress)
 }
 
 func (m *Manager) releaseChannel(ctx context.Context) ReleaseChannel {
@@ -111,24 +197,35 @@ func (m *Manager) releaseChannel(ctx context.Context) ReleaseChannel {
 }
 
 func (m *Manager) Check(ctx context.Context) Status {
-	return m.check(ctx, m.releaseChannel(ctx))
+	status, _ := m.check(ctx, m.releaseChannel(ctx))
+	return status
 }
 
-func (m *Manager) check(ctx context.Context, channel ReleaseChannel) Status {
+// resolved is the release a check settled on, with the package and the verified checksums an install uses.
+type resolved struct {
+	asset Asset
+	sums  map[string]string
+}
+
+// check finds the newest release on the channel that is newer than the running version and complete for this
+// platform. A newer release whose asset list lacks this platform's package or SHA256SUMS (one still being
+// published) is skipped and named in PendingVersion; any failure to fetch or verify the checksums of the chosen
+// release, a missing signature included, is a failed check, never a reason to fall back to an older release.
+func (m *Manager) check(ctx context.Context, channel ReleaseChannel) (Status, *resolved) {
 	status := Status{
 		CurrentVersion: m.CurrentVersion, CanInstall: m.CanInstall,
 		ReleaseChannel: channel, RunningPrerelease: runningPrerelease(m.CurrentVersion),
 	}
-	fail := func(reason string) Status {
+	fail := func(reason string) (Status, *resolved) {
 		status.UnavailableReason = reason
-		return status
+		return status, nil
 	}
 	if err := platformSupported(m.GOOS, m.GOARCH); err != nil {
 		// Platforms that update through a store or a manual download are not a failed check, and there is
 		// nothing to ask the release API about.
 		if channel := externalChannel(m.GOOS); channel != "" {
 			status.Channel = channel
-			return status
+			return status, nil
 		}
 		return fail(err.Error())
 	}
@@ -138,30 +235,50 @@ func (m *Manager) check(ctx context.Context, channel ReleaseChannel) Status {
 	if err != nil {
 		return fail("检查更新失败: " + err.Error())
 	}
-	release, ok := selectRelease(releases, m.CurrentVersion, channel)
-	if !ok {
-		return status
+	for _, release := range candidateReleases(releases, m.CurrentVersion, channel) {
+		asset, ok := matchAsset(release, m.GOOS, m.GOARCH)
+		if !ok || !releaseHasChecksums(release) {
+			if status.PendingVersion == "" {
+				status.PendingVersion = release.version()
+			}
+			continue
+		}
+		sums, err := m.fetchChecksums(ctx, release)
+		if err != nil {
+			return fail("获取校验和失败: " + err.Error())
+		}
+		if _, ok := sums[asset.Name]; !ok {
+			return fail(checksumsAssetName + " 缺少 " + asset.Name + " 的校验和")
+		}
+		status.Available = true
+		status.Version = release.version()
+		status.Notes = release.Body
+		status.Prerelease = release.Prerelease
+		status.AssetName = asset.Name
+		status.AssetSize = asset.Size
+		status.ReleaseURL = release.HTMLURL
+		status.DownloadURL = asset.BrowserDownloadURL
+		if status.CanInstall {
+			if reason := m.installBlocker(); reason != "" {
+				status.CanInstall = false
+				status.UnavailableReason = reason
+			}
+		}
+		return status, &resolved{asset: asset, sums: sums}
 	}
-	asset, ok := matchAsset(release, m.GOOS, m.GOARCH)
-	if !ok {
-		return fail("新版本 " + release.version() + " 没有适合当前平台的安装包")
-	}
-	sums, err := m.fetchChecksums(ctx, release)
-	if err != nil {
-		return fail("获取校验和失败: " + err.Error())
-	}
-	if _, ok := sums[asset.Name]; !ok {
-		return fail(checksumsAssetName + " 缺少 " + asset.Name + " 的校验和")
-	}
-	status.Available = true
-	status.Version = release.version()
-	status.Notes = release.Body
-	status.Prerelease = release.Prerelease
-	status.AssetName = asset.Name
-	status.AssetSize = asset.Size
-	return status
+	return status, nil
 }
 
+// releaseHasChecksums reports whether the release lists SHA256SUMS. A missing signature is not treated as a
+// release still being published: when signatures are required it fails the check.
+func releaseHasChecksums(release Release) bool {
+	asset, ok := findReleaseAsset(release, checksumsAssetName)
+	return ok && asset.BrowserDownloadURL != ""
+}
+
+// Install downloads, verifies and installs the newest release; it does not restart the app. The install runs to
+// completion even when the caller goes away (a reloaded interface), and State reports it meanwhile. An install of
+// the version already installed and waiting for a restart returns at once.
 func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 	if !m.CanInstall {
 		return Result{UnavailableReason: "服务端模式不支持桌面应用内安装"}, nil
@@ -170,8 +287,9 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 		return Result{}, userErrorf(UserErrorBadParam, "正在安装更新，请稍候")
 	}
 	defer m.installing.Store(false)
+	ctx = context.WithoutCancel(ctx)
 	channel := m.releaseChannel(ctx)
-	status := m.check(ctx, channel)
+	status, found := m.check(ctx, channel)
 	if !status.Available {
 		reason := status.UnavailableReason
 		if reason == "" {
@@ -179,64 +297,51 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 		}
 		return Result{UnavailableReason: reason}, nil
 	}
+	if !status.CanInstall {
+		return Result{UnavailableReason: status.UnavailableReason}, nil
+	}
 	if version != "" && version != status.Version {
 		return Result{}, userErrorf(UserErrorBadParam, "待安装版本 %s 与最新版本 %s 不一致", version, status.Version)
 	}
-	asset, sums, err := m.resolveAsset(ctx, status.Version, channel)
-	if err != nil {
+	if m.State().InstalledVersion == status.Version {
+		return Result{Installed: true, Version: status.Version}, nil
+	}
+	asset := found.asset
+	taskID := ids.New()
+	m.updateState(func(state *InstallState) {
+		state.Version = status.Version
+		state.Error = ""
+	})
+	failed := func(phase string, transferred, total int64, err error) (Result, error) {
+		m.report(ctx, Progress{TaskID: taskID, Phase: phase, Transferred: transferred, Total: total, Done: true, Error: err.Error()}, false)
 		return Result{}, err
 	}
+	m.report(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Total: asset.Size}, false)
 	directory, err := os.MkdirTemp(platform.TempDir(), "nexterm-update-")
 	if err != nil {
-		return Result{}, err
+		return failed(PhaseDownload, 0, asset.Size, err)
 	}
 	defer os.RemoveAll(directory)
 	archive := filepath.Join(directory, asset.Name)
-	taskID := ids.New()
 	if err := m.download(ctx, asset, archive, taskID); err != nil {
-		m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Done: true, Error: err.Error()})
-		return Result{}, err
+		return failed(PhaseDownload, 0, asset.Size, err)
 	}
-	if err := verifyChecksumFile(archive, asset.Name, sums); err != nil {
+	m.report(ctx, Progress{TaskID: taskID, Phase: PhaseVerify, Transferred: asset.Size, Total: asset.Size}, false)
+	if err := verifyChecksumFile(archive, asset.Name, found.sums); err != nil {
 		_ = os.Remove(archive)
-		m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Transferred: asset.Size, Total: asset.Size, Done: true, Error: err.Error()})
-		return Result{}, err
+		return failed(PhaseVerify, asset.Size, asset.Size, err)
 	}
-	m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseInstall})
-	if err := m.applyInstall(ctx, archive); err != nil {
-		m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseInstall, Done: true, Error: err.Error()})
-		return Result{}, err
-	}
-	m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseInstall, Done: true})
-	result := Result{Installed: true, Version: status.Version}
-	restart := m.Restart(ctx)
-	result.Restarted = restart.Restarted
-	result.UnavailableReason = restart.UnavailableReason
-	return result, nil
-}
-
-func (m *Manager) resolveAsset(ctx context.Context, version string, channel ReleaseChannel) (Asset, map[string]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
-	defer cancel()
-	releases, err := m.fetchReleases(ctx)
+	m.report(ctx, Progress{TaskID: taskID, Phase: PhaseInstall}, false)
+	target, err := m.applyInstall(ctx, archive)
 	if err != nil {
-		return Asset{}, nil, userErrorf(UserErrorIO, "检查更新失败: %w", err)
+		return failed(PhaseInstall, 0, 0, err)
 	}
-	for _, release := range releases {
-		if release.version() != version || !releaseVisibleOn(release, channel) {
-			continue
-		}
-		asset, ok := matchAsset(release, m.GOOS, m.GOARCH)
-		if !ok {
-			continue
-		}
-		sums, err := m.fetchChecksums(ctx, release)
-		if err != nil {
-			return Asset{}, nil, userErrorf(UserErrorIO, "获取校验和失败: %w", err)
-		}
-		return asset, sums, nil
-	}
-	return Asset{}, nil, userErrorf(UserErrorNotFound, "版本 %s 不存在或不可用", version)
+	m.mu.Lock()
+	m.restartTarget = target
+	m.state = InstallState{Phase: StateInstalled, Version: status.Version, TaskID: taskID, InstalledVersion: status.Version}
+	m.mu.Unlock()
+	m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseInstall, Done: true})
+	return Result{Installed: true, Version: status.Version}, nil
 }
 
 func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string) error {
@@ -270,7 +375,7 @@ func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string
 	defer file.Close()
 	buffer := make([]byte, 256<<10)
 	var transferred int64
-	m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Total: total})
+	m.report(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Total: total}, false)
 	for {
 		count, readErr := body.Read(buffer)
 		if count > 0 {
@@ -278,7 +383,7 @@ func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string
 				return userErrorf(UserErrorIO, "写入 %s 失败: %w", asset.Name, err)
 			}
 			transferred += int64(count)
-			m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Transferred: transferred, Total: total})
+			m.report(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Transferred: transferred, Total: total}, true)
 		}
 		if readErr == io.EOF {
 			break
@@ -287,7 +392,7 @@ func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string
 			return userErrorf(UserErrorIO, "下载 %s 失败: %w", asset.Name, idleread.Cause(ctx, readErr))
 		}
 	}
-	m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Transferred: transferred, Total: total, Done: true})
+	m.report(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Transferred: transferred, Total: total, Done: true}, false)
 	return nil
 }
 
@@ -295,7 +400,12 @@ func (m *Manager) Restart(ctx context.Context) Result {
 	if m.RestartFunc == nil {
 		return Result{UnavailableReason: "服务端模式不支持应用内重启"}
 	}
+	if m.installing.Load() {
+		return Result{UnavailableReason: "正在安装更新，请等待安装完成后再重启"}
+	}
+	m.mu.Lock()
 	target := m.restartTarget
+	m.mu.Unlock()
 	if target == "" {
 		target = m.ExePath
 	}
