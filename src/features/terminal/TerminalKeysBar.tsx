@@ -290,6 +290,11 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
     sendLine(composer.current?.value ?? "", pending.submit);
   };
 
+  // A field removed mid-composition (switching back to direct input) leaves no composition behind.
+  useEffect(() => {
+    if (!buffered) composing.current = false;
+  }, [buffered]);
+
   useEffect(
     () => () => {
       if (pendingSubmit.current) clearTimeout(pendingSubmit.current.timer);
