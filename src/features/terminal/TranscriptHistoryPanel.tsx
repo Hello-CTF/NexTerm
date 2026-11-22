@@ -41,6 +41,7 @@ import { usePaneWidth } from "../../ui/usePaneWidth";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 import { useTranscriptFocus } from "./transcriptFocus";
 import { t } from "../../i18n";
+import { isImeEnter } from "../../ui/imeEnter";
 
 const POLL_MS = 5000;
 const TRANSCRIPT_LIST_WIDTH = { min: 200, max: 520, default: 300 };
@@ -861,7 +862,7 @@ export function TranscriptHistoryPanel({
                     disabled={!selected || selected.contentOmitted}
                     onChange={(event) => setQuery(event.target.value)}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter") {
+                      if (event.key === "Enter" && !isImeEnter(event)) {
                         event.preventDefault();
                         void runSearch();
                       }

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { isTouchShell } from "../app/shell";
-import { isImeKeyEvent } from "./DialogHost";
+import { isImeEnter } from "./imeEnter";
 import { IconCheck, IconChevronDown } from "./icons";
 import { t } from "../i18n";
 
@@ -51,7 +51,7 @@ export function Combobox({ id, ariaLabel, value, options, onChange, disabled, cl
     setOpen(false);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (isImeKeyEvent(event)) return;
+    if (isImeEnter(event)) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       setOpen(true);

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { type FleetBaseURLEntry } from "../../ipc/fleetApi";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
+import { isImeEnter } from "../../ui/imeEnter";
 import { IconArrowDown, IconArrowUp, IconChevronRight, IconGlobe, IconPlus, IconRefresh, IconSave, IconTrash, IconXCircle } from "../../ui/icons";
 import { MAX_BASE_URLS, validateBaseURL } from "./baseUrlValidation";
 import { fleetClient } from "./clients";
@@ -219,7 +220,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                     setInputError(null);
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") {
+                    if (e.key === "Enter" && !isImeEnter(e)) {
                       e.preventDefault();
                       add();
                     }

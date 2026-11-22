@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type KeyboardEvent, type RefObject } from "react";
-import { isImeKeyEvent } from "../../ui/DialogHost";
+import { isImeEnter } from "../../ui/imeEnter";
 import { IconSearch } from "../../ui/icons";
 import type { SettingsSearchResult } from "./settingsIndex";
 import { t } from "../../i18n";
@@ -22,7 +22,7 @@ export function SettingsSearch({ query, onQueryChange, results, onSelect, inputR
   useEffect(() => setActive(0), [query]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (isImeKeyEvent(e)) return;
+    if (isImeEnter(e)) return;
     if (e.key === "ArrowDown" && results.length > 0) {
       e.preventDefault();
       setActive((i) => (i + 1) % results.length);

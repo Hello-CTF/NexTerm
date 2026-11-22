@@ -21,6 +21,7 @@ import {
 } from "./terminalKeys";
 import { IconArrowDown, IconArrowUp, IconClose, IconKeyboardHide, IconSettings } from "../../ui/icons";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
+import { isImeEnter } from "../../ui/imeEnter";
 import { dismissSoftKeyboard, isSoftKeyboardOpen } from "../../ui/softKeyboard";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
@@ -56,6 +57,9 @@ type ConfigFocusRequest = { id: string; control: "toggle" | "up" | "down" };
 
 // Bar buttons must not take focus from the terminal or the buffered input, or the soft keyboard closes.
 const keepFocus = (event: { preventDefault: () => void }) => event.preventDefault();
+
+// How long a send waits for a forced composition commit to report compositionend before sending the field as it is.
+const COMPOSITION_COMMIT_FALLBACK_MS = 300;
 
 // Keys that a held press repeats, like a hardware keyboard: cursor movement and paging.
 const REPEATABLE_KEY_IDS = new Set(["up", "down", "left", "right", "pageup", "pagedown"]);
@@ -153,6 +157,9 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
   const configBodyRef = useRef<HTMLDivElement>(null);
   const doneButtonRef = useRef<HTMLButtonElement>(null);
   const composer = useRef<HTMLInputElement | null>(null);
+  // An input method composition in the buffered field, and a send that waits for it to finish.
+  const composing = useRef(false);
+  const pendingSubmit = useRef<{ submit: boolean; timer: ReturnType<typeof setTimeout> } | null>(null);
 
   const keys = resolveTerminalKeys(enabledIds);
   const enabledSet = new Set(enabledIds);
@@ -267,10 +274,43 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
     focusComposer();
   };
 
-  const submitLine = (submit: boolean) => {
-    if (!draft && !submit) return;
+  const sendLine = (text: string, submit: boolean) => {
+    if (!text && !submit) return;
     setDraft("");
-    sendText(draft, submit);
+    sendText(text, submit);
+  };
+
+  // Sends the field's text once a forced composition end has landed, or when the fallback timer runs out.
+  const flushPendingSubmit = () => {
+    const pending = pendingSubmit.current;
+    if (!pending) return;
+    pendingSubmit.current = null;
+    clearTimeout(pending.timer);
+    composing.current = false;
+    sendLine(composer.current?.value ?? "", pending.submit);
+  };
+
+  useEffect(
+    () => () => {
+      if (pendingSubmit.current) clearTimeout(pendingSubmit.current.timer);
+      pendingSubmit.current = null;
+    },
+    [],
+  );
+
+  const submitLine = (submit: boolean) => {
+    const input = composer.current;
+    if (input && composing.current) {
+      // A send button pressed mid-composition: the field holds marked text the input method has not finished. Moving
+      // focus away ends the composition; focusing again inside the same tap keeps the soft keyboard open. The send
+      // waits for compositionend so it carries the final text and the field is not cleared under the input method.
+      if (pendingSubmit.current) clearTimeout(pendingSubmit.current.timer);
+      pendingSubmit.current = { submit, timer: setTimeout(flushPendingSubmit, COMPOSITION_COMMIT_FALLBACK_MS) };
+      input.blur();
+      input.focus({ preventScroll: true });
+      return;
+    }
+    sendLine(input?.value ?? draft, submit);
   };
 
   const runQuickCommand = async (command: QuickCommand) => {
@@ -429,8 +469,16 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
             aria-label={t("缓冲输入内容")}
             placeholder={t("编辑整行后发送，支持听写")}
             onChange={(event) => setDraft(event.target.value)}
+            onCompositionStart={() => {
+              composing.current = true;
+            }}
+            onCompositionEnd={() => {
+              composing.current = false;
+              // The final text reaches the field with this event or with the input event right after it.
+              if (pendingSubmit.current) setTimeout(flushPendingSubmit, 0);
+            }}
             onKeyDown={(event) => {
-              if (event.key !== "Enter" || isImeKeyEvent(event)) return;
+              if (event.key !== "Enter" || isImeEnter(event)) return;
               event.preventDefault();
               submitLine(true);
             }}

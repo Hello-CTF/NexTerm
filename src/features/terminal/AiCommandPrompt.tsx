@@ -8,6 +8,7 @@ import { insertRisk } from "../explorer/snippetInsert";
 import { IconClose, IconLoader, IconSparkles } from "../../ui/icons";
 import type { CommandInsertTarget } from "./insertCommand";
 import { t } from "../../i18n";
+import { isImeEnter } from "../../ui/imeEnter";
 
 export type AiCommandContext = Omit<AiCommandGenerateRequest, "prompt">;
 
@@ -135,7 +136,7 @@ export function AiCommandPrompt({
             if (phase.kind !== "loading") setPhase({ kind: "idle" });
           }}
           onKeyDown={(e) => {
-            if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+            if (e.key !== "Enter" || isImeEnter(e)) return;
             e.preventDefault();
             if (phase.kind !== "result") generate();
             else if (insertable) void insert();

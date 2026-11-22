@@ -49,11 +49,8 @@ export type KeyResolution =
   /** xterm's default handling. */
   | { kind: "pass" };
 
-// WebKit (Safari, WKWebView, WebKitGTK) commits a composition on Enter and then delivers that Enter's keydown after
-// compositionend, with isComposing false and sometimes a real keyCode 13. Chromium-based engines report the
-// committing Enter as isComposing / keyCode 229 and need no rule; there a real Enter after compositionend is a new
-// Enter (Android keyboards commit the word and send Enter in the same frame).
-export const COMPOSITION_COMMIT_WINDOW_MS = 50;
+// The commit window for the Enter WebKit delivers after compositionend is shared with plain text fields.
+export { COMPOSITION_COMMIT_WINDOW_MS } from "../../../ui/imeEnter";
 
 /**
  * The single precedence order for a key event aimed at a terminal:

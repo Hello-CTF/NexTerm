@@ -2,6 +2,7 @@ import { useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } fro
 import { useUi } from "../app/store";
 import { isMac } from "../app/platform";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "./DialogHost";
+import { isImeEnter } from "./imeEnter";
 import { t } from "../i18n";
 
 export function PromptModal() {
@@ -39,7 +40,7 @@ export function PromptModal() {
   const shortcut = isMac() ? "⌘+Enter" : "Ctrl+Enter";
   const hint = multiLine ? t("{shortcut} 提交，Esc 取消", { shortcut }) : t("Enter 提交，Esc 取消");
   const onInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    if (isImeKeyEvent(event)) return;
+    if (isImeEnter(event)) return;
     if (
       event.key === "Enter" &&
       !event.repeat &&

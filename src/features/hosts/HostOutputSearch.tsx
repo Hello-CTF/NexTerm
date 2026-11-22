@@ -8,6 +8,7 @@ import { openHostHistoryTab, openTranscriptFocus } from "../terminal/transcriptF
 import { formatTranscriptBytes, formatTranscriptTime, stripAnsi } from "../terminal/transcriptText";
 import { HostSection } from "./HostSections";
 import { t } from "../../i18n";
+import { isImeEnter } from "../../ui/imeEnter";
 
 const MAX_QUERY_BYTES = 256;
 const MATCH_CAP = 50;
@@ -113,7 +114,7 @@ export function HostOutputSearch({ assetId }: { assetId: string }) {
               if (byteLength(event.target.value) <= MAX_QUERY_BYTES) setQuery(event.target.value);
             }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+              if (event.key === "Enter" && !isImeEnter(event)) {
                 event.preventDefault();
                 runSearch();
               }
