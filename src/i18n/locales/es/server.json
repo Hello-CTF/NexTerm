@@ -159,7 +159,7 @@
   "%w (拒绝访问: 当前用户无权管理计划任务, 请检查安全策略)": "%w (acceso denegado: el usuario actual no tiene permiso para administrar tareas programadas; revise la directiva de seguridad)",
   "%w: %s 的 SHA-256 与签名的校验和不一致": "%w: el SHA-256 de %s no coincide con la suma de verificación firmada",
   "%w: %s 的 minisign 验证失败: %v": "%w: falló la verificación minisign de %s: %v",
-  "%w: %s 缺少 %s 的校验和": "%w: falta la suma de verificación de %[3]s en %[2]s",
+  "%w: %s 缺少 %s 的校验和": "%[1]w: falta la suma de verificación de %[3]s en %[2]s",
   "%w: %s版本过旧，不支持%s，%s: %w": "%w: %s es demasiado antiguo para admitir %s; %s: %w",
   "%w: Windows 主机的文件继续使用 SFTP": "%w: los archivos de hosts Windows siguen usando SFTP",
   "%w: docker compose 与 docker-compose 均不可用: %w": "%w: ni docker compose ni docker-compose están disponibles: %w",
