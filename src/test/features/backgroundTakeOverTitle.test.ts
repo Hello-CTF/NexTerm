@@ -18,6 +18,7 @@ import {
   takeOverBackgroundTab,
   type BackgroundTab,
 } from "../../features/terminal/backgroundSessionsAccess";
+import { openAggregateEntry } from "../../features/inbox/inbox";
 import { useUi, type SessionRuntimeInfo, type Workspace } from "../../app/store";
 import type { AggregateHost } from "../../ipc/generated/types";
 
@@ -84,5 +85,14 @@ describe("taking over from the cross-host listing", () => {
     const [tab] = terminals();
     expect(tab.title).toBe("htop");
     expect(tab.renamedByUser).toBeUndefined();
+  });
+
+  it("names a tab opened from an inbox entry by the listing's titles, not the entry's display text", async () => {
+    const session = seed("device");
+    const host = { kind: "device", name: "host-a", sessionId: session.id, deviceId: "d1" } as unknown as AggregateHost;
+    useUi.setState({ sessions: [{ ...session, assetId: "device:d1" } as SessionRuntimeInfo] });
+    mocks.listSessions.mockResolvedValue([{ ...session, assetId: "device:d1" }]);
+    expect(await openAggregateEntry({ tabId: "durable-abc123", host, listedWindowTitle: "htop" })).toBeNull();
+    expect(terminals()[0].title).toBe("htop");
   });
 });

@@ -38,6 +38,9 @@ export interface WallCard {
   // The UI tab showing the session on this client; absent when no workspace here holds it.
   uiTabId?: string;
   title: string;
+  // The listing's own custom and program window titles, which name a tab opened from the card.
+  listedTitle?: string;
+  listedWindowTitle?: string;
   hostName: string;
   state: AwarenessState;
   group: WallGroup;
@@ -117,6 +120,8 @@ function card(input: {
   lastOutputAt?: number;
   host?: AggregateHost;
   stale?: boolean;
+  listedTitle?: string;
+  listedWindowTitle?: string;
 }): WallCard {
   const { awareness } = input;
   const state: AwarenessState = input.ended ? "exited" : (awareness?.state ?? "unknown");
@@ -125,6 +130,8 @@ function card(input: {
     tabId: input.tabId,
     uiTabId: input.uiTabId,
     title: input.title,
+    listedTitle: input.listedTitle,
+    listedWindowTitle: input.listedWindowTitle,
     hostName: input.hostName,
     state,
     // A muted session's needs_me state does not ask for the user, so it waits among the running sessions.
@@ -186,6 +193,8 @@ export function buildStatusWall(
     cards.push(card({
       tabId: session.tabId,
       title: session.title || t("持久终端"),
+      listedTitle: session.title,
+      listedWindowTitle: session.windowTitle,
       hostName: host.name,
       awareness: known(session.tabId),
       ended: session.dead === true,

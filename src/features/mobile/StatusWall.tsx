@@ -197,7 +197,7 @@ export function StatusWall({ onOpened, onClose, onOpenAssets }: StatusWallProps)
     if (!card.host) return;
     setOpening(card.tabId);
     // A canceled takeover (the user dismissed a device connect) leaves the wall as it was.
-    void takeOverAggregateSession(card.host, card.tabId, card.title)
+    void takeOverAggregateSession(card.host, card.tabId, card.listedTitle, card.listedWindowTitle)
       .then((result) => {
         if (result.ok) onOpened();
         else if ("error" in result) useUi.getState().pushToast("error", t("未能打开终端：{error}", { error: result.error }));
