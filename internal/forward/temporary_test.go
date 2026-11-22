@@ -10,7 +10,7 @@ import (
 
 func newServerModeService(t *testing.T, provider DialerProvider) *Service {
 	t.Helper()
-	service := NewService(Config{Provider: provider, Policy: Policy{Desktop: false, Platform: "other"}})
+	service := NewService(Config{Provider: provider, Policy: Policy{Desktop: false}})
 	t.Cleanup(func() { _ = service.Close() })
 	return service
 }

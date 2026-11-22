@@ -140,7 +140,6 @@ tasks:
     cmds:
       - task: fmt:check
       - go mod verify
-      - go run ./scripts/verify-manifest-injects
       - task: vet
       - task: vet:cross
       - task: test
@@ -171,7 +170,6 @@ tasks:
       - task: check:lockfile
       - task: fmt:check
       - go mod verify
-      - go run ./scripts/verify-manifest-injects
       - task: ipc:contract:check
       - task: gorm:check
       - task: check:scripts

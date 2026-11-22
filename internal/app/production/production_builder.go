@@ -42,7 +42,6 @@ type ProductionConfig struct {
 	Config                  Config
 	DataDir                 string
 	Desktop                 bool
-	ForwardPlatform         string
 	Connector               session.Connector
 	Terminals               session.TerminalFactory
 	Docker                  *docker.Service
@@ -349,7 +348,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 			}
 			return connected.Asset().ID, nil
 		},
-		Policy:  forward.Policy{Desktop: config.Desktop, Platform: config.ForwardPlatform},
+		Policy:  forward.Policy{Desktop: config.Desktop},
 		OnError: func(err error) { config.Config.Logger.Warn("forward lifecycle error", "error", err) },
 	})
 	// The forward runtime drives auto-start rules on connect, opt-in startup

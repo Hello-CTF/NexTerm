@@ -44,7 +44,7 @@
 | Linux 桌面 (amd64 / arm64) | `nexterm-desktop_linux_<架构>_x.y.z.deb` |
 | Android (arm64，预览版) | `nexterm-desktop_android_arm64_x.y.z.apk` |
 | iOS / iPadOS (预览版) | [TestFlight](https://testflight.apple.com/join/ds62pzPz) |
-| Linux 服务端 / 懒猫微服 | 见[部署服务端](#部署服务端) / 应用中心（仅 amd64） |
+| Linux 服务端 | 见[部署服务端](#部署服务端) |
 
 移动端为预览版，完成真机签名验收前不作为正式支持平台。桌面版自动检查更新，并在安装前验证 Minisign 签名。
 

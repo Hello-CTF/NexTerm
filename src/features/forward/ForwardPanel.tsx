@@ -13,7 +13,6 @@ import { ForwardSettingsSection } from "./ForwardSettingsSection";
 import {
   IconDownload,
   IconGlobe,
-  IconInfo,
   IconNetwork,
   IconPlug,
   IconRefresh,
@@ -24,9 +23,6 @@ import { t as tr } from "../../i18n";
 type Kind = "local" | "socks" | "remote";
 
 const DEFAULT_PORT: Record<Kind, string> = { local: "13306", socks: "1080", remote: "18080" };
-
-const LAZYCAT_UNAVAILABLE =
-  tr("懒猫微服上不支持端口转发，请改用平台转发或 SSH 隧道。");
 
 const FIELD_IDLE_VALIDATION_MS = 500;
 
@@ -107,7 +103,6 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
     staleTime: Infinity,
     refetchOnWindowFocus: false,
   });
-  const unavailable = env.data?.available === false;
   const listenHost = env.data?.listenHost ?? "";
   const exposed = listenHost ? !isLoopbackHost(listenHost) : false;
 
@@ -231,10 +226,6 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
   };
 
   const create = async () => {
-    if (unavailable) {
-      pushToast("info", LAZYCAT_UNAVAILABLE);
-      return;
-    }
     if (!sessionId) {
       pushToast("info", tr("请先连接一台主机。端口转发须通过主机的 SSH 连接建立。"));
       return;
@@ -654,7 +645,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
       </div>
 
 
-      {compact && !unavailable && (
+      {compact && (
         <div className="flex shrink-0 items-center border-t border-neutral-800/60 bg-neutral-950/40 px-2.5 py-1">
           <button className="nx-btn nx-btn-ghost nx-btn-sm" aria-expanded={formOpen} onClick={() => setFormOpen((v) => !v)}>
             {formOpen ? tr("收起") : tr("+ 新建转发")}
@@ -662,239 +653,230 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
         </div>
       )}
       <div
-        className={`max-h-[45%] shrink-0 overflow-auto border-t border-neutral-800/60 bg-neutral-950/40 p-3 ${compact ? "overscroll-contain [padding-bottom:calc(0.75rem+var(--nx-safe-bottom,0px))]" : ""} ${showForm || unavailable ? "" : "hidden"}`}
+        className={`max-h-[45%] shrink-0 overflow-auto border-t border-neutral-800/60 bg-neutral-950/40 p-3 ${compact ? "overscroll-contain [padding-bottom:calc(0.75rem+var(--nx-safe-bottom,0px))]" : ""} ${showForm ? "" : "hidden"}`}
         onFocus={compact ? keepFocusedFieldVisible : undefined}
       >
-        {unavailable ? (
-          <div className="nx-alert nx-alert-info flex items-start gap-2">
-            <IconInfo size={14} className="mt-0.5 shrink-0" />
-            <span>{LAZYCAT_UNAVAILABLE}</span>
+        {env.isPending && (
+          <div className="mb-2 text-[11px] text-neutral-500" role="status">
+            {tr("正在检查转发环境…")}
           </div>
-        ) : (
-          <>
-            {env.isPending && (
-              <div className="mb-2 text-[11px] text-neutral-500" role="status">
-                {tr("正在检查转发环境…")}
-              </div>
-            )}
-            {envFailed && (
-              <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-red-300" role="alert">
-                <span>{tr("未能检查转发环境：{value}", { value: describeError(env.error) })}</span>
-                <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void env.refetch()}>
-                  <IconRefresh size={12} />
-                  {tr("重试")}
-                </button>
-              </div>
-            )}
-            {envRefreshFailed && (
-              <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-amber-300" role="status">
-                <span>{tr("未能刷新转发环境：{value}；已保留上次成功结果。", { value: describeError(env.error) })}</span>
-                <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void env.refetch()}>
-                  <IconRefresh size={12} />
-                  {tr("重试")}
-                </button>
-              </div>
-            )}
-            <div className={compact ? "mb-2.5 grid grid-cols-3 gap-1.5" : "mb-2.5 flex flex-wrap items-center gap-1.5"}>
-              <button
-                className={`nx-btn nx-btn-sm ${kind === "local" ? "nx-btn-primary" : "nx-btn-ghost"}`}
-                onClick={() => switchKind("local")}
-              >
-                <IconPlug size={13} />
-                {tr("静态转发")}
-              </button>
-              <button
-                className={`nx-btn nx-btn-sm ${kind === "remote" ? "nx-btn-primary" : "nx-btn-ghost"}`}
-                onClick={() => switchKind("remote")}
-              >
-                <IconDownload size={13} />
-                {tr("远程转发")}
-              </button>
-              <button
-                className={`nx-btn nx-btn-sm ${kind === "socks" ? "nx-btn-primary" : "nx-btn-ghost"}`}
-                onClick={() => switchKind("socks")}
-              >
-                <IconGlobe size={13} />
-                {tr("SOCKS5 代理")}
-              </button>
-              <span className={compact ? "col-span-3 text-[11px] text-neutral-500" : "ml-1 text-[11px] text-neutral-500"}>
-                {kind === "local"
-                  ? exposed
-                    ? tr("把远端某个固定端口映射到服务端（适用于连接 MySQL / Redis）")
-                    : tr("把远端某个固定端口映射到{localMachine}（适用于连接 MySQL / Redis）", { localMachine })
-                  : kind === "remote"
-                    ? tr("在远端主机上监听一个端口，把连入的流量转回{remoteTarget}（让远端访问{value}）", { remoteTarget, value: WEB ? remoteService : tr("本机服务") })
-                    : exposed
-                      ? tr("在服务端开一个 SOCKS5 代理，目标由客户端在连接时指定（适用于浏览器、curl、proxychains）")
-                      : tr("在{localMachine}开一个 SOCKS5 代理，目标由客户端在连接时指定（适用于浏览器、curl、proxychains）", { localMachine })}
-              </span>
-            </div>
+        )}
+        {envFailed && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-red-300" role="alert">
+            <span>{tr("未能检查转发环境：{value}", { value: describeError(env.error) })}</span>
+            <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void env.refetch()}>
+              <IconRefresh size={12} />
+              {tr("重试")}
+            </button>
+          </div>
+        )}
+        {envRefreshFailed && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-amber-300" role="status">
+            <span>{tr("未能刷新转发环境：{value}；已保留上次成功结果。", { value: describeError(env.error) })}</span>
+            <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void env.refetch()}>
+              <IconRefresh size={12} />
+              {tr("重试")}
+            </button>
+          </div>
+        )}
+        <div className={compact ? "mb-2.5 grid grid-cols-3 gap-1.5" : "mb-2.5 flex flex-wrap items-center gap-1.5"}>
+          <button
+            className={`nx-btn nx-btn-sm ${kind === "local" ? "nx-btn-primary" : "nx-btn-ghost"}`}
+            onClick={() => switchKind("local")}
+          >
+            <IconPlug size={13} />
+            {tr("静态转发")}
+          </button>
+          <button
+            className={`nx-btn nx-btn-sm ${kind === "remote" ? "nx-btn-primary" : "nx-btn-ghost"}`}
+            onClick={() => switchKind("remote")}
+          >
+            <IconDownload size={13} />
+            {tr("远程转发")}
+          </button>
+          <button
+            className={`nx-btn nx-btn-sm ${kind === "socks" ? "nx-btn-primary" : "nx-btn-ghost"}`}
+            onClick={() => switchKind("socks")}
+          >
+            <IconGlobe size={13} />
+            {tr("SOCKS5 代理")}
+          </button>
+          <span className={compact ? "col-span-3 text-[11px] text-neutral-500" : "ml-1 text-[11px] text-neutral-500"}>
+            {kind === "local"
+              ? exposed
+                ? tr("把远端某个固定端口映射到服务端（适用于连接 MySQL / Redis）")
+                : tr("把远端某个固定端口映射到{localMachine}（适用于连接 MySQL / Redis）", { localMachine })
+              : kind === "remote"
+                ? tr("在远端主机上监听一个端口，把连入的流量转回{remoteTarget}（让远端访问{value}）", { remoteTarget, value: WEB ? remoteService : tr("本机服务") })
+                : exposed
+                  ? tr("在服务端开一个 SOCKS5 代理，目标由客户端在连接时指定（适用于浏览器、curl、proxychains）")
+                  : tr("在{localMachine}开一个 SOCKS5 代理，目标由客户端在连接时指定（适用于浏览器、curl、proxychains）", { localMachine })}
+          </span>
+        </div>
 
-            <div className={compact ? "grid grid-cols-2 items-start gap-x-2 gap-y-2" : "flex flex-wrap items-center gap-2"}>
-              {kind === "remote" && (
-                <>
-                  <div className={compact ? "order-none col-span-2 flex min-w-0 flex-col gap-1" : "contents"}>
-                  <label className="text-[11.5px] text-neutral-400" htmlFor={bindHostId}>
-                    {tr("远端监听")}
-                  </label>
-                  <div className={compact ? "min-w-0" : "w-[150px] shrink-0"}>
-                    <input
-                      id={bindHostId}
-                      ref={bindHostRef}
-                      className="nx-input nx-input-sm font-mono"
-                      value={bindHost}
-                      onChange={(e) => onBindHostChange(e.target.value)}
-                      onBlur={onBindHostBlur}
-                      placeholder="127.0.0.1"
-                      aria-label={tr("远端监听地址")}
-                      autoComplete="off"
-                      aria-invalid={bindHostError ? true : undefined}
-                      aria-describedby={bindHostError ? bindHostErrorId : undefined}
-                    />
-                    {bindHostError && (
-                      <p id={bindHostErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
-                        {bindHostError}
-                      </p>
-                    )}
-                  </div>
-                  </div>
-                  <span className={compact ? "hidden" : "text-neutral-600"}>:</span>
-                </>
-              )}
-              <div className={compact ? "order-1 flex min-w-0 flex-col gap-1" : "contents"}>
-              <label className="text-[11.5px] text-neutral-400" htmlFor={listenPortId}>
-                {listenPortLabel}
+        <div className={compact ? "grid grid-cols-2 items-start gap-x-2 gap-y-2" : "flex flex-wrap items-center gap-2"}>
+          {kind === "remote" && (
+            <>
+              <div className={compact ? "order-none col-span-2 flex min-w-0 flex-col gap-1" : "contents"}>
+              <label className="text-[11.5px] text-neutral-400" htmlFor={bindHostId}>
+                {tr("远端监听")}
               </label>
-              <div className={compact ? "min-w-0" : "w-[92px] shrink-0"}>
+              <div className={compact ? "min-w-0" : "w-[150px] shrink-0"}>
                 <input
-                  id={listenPortId}
-                  ref={listenPortRef}
+                  id={bindHostId}
+                  ref={bindHostRef}
                   className="nx-input nx-input-sm font-mono"
-                  value={listenPort}
-                  onChange={(e) => onListenPortChange(e.target.value)}
-                  onBlur={onListenPortBlur}
-                  placeholder={DEFAULT_PORT[kind]}
+                  value={bindHost}
+                  onChange={(e) => onBindHostChange(e.target.value)}
+                  onBlur={onBindHostBlur}
+                  placeholder="127.0.0.1"
+                  aria-label={tr("远端监听地址")}
                   autoComplete="off"
-                  inputMode="numeric"
-                  aria-invalid={listenPortInvalid ? true : undefined}
-                  aria-describedby={listenPortInvalid ? listenPortErrorId : undefined}
+                  aria-invalid={bindHostError ? true : undefined}
+                  aria-describedby={bindHostError ? bindHostErrorId : undefined}
                 />
-                {listenPortInvalid && (
-                  <p id={listenPortErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
-                    {tr("{listenPortLabel}须为 1-65535 之间的整数", { listenPortLabel })}
+                {bindHostError && (
+                  <p id={bindHostErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
+                    {bindHostError}
                   </p>
                 )}
               </div>
               </div>
-              {kind !== "socks" && (
-                <>
-                  <span className={compact ? "hidden" : "text-neutral-600"}>→</span>
-                  <div className={compact ? "order-3 col-span-2 flex min-w-0 flex-col gap-1" : "contents"}>
-                  {compact && <span className="text-[11.5px] text-neutral-400" aria-hidden="true">{tr("目标主机")}</span>}
-                  <div className={compact ? "min-w-0" : "min-w-[200px] flex-1"}>
-                    <input
-                      ref={targetHostRef}
-                      className="nx-input nx-input-sm font-mono"
-                      value={targetHost}
-                      onChange={(e) => onTargetHostChange(e.target.value)}
-                      onBlur={onTargetHostBlur}
-                      placeholder={
-                        kind === "remote"
-                          ? WEB
-                            ? tr("服务主机（在 NexTerm 所在主机解析，如 127.0.0.1）")
-                            : tr("本地服务主机（在本机解析，如 127.0.0.1）")
-                          : tr("目标主机（在远端主机上解析，如 172.17.0.5 / db.internal）")
-                      }
-                      aria-label={tr("目标主机")}
-                      autoComplete="off"
-                      aria-invalid={targetHostError ? true : undefined}
-                      aria-describedby={targetHostError ? targetHostErrorId : undefined}
-                    />
-                    {targetHostError && (
-                      <p id={targetHostErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
-                        {targetHostError}
-                      </p>
-                    )}
-                  </div>
-                  </div>
-                  <span className={compact ? "hidden" : "text-neutral-600"}>:</span>
-                  <div className={compact ? "order-2 flex min-w-0 flex-col gap-1" : "contents"}>
-                  {compact && <span className="text-[11.5px] text-neutral-400" aria-hidden="true">{tr("目标端口")}</span>}
-                  <div className={compact ? "min-w-0" : "w-[92px] shrink-0"}>
-                    <input
-                      ref={targetPortRef}
-                      className="nx-input nx-input-sm font-mono"
-                      value={targetPort}
-                      onChange={(e) => onTargetPortChange(e.target.value)}
-                      onBlur={onTargetPortBlur}
-                      placeholder="3306"
-                      aria-label={tr("目标端口")}
-                      autoComplete="off"
-                      inputMode="numeric"
-                      aria-invalid={targetPortError ? true : undefined}
-                      aria-describedby={targetPortError ? targetPortErrorId : undefined}
-                      onKeyDown={(e) => {
-                        if (isImeKeyEvent(e)) return;
-                        if (e.key === "Enter") void create();
-                      }}
-                    />
-                    {targetPortError && (
-                      <p id={targetPortErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
-                        {targetPortError}
-                      </p>
-                    )}
-                  </div>
-                  </div>
-                </>
-              )}
-              <button
-                className={`nx-btn nx-btn-primary nx-btn-sm ${compact ? "order-4 col-span-2 w-full justify-center" : ""}`}
-                disabled={busy || !sessionId || localSession || !env.data}
-                title={!env.data ? tr("等待转发环境检查成功") : undefined}
-                onClick={() => void create()}
-              >
-                {busy ? <IconRefresh size={13} className="animate-spin" /> : null}
-                {tr("创建")}
-              </button>
-            </div>
+              <span className={compact ? "hidden" : "text-neutral-600"}>:</span>
+            </>
+          )}
+          <div className={compact ? "order-1 flex min-w-0 flex-col gap-1" : "contents"}>
+          <label className="text-[11.5px] text-neutral-400" htmlFor={listenPortId}>
+            {listenPortLabel}
+          </label>
+          <div className={compact ? "min-w-0" : "w-[92px] shrink-0"}>
+            <input
+              id={listenPortId}
+              ref={listenPortRef}
+              className="nx-input nx-input-sm font-mono"
+              value={listenPort}
+              onChange={(e) => onListenPortChange(e.target.value)}
+              onBlur={onListenPortBlur}
+              placeholder={DEFAULT_PORT[kind]}
+              autoComplete="off"
+              inputMode="numeric"
+              aria-invalid={listenPortInvalid ? true : undefined}
+              aria-describedby={listenPortInvalid ? listenPortErrorId : undefined}
+            />
+            {listenPortInvalid && (
+              <p id={listenPortErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
+                {tr("{listenPortLabel}须为 1-65535 之间的整数", { listenPortLabel })}
+              </p>
+            )}
+          </div>
+          </div>
+          {kind !== "socks" && (
+            <>
+              <span className={compact ? "hidden" : "text-neutral-600"}>→</span>
+              <div className={compact ? "order-3 col-span-2 flex min-w-0 flex-col gap-1" : "contents"}>
+              {compact && <span className="text-[11.5px] text-neutral-400" aria-hidden="true">{tr("目标主机")}</span>}
+              <div className={compact ? "min-w-0" : "min-w-[200px] flex-1"}>
+                <input
+                  ref={targetHostRef}
+                  className="nx-input nx-input-sm font-mono"
+                  value={targetHost}
+                  onChange={(e) => onTargetHostChange(e.target.value)}
+                  onBlur={onTargetHostBlur}
+                  placeholder={
+                    kind === "remote"
+                      ? WEB
+                        ? tr("服务主机（在 NexTerm 所在主机解析，如 127.0.0.1）")
+                        : tr("本地服务主机（在本机解析，如 127.0.0.1）")
+                      : tr("目标主机（在远端主机上解析，如 172.17.0.5 / db.internal）")
+                  }
+                  aria-label={tr("目标主机")}
+                  autoComplete="off"
+                  aria-invalid={targetHostError ? true : undefined}
+                  aria-describedby={targetHostError ? targetHostErrorId : undefined}
+                />
+                {targetHostError && (
+                  <p id={targetHostErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
+                    {targetHostError}
+                  </p>
+                )}
+              </div>
+              </div>
+              <span className={compact ? "hidden" : "text-neutral-600"}>:</span>
+              <div className={compact ? "order-2 flex min-w-0 flex-col gap-1" : "contents"}>
+              {compact && <span className="text-[11.5px] text-neutral-400" aria-hidden="true">{tr("目标端口")}</span>}
+              <div className={compact ? "min-w-0" : "w-[92px] shrink-0"}>
+                <input
+                  ref={targetPortRef}
+                  className="nx-input nx-input-sm font-mono"
+                  value={targetPort}
+                  onChange={(e) => onTargetPortChange(e.target.value)}
+                  onBlur={onTargetPortBlur}
+                  placeholder="3306"
+                  aria-label={tr("目标端口")}
+                  autoComplete="off"
+                  inputMode="numeric"
+                  aria-invalid={targetPortError ? true : undefined}
+                  aria-describedby={targetPortError ? targetPortErrorId : undefined}
+                  onKeyDown={(e) => {
+                    if (isImeKeyEvent(e)) return;
+                    if (e.key === "Enter") void create();
+                  }}
+                />
+                {targetPortError && (
+                  <p id={targetPortErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
+                    {targetPortError}
+                  </p>
+                )}
+              </div>
+              </div>
+            </>
+          )}
+          <button
+            className={`nx-btn nx-btn-primary nx-btn-sm ${compact ? "order-4 col-span-2 w-full justify-center" : ""}`}
+            disabled={busy || !sessionId || localSession || !env.data}
+            title={!env.data ? tr("等待转发环境检查成功") : undefined}
+            onClick={() => void create()}
+          >
+            {busy ? <IconRefresh size={13} className="animate-spin" /> : null}
+            {tr("创建")}
+          </button>
+        </div>
 
-            <div className="nx-hint mt-2">
-              {localSession ? (
-                tr("「当前设备」不能作为转发出口，请先连接一台 SSH 资产再新建转发。")
-              ) : sessionId && !env.data ? (
-                tr("转发环境检查成功后才会显示监听地址并允许创建。")
-              ) : sessionId ? (
-                kind === "remote" ? (
-                  <>
-                    {tr("出口走当前会话（{value}）的连接；远端监听地址为{value2}", { value: sessionName(sessionId), value2: " " })}
-                    <span className="nx-code">
-                      {bindHost}:{listenPort}
-                    </span>{tr("{value}（绑定在远端主机上{value2}）。重新连接后会自动尝试恢复。", { value: " ", value2: isLoopbackHost(bindHost) ? tr("，只有远端本机能连") : tr("，对远端网络开放，创建前会确认风险") })}
-                  </>
-                ) : (
-                <>
-                  {tr("出口走当前会话（{value}）的连接；监听地址为{value2}", { value: sessionName(sessionId), value2: " " })}
-                  <span className="nx-code">
-                    {listenHost}:{listenPort}
-                  </span>
-                  {tr("{value}会话断开后转发自动停止。", { value: !exposed
-                    ? tr("，只有{localMachine}能连。", { localMachine })
-                    : kind === "socks"
-                      ? tr("，对外开放，创建前会确认风险。")
-                      : tr("。任何能连到该端口的人都能访问目标服务，请确认目标服务有鉴权。") })}
-                </>
-                )
-              ) : (
-                tr("当前没有可用的 SSH 会话，请先连接一台主机，再新建转发。")
-              )}
-            </div>
-          </>
-        )}
+        <div className="nx-hint mt-2">
+          {localSession ? (
+            tr("「当前设备」不能作为转发出口，请先连接一台 SSH 资产再新建转发。")
+          ) : sessionId && !env.data ? (
+            tr("转发环境检查成功后才会显示监听地址并允许创建。")
+          ) : sessionId ? (
+            kind === "remote" ? (
+              <>
+                {tr("出口走当前会话（{value}）的连接；远端监听地址为{value2}", { value: sessionName(sessionId), value2: " " })}
+                <span className="nx-code">
+                  {bindHost}:{listenPort}
+                </span>{tr("{value}（绑定在远端主机上{value2}）。重新连接后会自动尝试恢复。", { value: " ", value2: isLoopbackHost(bindHost) ? tr("，只有远端本机能连") : tr("，对远端网络开放，创建前会确认风险") })}
+              </>
+            ) : (
+            <>
+              {tr("出口走当前会话（{value}）的连接；监听地址为{value2}", { value: sessionName(sessionId), value2: " " })}
+              <span className="nx-code">
+                {listenHost}:{listenPort}
+              </span>
+              {tr("{value}会话断开后转发自动停止。", { value: !exposed
+                ? tr("，只有{localMachine}能连。", { localMachine })
+                : kind === "socks"
+                  ? tr("，对外开放，创建前会确认风险。")
+                  : tr("。任何能连到该端口的人都能访问目标服务，请确认目标服务有鉴权。") })}
+            </>
+            )
+          ) : (
+            tr("当前没有可用的 SSH 会话，请先连接一台主机，再新建转发。")
+          )}
+        </div>
       </div>
       <ForwardRules
         sessionId={sessionId}
         draft={{ listenPort, targetHost, targetPort }}
-        canSave={kind === "local" && Boolean(sessionId) && !localSession && !unavailable && Boolean(env.data)}
+        canSave={kind === "local" && Boolean(sessionId) && !localSession && Boolean(env.data)}
         visible={visible}
       />
       {!sessionId && (

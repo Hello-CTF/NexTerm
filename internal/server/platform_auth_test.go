@@ -13,7 +13,7 @@ import (
 
 const testGatewayKey = "gateway-secret"
 
-// newPlatformFixture assembles a platform-managed mode instance (with a gateway header), isomorphic to a Lazycat deployment:
+// newPlatformFixture assembles a platform-managed mode instance (with a gateway header), matching a deployment behind an authenticating gateway:
 // listening on a non-loopback address, access control delegated to the gateway header, empty account database.
 func newPlatformFixture(t *testing.T) *accountFixture {
 	t.Helper()
@@ -44,7 +44,7 @@ func TestPlatformModeRequiresGatewayKey(t *testing.T) {
 	}
 }
 
-// TestPlatformSessionEstablishesOwner covers the full code-free path on Lazycat:
+// TestPlatformSessionEstablishesOwner covers the full code-free path behind the gateway:
 // gateway header => automatically becomes the platform owner => gets a session => the frontend never shows login/init UI.
 func TestPlatformSessionEstablishesOwner(t *testing.T) {
 	fixture := newPlatformFixture(t)

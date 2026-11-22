@@ -49,7 +49,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers();
   document.body.replaceChildren();
-  mocks.forwardEnv.mockResolvedValue({ available: true, platform: "other", listenHost: "127.0.0.1" });
+  mocks.forwardEnv.mockResolvedValue({ listenHost: "127.0.0.1" });
   mocks.forwardList.mockResolvedValue([]);
   mocks.mountList.mockResolvedValue([]);
   mocks.platform.mockResolvedValue("windows");
@@ -163,7 +163,7 @@ describe("ForwardPanel inline validation on submit", () => {
   });
 
   it("env resolves after the blur error: the existing alert text updates with the current label", async () => {
-    const env = deferred<{ available: boolean; platform: string; listenHost: string }>();
+    const env = deferred<{ listenHost: string }>();
     mocks.forwardEnv.mockReturnValue(env.promise);
     mountForward();
     await flush();
@@ -171,19 +171,19 @@ describe("ForwardPanel inline validation on submit", () => {
     setInputValue(listenPort, "70000");
     blur(listenPort);
     expect(fieldError(listenPort)?.textContent).toBe("本地端口须为 1-65535 之间的整数");
-    env.resolve({ available: true, platform: "other", listenHost: "0.0.0.0" });
+    env.resolve({ listenHost: "0.0.0.0" });
     await flush();
     expect(fieldError(listenPort)?.textContent).toBe("监听端口须为 1-65535 之间的整数");
   });
 
   it("env switches within 500ms of input: the idle callback uses the switched label", async () => {
-    const env = deferred<{ available: boolean; platform: string; listenHost: string }>();
+    const env = deferred<{ listenHost: string }>();
     mocks.forwardEnv.mockReturnValue(env.promise);
     mountForward();
     await flush();
     const listenPort = inputBy('input[placeholder="13306"]');
     setInputValue(listenPort, "70000");
-    env.resolve({ available: true, platform: "other", listenHost: "0.0.0.0" });
+    env.resolve({ listenHost: "0.0.0.0" });
     await flush();
     expect(listenPort.getAttribute("aria-invalid")).toBeNull();
     await advance(500);
@@ -634,7 +634,7 @@ describe("MountPanel defaults the target to the current asset", () => {
 
 describe("ForwardPanel env status, polling, and browser wording", () => {
   it("create is disabled while the env query is pending and 127.0.0.1 is not the default listen address", async () => {
-    const env = deferred<{ available: boolean; platform: string; listenHost: string }>();
+    const env = deferred<{ listenHost: string }>();
     mocks.forwardEnv.mockReturnValue(env.promise);
     mountForward();
     await flush();
@@ -642,7 +642,7 @@ describe("ForwardPanel env status, polling, and browser wording", () => {
     expect(mounted!.container.textContent).toContain("正在检查转发环境");
     expect(mounted!.container.textContent).not.toContain("127.0.0.1:13306");
 
-    env.resolve({ available: true, platform: "other", listenHost: "0.0.0.0" });
+    env.resolve({ listenHost: "0.0.0.0" });
     await flush();
     expect(actionButton("创建").disabled).toBe(false);
     expect(mounted!.container.textContent).toContain("0.0.0.0:13306");
@@ -650,7 +650,7 @@ describe("ForwardPanel env status, polling, and browser wording", () => {
   });
 
   it("falls back to the environment listenHost for runtime entries that omit it", async () => {
-    mocks.forwardEnv.mockResolvedValue({ available: true, platform: "other", listenHost: "0.0.0.0" });
+    mocks.forwardEnv.mockResolvedValue({ listenHost: "0.0.0.0" });
     mocks.forwardList.mockResolvedValue([
       {
         id: "legacy-forward",
@@ -673,7 +673,7 @@ describe("ForwardPanel env status, polling, and browser wording", () => {
   it("env query failure shows the error and a retry; create stays forbidden until recovery", async () => {
     mocks.forwardEnv
       .mockRejectedValueOnce(new Error("env probe failed"))
-      .mockResolvedValueOnce({ available: true, platform: "other", listenHost: "0.0.0.0" });
+      .mockResolvedValueOnce({ listenHost: "0.0.0.0" });
     mountForward();
     await flush();
     expect(actionButton("创建").disabled).toBe(true);

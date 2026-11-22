@@ -416,7 +416,7 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     await login();
     await flushUntil(() => text().includes("web-01"));
     client.setQueryData(["forwards"], [{ id: "old-account-forward" }]);
-    client.setQueryData(["forwardEnv"], { available: true, listenHost: "old-account" });
+    client.setQueryData(["forwardEnv"], { listenHost: "old-account" });
     client.setQueryData(["exec-batch-history", "account-a", 0], { items: [{ id: "old-account-batch" }] });
     client.setQueryData(["exec-batch-history-detail", "account-a", "shared-id", "self"], { batch: { id: "shared-id" } });
 

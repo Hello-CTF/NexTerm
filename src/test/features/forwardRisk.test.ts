@@ -82,7 +82,7 @@ describe("SOCKS exposure confirmation", () => {
   });
 
   it("requires explicit acknowledgement before creating a non-loopback open proxy", async () => {
-    mocks.env.mockResolvedValue({ available: true, platform: "other", listenHost: "0.0.0.0" });
+    mocks.env.mockResolvedValue({ listenHost: "0.0.0.0" });
     mocks.createSocks
       .mockRejectedValueOnce({
         code: "needs_confirm",
@@ -105,7 +105,7 @@ describe("SOCKS exposure confirmation", () => {
   });
 
   it("keeps desktop loopback creation free of the additional confirmation", async () => {
-    mocks.env.mockResolvedValue({ available: true, platform: "other", listenHost: "127.0.0.1" });
+    mocks.env.mockResolvedValue({ listenHost: "127.0.0.1" });
     mounted = await mountForward();
     clickButton(mounted.container, "创建");
 
@@ -115,7 +115,7 @@ describe("SOCKS exposure confirmation", () => {
   });
 
   it("does not retry or claim success when the user rejects the exposure", async () => {
-    mocks.env.mockResolvedValue({ available: true, platform: "other", listenHost: "0.0.0.0" });
+    mocks.env.mockResolvedValue({ listenHost: "0.0.0.0" });
     mocks.createSocks.mockRejectedValueOnce({
       code: "needs_confirm",
       message: "confirmation required",
@@ -131,7 +131,7 @@ describe("SOCKS exposure confirmation", () => {
   });
 
   it("uses the authoritative public address after the env check succeeds", async () => {
-    const env = deferred<{ available: boolean; platform: string; listenHost: string }>();
+    const env = deferred<{ listenHost: string }>();
     mocks.env.mockReturnValue(env.promise);
     mocks.createSocks
       .mockRejectedValueOnce({
@@ -141,7 +141,7 @@ describe("SOCKS exposure confirmation", () => {
       })
       .mockResolvedValueOnce({ id: "f1", kind: "socks" });
     mocks.ask.mockResolvedValue(true);
-    env.resolve({ available: true, platform: "other", listenHost: "0.0.0.0" });
+    env.resolve({ listenHost: "0.0.0.0" });
     mounted = await mountForward();
     clickButton(mounted.container, "创建");
 
@@ -161,7 +161,7 @@ describe("stop forward confirmation (R42, real DialogHost)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     document.body.replaceChildren();
-    mocks.env.mockResolvedValue({ available: true, platform: "other", listenHost: "127.0.0.1" });
+    mocks.env.mockResolvedValue({ listenHost: "127.0.0.1" });
     mocks.list.mockResolvedValue([]);
     mocks.remove.mockResolvedValue(undefined);
     useUi.setState({ pushToast: mocks.toast, sessions: [], appDialog: null });

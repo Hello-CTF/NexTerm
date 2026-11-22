@@ -1078,7 +1078,6 @@ type Assert<Value extends true> = Value;
 type ContractChecks = [
   Assert<Equal<IPCOutput<"forward_remove">, unknown>>,
   Assert<Equal<IPCOutput<"forward_env">["listenHost"], string>>,
-  Assert<Equal<IPCOutput<"forward_env">["reason"], string | undefined>>,
   Assert<Equal<IPCOutput<"forward_create">["status"], string>>,
   Assert<Equal<IPCOutput<"forward_create">["listenHost"], string>>,
   Assert<Equal<IPCOutput<"forward_create">["targetHost"], string | null>>,
@@ -1097,7 +1096,7 @@ type ContractChecks = [
   Assert<Equal<ForwardSpecDto["targetHost"], string | null>>,
   Assert<Equal<ForwardSpecDto["targetPort"], number | null>>,
 ];
-const contractChecks: ContractChecks = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+const contractChecks: ContractChecks = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
 void contractChecks;
 
 const env: Promise<ForwardEnvDto> = forwardApi.env();
@@ -1159,15 +1158,14 @@ async function generatedOutputs() {
   // @ts-expect-error exposure risk remains needs_confirm error detail, not a normal output field
   const risk = generated.risk;
   const generatedEnv = await call("forward_env");
-  const generatedReason: string | undefined = generatedEnv.reason;
+  const generatedEnvListenHost: string = generatedEnv.listenHost;
   const facadeEnv = await forwardApi.env();
-  // @ts-expect-error the existing public env DTO does not expose the backend reason field
-  const facadeReason = facadeEnv.reason;
+  const facadeEnvListenHost: string = facadeEnv.listenHost;
   const facade = await forwardApi.retry("forward-1");
   const facadeStatus: "active" | "reconnecting" | "failed" = facade.status;
   const facadeListenHost: string | undefined = facade.listenHost;
   const removeResult: unknown = await call("forward_remove", { id: "forward-1" });
-  void [generatedStatus, generatedListenHost, generatedTargetHost, generatedTargetPort, generatedHostId, generatedError, risk, generatedReason, facadeReason, facadeStatus, facadeListenHost, removeResult];
+  void [generatedStatus, generatedListenHost, generatedTargetHost, generatedTargetPort, generatedHostId, generatedError, risk, generatedEnvListenHost, facadeEnvListenHost, facadeStatus, facadeListenHost, removeResult];
 }
 void generatedOutputs;
 `;

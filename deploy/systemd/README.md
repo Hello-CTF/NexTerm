@@ -35,11 +35,6 @@ database.
 can reach the listen address can operate the server, so never use it on a
 public network.
 
-The LazyCat MicroServer package installs from its App Store (amd64 devices
-only). It runs in platform mode, has the [multi-user limits](#multi-user-limits)
-below, and its built-in port forwarding is unavailable, so use the
-platform's forwarding.
-
 ## Supported platforms
 
 `install.sh` requires a Linux distribution with systemd and fails with a
@@ -94,7 +89,7 @@ disk or logs. Two provisioning modes are supported:
   must-change, so the first login has to set a new password;
 - injected: with `NEXTERM_ADMIN_PASSWORD` set in the installer's
   environment, that exact password becomes the initial password with no
-  forced rotation — the channel install systems such as LazyCat use to
+  forced rotation — the channel automated install systems use to
   inject a known credential. `NEXTERM_ADMIN_USERNAME` overrides the
   default name `admin`. The password travels via the process environment
   only — never via argv, which is world-readable through
@@ -428,8 +423,8 @@ The desktop app does not use these limits.
 ## Multi-user limits
 
 With accounts enabled (the default `NEXTERM_AUTH=on`, and the platform mode
-used by the LazyCat package) the server does not run commands on the server
-machine or read its files on an account's behalf:
+used behind an authenticating gateway) the server does not run commands
+on the server machine or read its files on an account's behalf:
 
 - local terminal assets and disk mounts are unavailable;
 - SSH settings that run or read on the server are refused: ProxyCommand,

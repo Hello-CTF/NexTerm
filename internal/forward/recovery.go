@@ -36,9 +36,6 @@ type RecoveryOutcome struct {
 // asset. Saved rules always listen on loopback, so auto-start never exposes a
 // listener beyond 127.0.0.1.
 func (s *Service) StartAutoStartRules(ctx context.Context, sessionID string) ([]Rule, error) {
-	if err := s.available(); err != nil {
-		return nil, err
-	}
 	rules, err := s.ruleStore()
 	if err != nil {
 		return nil, err
@@ -82,9 +79,6 @@ func (s *Service) RecoverAutoStartRules(ctx context.Context, devices []RecoveryD
 			outcomes[index] = RecoveryOutcome{AssetID: device.AssetID, Err: err}
 		}
 		return outcomes
-	}
-	if err := s.available(); err != nil {
-		return failAll(err)
 	}
 	rules, err := s.ruleStore()
 	if err != nil {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Apple, Check, Copy, Download, ExternalLink, Fingerprint, Laptop, Monitor, Server, Smartphone, type LucideIcon } from "lucide-react";
+import { Apple, Check, Copy, Download, ExternalLink, Laptop, Monitor, Server, Smartphone, type LucideIcon } from "lucide-react";
 
 const repository = "https://github.com/Hello-CTF/NexTerm";
 const latestRelease = `${repository}/releases/latest`;
@@ -11,7 +11,7 @@ const serverGuide = { zh: `${repository}#部署服务端`, en: `${repository}/bl
 
 type Language = "zh" | "en";
 type Arch = "amd64" | "arm64";
-type PlatformId = "windows" | "macos" | "linux" | "server" | "android" | "ios" | "lazycat";
+type PlatformId = "windows" | "macos" | "linux" | "server" | "android" | "ios";
 
 interface Platform {
   id: PlatformId;
@@ -28,12 +28,11 @@ const platforms: Platform[] = [
   { id: "server", icon: Server, archs: ["amd64", "arm64"], asset: (arch, version) => `nexterm-server_linux_${arch}_${version}.tar.gz` },
   { id: "android", icon: Smartphone, archs: ["arm64"], asset: (_arch, version) => `nexterm-desktop_android_arm64_${version}.apk` },
   { id: "ios", icon: Smartphone, archs: [], asset: null },
-  { id: "lazycat", icon: Fingerprint, archs: [], asset: null },
 ];
 
 const text = {
   zh: {
-    names: { windows: "Windows", macos: "macOS", linux: "Linux 桌面", server: "Linux 服务端", android: "Android", ios: "iOS / iPadOS", lazycat: "懒猫微服" },
+    names: { windows: "Windows", macos: "macOS", linux: "Linux 桌面", server: "Linux 服务端", android: "Android", ios: "iOS / iPadOS" },
     archNames: { amd64: "x64", arm64: "ARM64" }, macArchNames: { amd64: "Intel", arm64: "Apple Silicon" },
     detected: "已识别当前设备", choose: "选择其他系统",
     download: "下载", testflight: "加入 TestFlight 测试", version: "最新版本", loading: "正在读取最新版本…", unavailable: "无法读取最新版本，请前往 Releases 下载。",
@@ -45,11 +44,10 @@ const text = {
       server: "在带 systemd 的 Linux 服务器（amd64 / arm64，不支持 Alpine 等 musl 发行版）上以 root 权限执行。服务默认只监听 127.0.0.1:8080。",
       android: "预览版，适用于 arm64 设备，尚未作为正式支持平台。",
       ios: "预览版，尚未作为正式支持平台。在 iPhone 或 iPad 上打开下面的链接，按提示安装 TestFlight 后加入测试。",
-      lazycat: "在懒猫微服的应用中心搜索 NexTerm 安装，目前仅支持 amd64 机型。",
     },
   },
   en: {
-    names: { windows: "Windows", macos: "macOS", linux: "Linux desktop", server: "Linux server", android: "Android", ios: "iOS / iPadOS", lazycat: "LazyCat" },
+    names: { windows: "Windows", macos: "macOS", linux: "Linux desktop", server: "Linux server", android: "Android", ios: "iOS / iPadOS" },
     archNames: { amd64: "x64", arm64: "ARM64" }, macArchNames: { amd64: "Intel", arm64: "Apple Silicon" },
     detected: "Detected your device", choose: "Choose another system",
     download: "Download", testflight: "Join the TestFlight beta", version: "Latest version", loading: "Loading the latest version…", unavailable: "The latest version could not be loaded; download it from Releases.",
@@ -61,7 +59,6 @@ const text = {
       server: "On a Linux server with systemd (amd64 / arm64; musl distributions such as Alpine are not supported), run as root. The service listens on 127.0.0.1:8080 by default.",
       android: "Preview build for arm64 devices, not yet officially supported.",
       ios: "Preview, not yet officially supported. Open the link below on your iPhone or iPad and follow the prompts to join through TestFlight.",
-      lazycat: "Search for NexTerm in the LazyCat app center; amd64 devices only for now.",
     },
   },
 };

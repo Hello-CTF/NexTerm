@@ -22,13 +22,7 @@ _site
 
 __pycache__/
 
-*.lpk
-lazycat/content/
 target-linux/
-lazycat/image/nexterm-server
-lazycat/.lzc-cli-*
-lazycat/.review-body.json
-lazycat/image/lzc-build-image-context.tar
 
 /reference/
 

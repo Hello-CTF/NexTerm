@@ -31,7 +31,7 @@ prints the initial password to this console only after the account was
 actually created. By default the password is cryptographically random and
 must be changed at first login. Set NEXTERM_ADMIN_PASSWORD in the
 installer's environment to inject a specific initial password instead (no
-forced rotation), e.g. for LazyCat-style install systems;
+forced rotation), e.g. for automated install systems;
 NEXTERM_ADMIN_USERNAME overrides the default name "admin". The password
 travels via the process environment only — never via argv, which is
 world-readable through /proc/<pid>/cmdline — and is never written to

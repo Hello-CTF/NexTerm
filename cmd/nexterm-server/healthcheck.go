@@ -19,7 +19,7 @@ import (
 const healthcheckUsage = `Usage:
   nexterm-server healthcheck [--url URL | --listen ADDRESS] [--timeout DURATION]
 
-Probe a running nexterm-server readiness endpoint without curl (Docker, LazyCat, systemd).
+Probe a running nexterm-server readiness endpoint without curl (containers, systemd).
 Exits 0 when /healthz answers 200 with {"ok":true,"service":"nexterm-server"}, 1 when the
 server is unreachable or unhealthy (database ping failed, required vault locked), 2 on usage errors.
 

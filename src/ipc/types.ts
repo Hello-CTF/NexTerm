@@ -76,8 +76,6 @@ hasCred: boolean, groupId: string | null, };
 export type FileEntryDto = import("./generated/types").FSEntryDTO;
 
 export type ForwardEnvDto = { 
-available: boolean, 
-platform: string, 
 listenHost: string, };
 
 export type ForwardSpecDto = { id: string, sessionId: string, hostId?: string, status: "active" | "reconnecting" | "failed", error?: string, listenPort: number,

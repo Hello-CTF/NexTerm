@@ -49,7 +49,7 @@ func TestRealForwardMountModulesThroughApplicationAndHTTP(t *testing.T) {
 			}
 			return dialer, nil
 		}),
-		Policy:    forward.Policy{Desktop: false, Platform: "other"},
+		Policy:    forward.Policy{Desktop: false},
 		Reconnect: forward.ReconnectPolicy{Attempts: 1},
 	})
 	mountService := mount.NewService(mount.Config{})
@@ -92,7 +92,7 @@ func TestRealForwardMountModulesThroughApplicationAndHTTP(t *testing.T) {
 	if err := json.Unmarshal(body.Data, &environment); err != nil {
 		t.Fatal(err)
 	}
-	if !environment.Available || environment.ListenHost != "0.0.0.0" || environment.Platform != "other" {
+	if environment.ListenHost != "0.0.0.0" {
 		t.Fatalf("forward environment = %+v", environment)
 	}
 
