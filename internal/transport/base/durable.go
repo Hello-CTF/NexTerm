@@ -34,7 +34,10 @@ type DurableDescriptor struct {
 	Title      string
 	// WindowTitle is the program's OSC window title the helper last saw;
 	// empty when the helper does not report one.
-	WindowTitle      string
+	WindowTitle string
+	// Cwd is the last working directory the session's shell reported through
+	// OSC 7; empty when the helper does not report one.
+	Cwd              string
 	MetadataRevision uint64
 	Cols             uint32
 	Rows             uint32

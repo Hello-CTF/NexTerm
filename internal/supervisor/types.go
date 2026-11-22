@@ -67,7 +67,10 @@ type Info struct {
 	Title       string    `json:"title,omitempty"`
 	// WindowTitle is the program's OSC window title, kept apart from the
 	// custom Title; empty when state detection is off or none was set.
-	WindowTitle      string     `json:"window_title,omitempty"`
+	WindowTitle string `json:"window_title,omitempty"`
+	// Cwd is the last working directory the shell reported through OSC 7;
+	// empty before a report and from helpers that predate it.
+	Cwd              string     `json:"cwd,omitempty"`
 	MetadataRevision uint64     `json:"metadata_revision,omitempty"`
 	Cols             uint32     `json:"cols"`
 	Rows             uint32     `json:"rows"`

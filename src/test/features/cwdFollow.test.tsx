@@ -284,6 +284,46 @@ describe("FileTree terminal-directory follow", () => {
     expect(mounted!.container.querySelector('button[aria-label^="上级目录"]')?.getAttribute("aria-label")).toContain("/srv");
   });
 
+  it("device sessions show the follow toggle and follow the terminal", async () => {
+    seedWorkspace({ kind: "device" });
+    mountTree();
+    await flush();
+    expect(followButton()?.getAttribute("aria-pressed")).toBe("true");
+
+    emitControl({ tabId: "k1", version: 1, cwd: "/home/agent" });
+    await waitFor(() => expect(listCalls()).toContain("/home/agent"));
+  });
+
+  it.each(["local", "ssh", "device"])(
+    "a %s terminal restored from the background is followed again",
+    async (kind) => {
+      seedWorkspace({ kind });
+      mountTree();
+      await flush();
+      emitControl({ tabId: "k1", version: 1, cwd: "/before" });
+      await waitFor(() => expect(listCalls()).toContain("/before"));
+
+      // Sent to the background: the tab leaves the workspace and its record is pruned.
+      act(() => {
+        useUi.setState((s) => ({
+          workspaces: s.workspaces.map((w) => ({
+            ...w,
+            panes: w.panes.map((p) => ({ ...p, tabs: [], activeTabId: null })),
+          })),
+        }));
+      });
+      // Restored: a new store tab for the same backend terminal, whose attach reports the directory.
+      act(() => {
+        useUi.getState().addTab({
+          id: "restored", kind: "terminal", title: "vim", sessionId: SID, tabId: "k1", closable: true,
+        });
+      });
+      emitControl({ tabId: "k1", version: 7, cwd: "/srv/restored" });
+      await waitFor(() => expect(listCalls()).toContain("/srv/restored"));
+      expect(focusedTerminalCwd(useUi.getState().workspaces, SID)).toBe("/srv/restored");
+    },
+  );
+
   it("winrm sessions do not show the follow toggle", async () => {
     seedWorkspace({ kind: "winrm" });
     mountTree();

@@ -87,6 +87,7 @@ func (s *Session) canonicalInfoWith(options listOptions) Info {
 	if s.state != nil {
 		info.WindowTitle = s.state.windowTitle()
 	}
+	info.Cwd = s.cwd
 	info.Activity = s.activityLocked()
 	return info
 }

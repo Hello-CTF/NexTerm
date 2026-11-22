@@ -18,6 +18,7 @@ func (p *fakeDurableProvider) ListDurableDescriptors(context.Context) ([]base.Du
 		if record.killed == 0 {
 			descriptors = append(descriptors, base.DurableDescriptor{
 				ID: id, Incarnation: fakeIncarnation(record.identity), Title: record.title, MetadataRevision: record.revision,
+				WindowTitle: record.windowTitle, Cwd: record.cwd,
 			})
 		}
 	}

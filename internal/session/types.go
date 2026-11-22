@@ -547,6 +547,10 @@ type DurableTabOptions struct {
 	// metadata a recovery starts from.
 	Title            string
 	MetadataRevision uint64
+	// Cwd and WindowTitle are what the helper last observed in the output: the
+	// OSC 7 directory and the OSC window title a recovery starts from.
+	Cwd         string
+	WindowTitle string
 	// RecoveredExited carries the authoritative dead state from the descriptor used for recovery.
 	RecoveredExited bool
 }

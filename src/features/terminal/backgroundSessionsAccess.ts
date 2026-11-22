@@ -2,7 +2,16 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 import { sessionApi, terminalApi, type LiveTabInfo, type SessionAttentionState, type SessionInfo } from "../../ipc/commands";
 import type { AggregateHost, AggregateHostStatus, AttentionEvent } from "../../ipc/generated/types";
 import { toAwareness } from "../../app/sessionAwarenessStore";
-import { connectDevice, deviceAssetId, findTab, nextTabId, useUi, type ConnectAssetOptions, type Workspace } from "../../app/store";
+import {
+  connectDevice,
+  deviceAssetId,
+  findTab,
+  nextTabId,
+  sanitizeRemoteTabTitle,
+  useUi,
+  type ConnectAssetOptions,
+  type Workspace,
+} from "../../app/store";
 import type { AggregateRow } from "../../app/sessionAggregate";
 import { hideMobileHome } from "../../app/shell/mobileHome";
 import { describeError } from "../../ui/errorText";
@@ -62,6 +71,26 @@ export function workspaceSessionMatches(
 
 export function backgroundTabKey(tab: Pick<BackgroundTab, "sessionId" | "tabId">): string {
   return JSON.stringify([tab.sessionId, tab.tabId]);
+}
+
+// Short, stable fallback name: the tail of a tab ID is its random part.
+function shortTabId(tabId: string): string {
+  const compact = tabId.replace(/[^0-9a-z]/gi, "");
+  return (compact || tabId).slice(-6);
+}
+
+// The tab strip's rule: the custom title when there is one, otherwise the program's window title; either is
+// sanitized the way the strip shows it. A helper listing carries only the custom title as `title`, so the window
+// title it reports separately names a session nobody renamed. A taken-over tab opens under this same name.
+export function backgroundTabName(tab: Pick<BackgroundTab, "tabId" | "title" | "windowTitle">): string {
+  return sanitizeRemoteTabTitle(tab.title ?? "") || sanitizeRemoteTabTitle(tab.windowTitle ?? "") || tr("终端 {value}", { value: shortTabId(tab.tabId) });
+}
+
+// backgroundWindowTitle is the program's window title shown under a name it does not already match, so a renamed
+// session can still be found by what it is running.
+export function backgroundWindowTitle(tab: Pick<BackgroundTab, "tabId" | "title" | "windowTitle">): string {
+  const window = sanitizeRemoteTabTitle(tab.windowTitle ?? "");
+  return window && window !== backgroundTabName(tab) ? window : "";
 }
 
 export interface HostGate {
@@ -370,7 +399,8 @@ export async function takeOverBackgroundTab(
     st.addTab({
       id: nextTabId(`term-${info.sessionId}`),
       kind: "terminal",
-      title: info.title || session.name || info.sessionName,
+      // The name the background list showed, never the host's: the attach then reports the backend's title.
+      title: backgroundTabName(info),
       // Only the backend's own decision time may lock the title; a listing without one
       // (a durable descriptor) leaves it unlocked until the attach reports the time.
       ...(info.title && info.titleCustom && info.titleChangedAt
@@ -510,14 +540,20 @@ async function aggregateConnection(
 }
 
 // takeOverAggregateSession opens a session known from the cross-host listing as a tab: through its host's connected
-// session, or, for a device no workspace here holds, after opening the device's workspace.
-export async function takeOverAggregateSession(host: AggregateHost, tabId: string, title?: string): Promise<TakeOverResult> {
+// session, or, for a device no workspace here holds, after opening the device's workspace. title is the listed custom
+// title and windowTitle the program's window title the listing reported, which name the tab like the list does.
+export async function takeOverAggregateSession(
+  host: AggregateHost,
+  tabId: string,
+  title?: string,
+  windowTitle?: string,
+): Promise<TakeOverResult> {
   const connection = await aggregateConnection(host);
   if (!connection.ok) return connection;
   const { session } = connection;
   return takeOverBackgroundTab({
     tabId, sessionId: session.id, sessionName: session.name, sessionKind: session.kind,
-    cols: 0, rows: 0, sizeOwner: null, subscribers: 0, viewers: 0, exited: false, title,
+    cols: 0, rows: 0, sizeOwner: null, subscribers: 0, viewers: 0, exited: false, title, windowTitle,
   });
 }
 
