@@ -1309,7 +1309,7 @@ export function AssetTree() {
         ref={treeRef}
         role="tree"
         aria-label={tr("资产")}
-        className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2"
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-2"
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes(DRAG_ASSET)) e.preventDefault();
         }}

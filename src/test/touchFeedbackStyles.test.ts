@@ -34,6 +34,18 @@ describe("coarse pointer hit areas", () => {
     expect(coarse(".nx-rail-btn", "height")).toBe("44px");
   });
 
+  it("the touch rail fits short screens without sideways scrolling or tooltips", () => {
+    // Buttons give up height down to 32px before the rail has to scroll, and it never scrolls sideways.
+    expect(coarse(".nx-rail > .nx-rail-btn", "flex-shrink")).toBe("1");
+    expect(coarse(".nx-rail > .nx-rail-btn", "min-height")).toBe("32px");
+    expect(coarse(".nx-rail", "overflow-x")).toBe("hidden");
+    // A tap leaves :hover stuck, so the rail tooltips exist only for hovering pointers.
+    for (const selector of [".nx-rail-btn[data-tip]:hover::after", ".nx-rail-btn[data-tip]:focus-visible::after"]) {
+      expect(rulesFor(rules, selector, null), selector).toEqual([]);
+      expect(rulesFor(rules, selector, "(hover: hover)").length, selector).toBeGreaterThan(0);
+    }
+  });
+
   it("terminal key bar buttons are at least 44x44 and the bar grows to fit", () => {
     expect(coarse(".nx-terminal-key", "min-width")).toBe("44px");
     expect(coarse(".nx-terminal-key", "height")).toBe("44px");

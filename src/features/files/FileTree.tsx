@@ -2019,7 +2019,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         role="tree"
         aria-label={t("文件")}
         ref={treeDropRef}
-        className="relative min-h-0 flex-1 overflow-y-auto px-1 py-1"
+        className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1 py-1"
         data-file-drop-target={computer ? undefined : ""}
         onContextMenu={openBlankMenu}
         onDragOver={(e) => {

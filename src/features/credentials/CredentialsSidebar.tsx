@@ -157,7 +157,7 @@ export function CredentialsSidebar() {
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-2">
         {credentials.isLoading ? (
           <div className="nx-hint px-2 py-6 text-center" role="status">
             {t("正在加载…")}
