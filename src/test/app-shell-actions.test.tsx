@@ -100,7 +100,7 @@ vi.mock("../app/layout", () => ({
   undoLayoutRestore: vi.fn(),
 }));
 vi.mock("../app/useUpdate", () => ({
-  getUpdateState: () => ({ check: mocks.updateCheck }),
+  getUpdateState: () => ({ check: mocks.updateCheck, syncInstallState: vi.fn().mockResolvedValue(undefined) }),
 }));
 vi.mock("../features/settings/useWebAutoSync", () => ({
   useDesktopAutoSync: () => {},

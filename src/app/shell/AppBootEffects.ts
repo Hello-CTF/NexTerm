@@ -94,17 +94,17 @@ export function useAppBootEffects(queryClient: QueryClient): void {
     startInboxNotifications();
   }, []);
 
-  // Check silently at desktop startup and every four hours: no toast; UpdateBanner presents any update.
-  // After each check completes, prompt once per version with dedup gating (see updatePrompt).
+  // Check silently at desktop startup and every four hours: no toast; UpdateBanner presents any update. Only the
+  // startup check may prompt (once per version, see updatePrompt); a periodic check never opens a dialog mid-session.
+  // The install state is read first, so a reloaded interface resumes an install that is running or waits for a restart.
   useEffect(() => {
     if (TRANSPORT !== "desktop") return;
-    const check = () => {
-      void getUpdateState()
-        .check()
-        .then(() => promptUpdateIfNeeded());
-    };
-    check();
-    const interval = window.setInterval(check, 4 * 60 * 60 * 1000);
+    const update = getUpdateState();
+    void update
+      .syncInstallState()
+      .then(() => getUpdateState().check())
+      .then(() => promptUpdateIfNeeded());
+    const interval = window.setInterval(() => void getUpdateState().check(), 4 * 60 * 60 * 1000);
     return () => window.clearInterval(interval);
   }, []);
 

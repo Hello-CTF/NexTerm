@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
     check: vi.fn(),
     install: vi.fn(),
     restart: vi.fn(),
+    state: vi.fn(),
     progressHandlers: [] as Array<(payload: unknown) => void>,
   };
 });
@@ -18,7 +19,7 @@ vi.mock("../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc/commands")>();
   return {
     ...actual,
-    appUpdateApi: { check: mocks.check, install: mocks.install, restart: mocks.restart },
+    appUpdateApi: { check: mocks.check, install: mocks.install, restart: mocks.restart, state: mocks.state },
   };
 });
 
@@ -43,6 +44,7 @@ import { UpdateCard } from "../features/settings/UpdateCard";
 import { UpdateBanner } from "../app/UpdateBanner";
 import { updateVerdict, useUpdateStore } from "../app/useUpdate";
 import { useUi } from "../app/store";
+import { applyLocale } from "../i18n";
 
 function makeStatus(patch: Partial<UpdateStatusDto> = {}): UpdateStatusDto {
   return {
@@ -69,6 +71,8 @@ function resetUpdateStore(): void {
     restarting: false,
     restartError: null,
     skippedVersion: null,
+    dismissedVersion: null,
+    restartDeferred: false,
     remindedVersion: null,
   });
 }
@@ -276,16 +280,56 @@ describe("UpdateCard installation flow", () => {
     expect(mocks.install).toHaveBeenCalledTimes(2);
   });
 
-  it("fails installation when a progress event carries an error", async () => {
+  it("reports a failed install once, from the install result rather than the progress event", async () => {
+    const toast = vi.fn();
+    useUi.setState({ pushToast: toast });
     const pending = deferred<UpdateResultDto>();
     mocks.install.mockReturnValue(pending.promise);
     useUpdateStore.setState({ status: makeStatus() });
-    mounted = mount(createElement(UpdateCard));
+    mounted = mount(createElement("div", null, createElement(UpdateCard), createElement(UpdateBanner, { onOpenSettings: vi.fn() })));
     clickButton(mounted.container, "下载并安装");
     act(() => {
-      emitProgress({ taskId: "t1", phase: "download", transferred: 0, total: 0, done: true, error: "Checksum mismatch" });
+      emitProgress({ taskId: "t1", phase: "verify", transferred: 8, total: 8, done: false });
     });
-    await flushUntil(() => (mounted?.container.textContent ?? "").includes("Checksum mismatch"));
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("正在校验"));
+    act(() => {
+      emitProgress({ taskId: "t1", phase: "verify", transferred: 8, total: 8, done: true, error: "raw checksum mismatch" });
+    });
+    await flush();
+    expect(toast).not.toHaveBeenCalled();
+    pending.reject(new Error("SHA-256 校验失败"));
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("安装失败"));
+    expect(mounted.container.textContent).toContain("SHA-256 校验失败");
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith("error", "更新安装失败：SHA-256 校验失败");
+  });
+
+  it("refreshes the status before a retry so a newer release replaces the failed one", async () => {
+    mocks.install.mockRejectedValueOnce(new Error("待安装版本 0.3.0 与最新版本 0.3.1 不一致"));
+    useUpdateStore.setState({ status: makeStatus() });
+    mounted = mount(createElement(UpdateCard));
+    clickButton(mounted.container, "下载并安装");
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("安装失败"));
+
+    mocks.check.mockResolvedValue(makeStatus({ version: "0.3.1" }));
+    mocks.install.mockResolvedValueOnce({ installed: true, restarted: false, version: "0.3.1", unavailableReason: "" });
+    clickButton(mounted.container, "重试");
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("已安装 v0.3.1"));
+    expect(mocks.check).toHaveBeenCalledTimes(1);
+    expect(mocks.install).toHaveBeenLastCalledWith("0.3.1");
+  });
+
+  it("keeps the install waiting for a restart and explains what a restart ends", async () => {
+    mocks.install.mockResolvedValue({ installed: true, restarted: false, version: "0.3.0", unavailableReason: "" });
+    useUpdateStore.setState({ status: makeStatus() });
+    mounted = mount(createElement(UpdateCard));
+    expect(mounted.container.textContent).toContain("不会自动重启");
+    clickButton(mounted.container, "下载并安装");
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("已安装 v0.3.0"));
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("临时终端会结束");
+    expect(text).toContain("持久终端继续运行");
+    expect(mocks.restart).not.toHaveBeenCalled();
   });
 
   it("prompts for restart after installation and shows restart failure reasons", async () => {
@@ -300,7 +344,7 @@ describe("UpdateCard installation flow", () => {
 });
 
 describe("UpdateBanner desktop banner", () => {
-  it("shows version and entry point for available updates; skipping hides the same version and persists the preference", async () => {
+  it("shows version and entry point for available updates; closing hides it for this launch without skipping", async () => {
     useUpdateStore.setState({ status: makeStatus() });
     const onOpenSettings = vi.fn();
     mounted = mount(createElement(UpdateBanner, { onOpenSettings }));
@@ -312,20 +356,30 @@ describe("UpdateBanner desktop banner", () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
 
     act(() => {
-      mounted?.container.querySelector<HTMLButtonElement>('[aria-label="跳过此版本"]')?.dispatchEvent(
+      mounted?.container.querySelector<HTMLButtonElement>('[aria-label="本次启动内不再提示"]')?.dispatchEvent(
         new MouseEvent("click", { bubbles: true }),
       );
     });
     await flush();
     expect(mounted.container.querySelector('[aria-label="软件更新"]')).toBeNull();
-    expect(window.localStorage.getItem("nexterm.update.v1")).toBe("0.3.0");
-    expect(useUpdateStore.getState().skippedVersion).toBe("0.3.0");
+    expect(window.localStorage.getItem("nexterm.update.v1")).toBeNull();
+    expect(useUpdateStore.getState().skippedVersion).toBeNull();
 
     act(() => {
       useUpdateStore.setState({ status: makeStatus({ version: "0.3.1" }) });
     });
     await flush();
     expect(mounted.container.querySelector('[aria-label="软件更新"]')?.textContent).toContain("v0.3.1");
+  });
+
+  it("offers a later restart that hides the restart banner", async () => {
+    useUpdateStore.setState({ status: makeStatus(), installedVersion: "0.3.0" });
+    mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
+    expect(mounted.container.textContent).toContain("重启应用后生效");
+    clickButton(mounted.container, "稍后");
+    await flush();
+    expect(mounted.container.querySelector('[aria-label="软件更新"]')).toBeNull();
+    expect(mocks.restart).not.toHaveBeenCalled();
   });
 
   it("hides the banner for skipped versions", async () => {
@@ -413,5 +467,84 @@ describe("UpdateBanner desktop banner", () => {
     expect(banner!.textContent).toContain("重启应用后生效");
     clickButton(mounted.container, "立即重启");
     expect(restart).toHaveBeenCalled();
+  });
+});
+
+describe("UpdateCard release details", () => {
+  it("shows release notes collapsed, the release page link and an explicit skip", async () => {
+    useUpdateStore.setState({
+      status: makeStatus({ notes: "## Fixes\n- faster", releaseUrl: "https://github.com/Hello-CTF/NexTerm/releases/tag/v0.3.0" }),
+    });
+    mounted = mount(createElement(UpdateCard));
+    const details = mounted.container.querySelector<HTMLDetailsElement>('[data-testid="update-notes"]');
+    expect(details?.open).toBe(false);
+    expect(details?.textContent).toContain("faster");
+    const link = [...mounted.container.querySelectorAll("a")].find((a) => a.textContent === "在 GitHub 查看发布页");
+    expect(link?.getAttribute("href")).toBe("https://github.com/Hello-CTF/NexTerm/releases/tag/v0.3.0");
+
+    clickButton(mounted.container, "跳过此版本");
+    await flush();
+    expect(window.localStorage.getItem("nexterm.update.v1")).toBe("0.3.0");
+    expect(mounted.container.textContent).toContain("已跳过此版本");
+    clickButton(mounted.container, "恢复提醒");
+    await flush();
+    expect(window.localStorage.getItem("nexterm.update.v1")).toBeNull();
+  });
+
+  it("links the package when the app cannot install it and notes a release still uploading", async () => {
+    useUpdateStore.setState({
+      status: makeStatus({
+        canInstall: false,
+        unavailableReason: "安装目录 /usr/bin 不可写，无法在应用内更新；请下载新版 .deb 安装包，用系统软件包管理器安装",
+        downloadUrl: "https://example.invalid/nexterm-desktop_linux_amd64_0.3.0.deb",
+        pendingVersion: "0.4.0",
+      }),
+    });
+    mounted = mount(createElement(UpdateCard));
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("/usr/bin 不可写");
+    expect(text).toContain("v0.4.0 已发布");
+    const link = [...mounted.container.querySelectorAll("a")].find((a) => a.textContent === "下载安装包");
+    expect(link?.getAttribute("href")).toBe("https://example.invalid/nexterm-desktop_linux_amd64_0.3.0.deb");
+    expect(
+      [...mounted.container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "下载并安装"),
+    ).toBe(false);
+  });
+
+  it("translates backend reasons like errors", async () => {
+    applyLocale("en", {}, { "当前平台没有安装包": "No package for this platform" });
+    try {
+      useUpdateStore.setState({ status: makeStatus({ canInstall: false, unavailableReason: "当前平台没有安装包" }) });
+      mounted = mount(createElement(UpdateCard));
+      expect(mounted.container.textContent).toContain("No package for this platform");
+    } finally {
+      applyLocale("zh-CN", {}, {});
+    }
+  });
+});
+
+describe("install state recovery after a reload", () => {
+  it("resumes a running install and settles it from the backend state", async () => {
+    mocks.state.mockResolvedValueOnce({
+      phase: "download", version: "0.3.0", taskId: "t9", transferred: 2, total: 8, error: "", installedVersion: "",
+    });
+    useUpdateStore.setState({ status: makeStatus() });
+    mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
+    await act(async () => {
+      await useUpdateStore.getState().syncInstallState();
+    });
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("25%"));
+    await flushUntil(() => mocks.progressHandlers.length > 0);
+
+    mocks.state.mockResolvedValueOnce({
+      phase: "installed", version: "0.3.0", taskId: "t9", transferred: 0, total: 0, error: "", installedVersion: "0.3.0",
+    });
+    act(() => {
+      emitProgress({ taskId: "t9", phase: "install", transferred: 0, total: 0, done: true });
+    });
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("重启应用后生效"));
+    expect(useUpdateStore.getState().installedVersion).toBe("0.3.0");
+    expect(useUpdateStore.getState().install.active).toBe(false);
+    expect(mocks.progressHandlers.length).toBe(0);
   });
 });

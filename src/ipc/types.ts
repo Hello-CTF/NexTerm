@@ -312,7 +312,12 @@ export type GeneratedKeyDto = import("./generated/types").GeneratedKeyDTO;
 export type UpdateStatusDto = { available: boolean, currentVersion: string, version: string,
 notes: string, prerelease: boolean, assetName: string, assetSize: number, canInstall: boolean,
 unavailableReason: string, channel?: string, releaseChannel?: string,
-runningPrerelease?: boolean, };
+runningPrerelease?: boolean, releaseUrl?: string, downloadUrl?: string, pendingVersion?: string, };
+
+// UpdateInstallStateDto is the running or last in-app install; phase is idle, download, verify, install,
+// installed or failed. installedVersion stays set while an installed version waits for a restart.
+export type UpdateInstallStateDto = { phase: string, version: string, taskId: string, transferred: number,
+total: number, error: string, installedVersion: string, };
 
 export type UpdateReleaseChannel = "stable" | "rc";
 

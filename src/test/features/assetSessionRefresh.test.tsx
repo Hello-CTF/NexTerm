@@ -170,7 +170,7 @@ vi.mock("../../app/layout", () => ({
   undoLayoutRestore: vi.fn(),
 }));
 vi.mock("../../app/unread", () => ({ startUnreadTracking: () => {}, resetUnreadTracking: () => {} }));
-vi.mock("../../app/useUpdate", () => ({ getUpdateState: () => ({ check: vi.fn().mockResolvedValue(null) }) }));
+vi.mock("../../app/useUpdate", () => ({ getUpdateState: () => ({ check: vi.fn().mockResolvedValue(null), syncInstallState: vi.fn().mockResolvedValue(undefined) }) }));
 vi.mock("../../app/updatePrompt", () => ({ promptUpdateIfNeeded: vi.fn() }));
 vi.mock("../../features/settings/useWebAutoSync", () => ({
   useDesktopAutoSync: () => {},
