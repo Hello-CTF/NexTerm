@@ -4,7 +4,7 @@ import {
   setThemeMode as persistThemeMode,
 } from "../theme";
 import { saveThemeModePreference } from "../preferences";
-import { translateMessage } from "../../i18n";
+import { t as tr, translateMessage } from "../../i18n";
 import {
   clampWidth,
   initialLayout,
@@ -35,12 +35,13 @@ function clearToastTimer(id: number): void {
   toastTimers.delete(id);
 }
 
-// Keeps at most TOAST_LIMIT toasts by dropping the oldest timed ones; persistent toasts leave only when dismissed.
-function limitToasts(toasts: ToastItem[]): ToastItem[] {
+// Keeps at most TOAST_LIMIT toasts by dropping the oldest timed ones other than the one just pushed. Persistent toasts
+// leave only when dismissed; there is at most one per group, so they can exceed the limit only by the number of groups.
+function limitToasts(toasts: ToastItem[], pushedId: number): ToastItem[] {
   let excess = toasts.length - TOAST_LIMIT;
   if (excess <= 0) return toasts;
   return toasts.filter((toast) => {
-    if (excess <= 0 || toast.persistent) return true;
+    if (excess <= 0 || toast.persistent || toast.id === pushedId) return true;
     excess--;
     return false;
   });
@@ -121,17 +122,27 @@ export function createUiSlice(set: UiSet, get: UiGet) {
     pushToast: (kind, rawText, action, options) => {
       // Toasts often carry a backend message as is; it shows in the interface language when a catalog has it.
       const text = translateMessage(rawText);
+      const group = options?.persistent ? (options.group ?? text) : undefined;
+      // Read before the duplicate is dismissed, so a repeated persistent notice keeps its count.
+      const previous = group === undefined ? undefined : get().toasts.find((t) => t.persistent && t.group === group);
       const existing = get().toasts.find((t) => t.kind === kind && t.text === text);
       if (existing) get().dismissToast(existing.id);
       const id = toastSeq++;
       const detail = kind === "error" ? detailForText(text) ?? undefined : undefined;
-      if (options?.persistent) {
-        set((st) => ({ toasts: limitToasts([...st.toasts, { id, kind, text, action, detail, persistent: true }]) }));
+      if (group !== undefined) {
+        const repeat = (previous?.repeat ?? (previous ? 1 : 0)) + 1;
+        const shown = repeat > 1 ? `${text}${tr("（同类通知共 {count} 条）", { count: repeat })}` : text;
+        set((st) => ({
+          toasts: limitToasts(
+            [...st.toasts.filter((toast) => toast.id !== previous?.id), { id, kind, text: shown, action, detail, persistent: true, group, repeat }],
+            id,
+          ),
+        }));
         return;
       }
       // An error or a toast with a button needs time to read or act on; a warning sits in between.
       const duration = kind === "error" || action ? 8000 : kind === "warning" ? 6000 : 3500;
-      set((st) => ({ toasts: limitToasts([...st.toasts, { id, kind, text, action, detail, duration, remaining: duration }]) }));
+      set((st) => ({ toasts: limitToasts([...st.toasts, { id, kind, text, action, detail, duration, remaining: duration }], id) }));
       for (const key of [...toastTimers.keys()]) {
         if (!get().toasts.some((t) => t.id === key)) clearToastTimer(key);
       }

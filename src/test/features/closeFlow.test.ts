@@ -302,4 +302,27 @@ describe("notices about processes left running", () => {
     useUi.getState().dismissToast(notice!.id);
     expect(useUi.getState().toasts).toEqual([]);
   });
+
+  it("folds repeated skipped-kill notices into one that counts them, and never drops the newest toast", () => {
+    const outcome = {
+      detached: 0,
+      killed: 0,
+      killUnreachable: 1,
+      failed: 0,
+      dbFailed: 0,
+      succeededTabIds: new Set<string>(),
+      succeededDbConnIds: new Set<string>(),
+    };
+    for (const title of ["w1", "w2", "w3", "w4", "w5"]) pushWorkspaceCloseToast(title, outcome, true);
+    const notices = useUi.getState().toasts.filter((toast) => toast.text.includes("远端进程未能结束"));
+    expect(notices).toHaveLength(1);
+    expect(notices[0].text).toContain("已关闭「w5」");
+    expect(notices[0].text).toContain("同类通知共 5 条");
+
+    // Other persistent notices fill the stack: a new timed toast still shows.
+    for (let i = 0; i < 4; i++) useUi.getState().pushToast("error", `left running ${i}`, undefined, { persistent: true });
+    useUi.getState().pushToast("info", "newest");
+    expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("newest");
+    expect(useUi.getState().toasts.filter((toast) => toast.persistent)).toHaveLength(5);
+  });
 });

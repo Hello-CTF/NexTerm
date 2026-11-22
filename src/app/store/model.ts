@@ -135,6 +135,9 @@ export function pruneBroadcastToWorkspaces(
   };
 }
 
+// The toast group of every "remote kill skipped" notice: a newer one replaces the older and counts them.
+export const REMOTE_KILL_SKIPPED_TOAST = "remote-kill-skipped";
+
 // neighbourAfterRemoval picks what takes over from the item that sat at removedIndex before it was removed from
 // remaining: its right neighbour, or its left one when it was last (the browser and editor convention).
 export function neighbourAfterRemoval<T>(remaining: readonly T[], removedIndex: number): T | undefined {
