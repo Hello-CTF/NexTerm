@@ -40,7 +40,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 
 import { AssetEditor } from "../../features/explorer/AssetTree";
-import { noticeLiveAssetEdit, useUi } from "../../app/store";
+import { useUi } from "../../app/store";
 import type { Asset } from "../../ipc/commands";
 
 let mounted: MountedView | undefined;
@@ -167,7 +167,8 @@ describe("AssetEditor edits of a connected asset", () => {
       }],
     });
     mocks.update.mockImplementation(async (input: Partial<Asset>) => ({ ...initial, ...input }));
-    const onSaved = vi.fn((saved?: Asset) => noticeLiveAssetEdit(initial, saved));
+    // The editor itself tells about the live connection, whichever entry point opened it.
+    const onSaved = vi.fn();
     mounted = withClient(createElement(AssetEditor, { kind: "asset", initial, onClose: vi.fn(), onSaved }));
     await flush();
     edit();

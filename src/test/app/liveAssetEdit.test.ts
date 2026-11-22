@@ -5,7 +5,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   confirm: vi.fn(),
   reconnect: vi.fn(),
+  assetGet: vi.fn(),
 }));
+
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/commands")>();
+  return {
+    ...actual,
+    assetApi: { ...actual.assetApi, get: mocks.assetGet },
+    vaultApi: { ...actual.vaultApi, status: vi.fn(async () => ({ initialized: true, unlocked: true, passwordless: false })) },
+  };
+});
 
 vi.mock("../../app/store/workspaceReconnect", () => ({
   confirmSuspectReconnect: mocks.confirm,
@@ -102,5 +112,44 @@ describe("saving an asset that has a live connection", () => {
     seed("disconnected");
     noticeLiveAssetEdit(before, { ...before, port: 2222 });
     expect(useUi.getState().toasts).toEqual([]);
+  });
+
+  it("offers to reopen an open remote desktop with the saved settings", async () => {
+    const rdp: Asset = { ...before, kind: "rdp", port: 3389, credId: null, options: {} };
+    mocks.assetGet.mockResolvedValue(rdp);
+    useUi.setState({
+      toasts: [],
+      sessions: [],
+      workspaces: [
+        {
+          id: "ws-r",
+          kind: "remote",
+          title: "win",
+          assetId: "a1",
+          assetKind: "rdp",
+          panes: [
+            { id: "p0", tabs: [{ id: "x", kind: "files", title: "x", closable: true }], activeTabId: "x" },
+            { id: "p1", tabs: [{ id: "r-old", kind: "remote", title: "远程桌面", assetId: "a1", closable: true }], activeTabId: "r-old" },
+          ],
+          activePaneId: "p1",
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "ws-r",
+    });
+    noticeLiveAssetEdit(rdp, { ...rdp, host: "10.0.0.9" });
+    const toast = useUi.getState().toasts.at(-1);
+    expect(toast?.text).toBe("已保存，当前连接仍使用旧设置");
+    expect(toast?.action?.label).toBe("重新连接");
+
+    toast?.action?.onSelect();
+    await vi.waitFor(() => {
+      const { workspaces } = useUi.getState();
+      expect(workspaces.map((item) => item.id)).toEqual(["ws-r"]);
+      const remote = workspaces[0]?.panes.flatMap((pane) => pane.tabs).filter((tab) => tab.kind === "remote");
+      expect(remote).toHaveLength(1);
+      expect(remote?.[0]?.id).not.toBe("r-old");
+    });
+    expect(mocks.assetGet).toHaveBeenCalledWith("a1");
   });
 });
