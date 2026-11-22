@@ -1452,6 +1452,29 @@ describe("Device management view - remote terminal switch and version note", () 
     await flushUntil(() => cardWith("web-01")?.textContent?.includes("远程终端已关闭") ?? false);
   });
 
+  it("labels an automatic upgrade failure apart from a background service error", async () => {
+    const upgrade = "自动升级到 0.3.0 失败（新版本启动后 120 秒内未连上服务端），已于 2026-11-20 10:00:00 回滚到之前的版本";
+    route(
+      fleetHandler({
+        devices: {
+          server_version: "0.3.0",
+          devices: [
+            { ...AGENT_DEVICE, id: "d-up", name: "up-01", agent: { ...AGENT_DEVICE.agent, service_state: { installed: true, enabled: true, active: true, last_error: upgrade } } },
+            { ...AGENT_DEVICE, id: "d-both", name: "both-01", agent: { ...AGENT_DEVICE.agent, service_state: { installed: true, enabled: true, active: true, last_error: "unit failed; " + upgrade } } },
+          ],
+        },
+      }),
+    );
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("both-01") ?? false);
+
+    expect(cardWith("up-01")?.textContent).toContain("自动升级失败：" + upgrade);
+    expect(cardWith("up-01")?.textContent).not.toContain("后台服务出错");
+    expect(cardWith("both-01")?.textContent).toContain("后台服务出错：unit failed");
+    expect(cardWith("both-01")?.textContent).toContain("自动升级失败：" + upgrade);
+  });
+
   it("hints an outdated agent only when it is older than the server, both are release versions and the device is online", async () => {
     route(
       fleetHandler({

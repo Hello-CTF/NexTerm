@@ -220,3 +220,27 @@ func TestRuntimeWritesHealthMarkerAfterChannelConnects(t *testing.T) {
 		t.Fatalf("a healthy upgrade forgets its version's failures, got %+v", failures)
 	}
 }
+
+// A failed upgrade to the server's later release is reported through the service state like a rollback, so the
+// device list shows it instead of only the agent's log.
+func TestRuntimeFollowServerVersionReportsFailure(t *testing.T) {
+	previous := version.Version
+	version.Version = "1.2.0"
+	t.Cleanup(func() { version.Version = previous })
+	release := newReleaseServer(t, map[string][]byte{})
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: "http://127.0.0.1:1"}}
+	executable := filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS))
+	writeExecutable(t, executable, "old-binary")
+	upgrader := &Upgrader{
+		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: executable,
+		MaxAttempts: 1, sleep: instantSleep, verifyStaged: skipStagedCheck, scheduleReplace: func(string, string) error { return nil },
+	}
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
+	agentRuntime.followServerVersion(context.Background(), "1.3.0")
+	agentRuntime.loopWg.Wait()
+	state := agentRuntime.serviceStateSnapshot()
+	if !strings.HasPrefix(state.LastError, "自动升级到 1.3.0 失败") {
+		t.Fatalf("last error = %q, want the failed upgrade", state.LastError)
+	}
+}

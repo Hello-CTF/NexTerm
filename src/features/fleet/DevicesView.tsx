@@ -44,7 +44,7 @@ import { MetricsPanel } from "./MetricsPanel";
 import { EnrollPanel, ENROLL_TTL_OPTIONS, type IssuedEnrollCode } from "./EnrollPanel";
 import { releaseOrNull, shellQuote } from "./installCommand";
 import { showSettingsSection } from "../settings/settingsNavigation";
-import { t } from "../../i18n";
+import { t, translateMessage } from "../../i18n";
 
 
 function enrollCommand(baseUrl: string, insecure: boolean, code: string): string {
@@ -124,6 +124,17 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
 }
 
 // A version is comparable only when it looks like a release (x.y.z); "dev", "0.0.0" and empty values are not.
+// splitServiceError separates the automatic upgrade failures an agent appends to its service error (each starts
+// with "自动升级到 ", joined with "; ") from the service error itself.
+export function splitServiceError(text: string | undefined | null): { service: string; upgrade: string } {
+  const value = text ?? "";
+  const marker = "自动升级到 ";
+  if (value.startsWith(marker)) return { service: "", upgrade: value };
+  const index = value.indexOf("; " + marker);
+  if (index < 0) return { service: value, upgrade: "" };
+  return { service: value.slice(0, index), upgrade: value.slice(index + 2) };
+}
+
 function releaseVersion(raw: string | undefined | null): string | null {
   const v = (raw ?? "").trim().replace(/^v/i, "");
   if (!/^\d+\.\d+\.\d+/.test(v) || /^0\.0\.0(?![\d.])/.test(v)) return null;
@@ -232,8 +243,8 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
     }
   };
 
-  // The agent only self-upgrades when the control protocol is incompatible (version_mismatch), so an agent that is
-  // older than the server gets a hint to update it by hand; a newer agent needs no action.
+  // An agent follows the server's later stable release on its own once it connects (and upgrades whenever the control
+  // protocol is incompatible); the hint covers an RC server and a failed automatic upgrade. A newer agent needs no action.
   const agentRelease = releaseVersion(agent?.app_version);
   const serverRelease = releaseVersion(listServerVersion);
   const versionBehind = Boolean(!revoked && agent && online && agentRelease && serverRelease && olderRelease(agentRelease, serverRelease));
@@ -247,7 +258,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
   // A desktop exposing its local terminals runs inside the desktop app and has no autostart service.
   const localHelper = device.kind === "local-helper";
   const autostartDrift = Boolean(agent && hasServiceReport && agent.desired_autostart !== autostartActual && !revoked && !localHelper);
-  const serviceError = serviceState?.last_error;
+  const { service: serviceError, upgrade: upgradeError } = splitServiceError(serviceState?.last_error);
 
   const openMenu = (e: ReactMouseEvent<HTMLButtonElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -355,7 +366,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
 
       {versionBehind && (
         <div className="nx-hint mt-1 text-[11px]" role="note">
-          {t("设备代理版本过旧（设备")} {agentRelease}{t("，服务端")} {serverRelease}{t("）。请重新安装，或在设备上运行 nexterm-agent update（1.2.x 需使用安装脚本重新安装一次）。")}
+          {t("设备代理版本过旧（设备 {agentRelease}，服务端 {serverRelease}）。设备代理连上服务端后会自动升级到服务端的正式版本；服务端为 RC 版本或自动升级失败时，可在设备上运行 nexterm-agent update --version {serverRelease}（1.2.x 需使用安装脚本重新安装一次）。", { agentRelease, serverRelease })}
         </div>
       )}
 
@@ -390,6 +401,11 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
       {!revoked && serviceError && (
         <div className="mt-1 min-w-0 break-all text-[12px] text-red-300" title={serviceError}>
           {t("后台服务出错：{serviceError}", { serviceError })}
+        </div>
+      )}
+      {!revoked && upgradeError && (
+        <div className="mt-1 min-w-0 break-all text-[12px] text-amber-300" title={upgradeError}>
+          {t("自动升级失败：{value}", { value: translateMessage(upgradeError) })}
         </div>
       )}
 
@@ -832,7 +848,7 @@ export function DevicesView() {
     const agentRelease = releaseVersion(d.agent?.app_version);
     const serverRelease = releaseVersion(listServerVersion ?? serverVersion);
     if (!agentRelease || !serverRelease || !olderRelease(agentRelease, serverRelease)) return null;
-    return t("设备代理版本较旧（v{agentRelease}，服务端为 v{serverRelease}）。请在设备上运行 nexterm-agent update；1.2.x 版本需重新运行一次安装命令。", { agentRelease, serverRelease });
+    return t("设备代理版本较旧（v{agentRelease}，服务端为 v{serverRelease}）。设备代理连上服务端后会自动升级到服务端的正式版本；服务端为 RC 版本或自动升级失败时，可在设备上运行 nexterm-agent update --version {serverRelease}；1.2.x 版本需重新运行一次安装命令。", { agentRelease, serverRelease });
   };
   const closeEnroll = () => {
     setEnrollOpen(false);
