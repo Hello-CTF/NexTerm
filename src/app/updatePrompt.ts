@@ -13,11 +13,15 @@ export function isReleaseVersion(version: string): boolean {
   );
 }
 
+// promptUpdateIfNeeded runs only after the startup check: later periodic checks surface an update through the
+// banner alone, so a dialog never interrupts work in progress. An update the app cannot install itself is left to
+// the banner and settings, which explain why and link the package.
 export async function promptUpdateIfNeeded(): Promise<void> {
   if (!DESKTOP) return;
   const state = getUpdateState();
   const status = state.status;
-  if (!status?.available || !status.version) return;
+  if (!status?.available || !status.version || !status.canInstall) return;
+  if (state.install.active || state.installedVersion) return;
   if (!isReleaseVersion(status.currentVersion)) return;
   if (status.version === state.skippedVersion) return;
   if (status.version === state.remindedVersion) return;

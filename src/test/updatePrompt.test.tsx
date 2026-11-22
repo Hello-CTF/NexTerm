@@ -176,6 +176,20 @@ describe("update prompt dialog", () => {
     expect(useUpdateStore.getState().remindedVersion).toBeNull();
   });
 
+  it("leaves an update the app cannot install, or one already installing or installed, to the banner", async () => {
+    useUpdateStore.setState({ status: makeStatus({ canInstall: false, unavailableReason: "安装目录不可写" }) });
+    await promptUpdateIfNeeded();
+    useUpdateStore.setState({ status: makeStatus(), installedVersion: "0.3.0" });
+    await promptUpdateIfNeeded();
+    useUpdateStore.setState({
+      status: makeStatus(),
+      installedVersion: null,
+      install: { active: true, phase: "download", transferred: 0, total: 0, error: null, taskId: null },
+    });
+    await promptUpdateIfNeeded();
+    expect(mocks.askChoice).not.toHaveBeenCalled();
+  });
+
   it("does not prompt when there is no update or no completed check", async () => {
     await promptUpdateIfNeeded();
     useUpdateStore.setState({ status: makeStatus({ available: false, version: "" }) });

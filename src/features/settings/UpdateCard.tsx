@@ -12,19 +12,24 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 import type { UpdateReleaseChannel } from "../../ipc/types";
+import { RESTART_NOTE } from "../../app/UpdateBanner";
+import { UpdateLink } from "../../app/UpdateLink";
 import {
   effectiveReleaseChannel,
+  releasePageURL,
   updateInstallAllowed,
   updateVerdict,
   useUpdate,
   type UpdateVerdict,
 } from "../../app/useUpdate";
-import { t } from "../../i18n";
+import { t, translateMessage } from "../../i18n";
 
 const CHANNEL_OPTIONS: ReadonlyArray<{ value: UpdateReleaseChannel; label: string }> = [
   { value: "stable", label: t("稳定版") },
   { value: "rc", label: "RC" },
 ];
+
+const RELEASES_PAGE = releasePageURL(null);
 
 const RC_RISK_NOTE =
   t("RC 是正式发布前的候选版本，可能包含尚未发现的问题。此设置只对本机生效，不会同步到其他设备。切换回稳定版不会降级，会保持当前版本，直到有更新的稳定版发布。确定切换到 RC 通道吗？");
@@ -67,11 +72,16 @@ export function UpdateCard() {
   const installAllowed = updateInstallAllowed(status);
   const blockReason =
     (verdict === "available" || verdict === "unavailable") && !installAllowed
-      ? status?.unavailableReason || envReason || t("当前环境不支持应用内安装")
+      ? (status?.unavailableReason ? translateMessage(status.unavailableReason) : null) || envReason || t("当前环境不支持应用内安装")
       : null;
   const showInstall =
     verdict === "available" && installAllowed && !install.active && !installedVersion;
-  const failReason = checkError || status?.unavailableReason || t("原因未知");
+  const failReason = checkError || (status?.unavailableReason ? translateMessage(status.unavailableReason) : "") || t("原因未知");
+  const releasePage = releasePageURL(status);
+  const hasUpdate = (verdict === "available" || verdict === "unavailable") && Boolean(status?.version);
+  const skipped = hasUpdate && status?.version === update.skippedVersion;
+  const notes = hasUpdate ? status?.notes?.trim() ?? "" : "";
+  const pendingVersion = verdict !== "external" ? status?.pendingVersion : undefined;
   const channel = effectiveReleaseChannel(update);
   // The channel only applies where the app installs updates itself: not in server mode, not on iOS or Android.
   const showChannel = DESKTOP && verdict !== "external";
@@ -136,11 +146,47 @@ export function UpdateCard() {
           {t("发现新版本 v{version}{value}{value2}", { version: status.version, value: status.assetSize > 0 ? t(" · 安装包 {value}", { value: formatBytes(status.assetSize) }) : "", value2: status.prerelease ? t(" · RC 候选版本") : "" })}
         </p>
       )}
+      {hasUpdate && (
+        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-neutral-400">
+          <UpdateLink href={releasePage}>{t("在 GitHub 查看发布页")}</UpdateLink>
+          {skipped && (
+            <span>
+              {t("已跳过此版本，不再提醒")}{" "}
+              <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={update.unskipVersion}>{t("恢复提醒")}</button>
+            </span>
+          )}
+        </div>
+      )}
+      {notes && (
+        <details className="mb-2 text-[12px] text-neutral-300" data-testid="update-notes">
+          <summary className="cursor-pointer select-none text-neutral-400">{t("更新说明")}</summary>
+          <div className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border border-neutral-800/60 p-2">{notes}</div>
+        </details>
+      )}
+      {pendingVersion && (
+        <p className="mb-2 text-[12px] text-neutral-400">
+          {t("v{pendingVersion} 已发布，此平台的安装包还在上传，请稍后再检查。", { pendingVersion })}
+        </p>
+      )}
       {verdict === "external" && (
-        <p className="mb-2 text-[12.5px] text-neutral-300">{externalChannelNote(status?.channel)}</p>
+        <p className="mb-2 text-[12.5px] text-neutral-300">
+          {externalChannelNote(status?.channel)}
+          {status?.channel !== "app-store" && <> <UpdateLink href={RELEASES_PAGE}>{t("打开 Releases 页面")}</UpdateLink></>}
+        </p>
       )}
       {blockReason && (
-        <p className="mb-2 text-[12px] text-amber-300">{blockReason}</p>
+        <p className="mb-2 text-[12px] text-amber-300">
+          {blockReason}
+          {(status?.downloadUrl || WEB) && (
+            <>
+              {" "}
+              {/* In a browser the server's own package is not the user's: link the release page instead. */}
+              {status?.downloadUrl && !WEB
+                ? <UpdateLink href={status.downloadUrl}>{t("下载安装包")}</UpdateLink>
+                : <UpdateLink href={releasePage}>{t("打开 Releases 页面")}</UpdateLink>}
+            </>
+          )}
+        </p>
       )}
       {verdict === "check-failed" && (
         <div className="nx-alert nx-alert-danger mb-2 flex items-start gap-2">
@@ -177,17 +223,33 @@ export function UpdateCard() {
             {t("下载并安装")}
           </button>
         )}
+        {hasUpdate && !skipped && !install.active && !installedVersion && status && (
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-sm"
+            onClick={() => update.skipVersion(status.version)}
+          >
+            {t("跳过此版本")}
+          </button>
+        )}
       </div>
+      {showInstall && <p className="nx-hint mt-2">{t("安装完成后不会自动重启，可选择立即重启或稍后。")}</p>}
 
       {install.active && (
-        <DownloadProgress className="mt-3" label={install.phase === "install" ? t("正在安装…") : t("正在下载…")}
-          transferred={install.transferred} total={install.total} />
+        <>
+          <DownloadProgress className="mt-3" label={install.phase === "install" ? t("正在安装…") : install.phase === "verify" ? t("正在校验…") : t("正在下载…")}
+            transferred={install.phase === "download" ? install.transferred : 0} total={install.phase === "download" ? install.total : 0} />
+          {install.phase === "install" && <p className="nx-hint mt-1">{t("正在替换程序文件，请勿退出应用。")}</p>}
+        </>
       )}
 
       {install.error && (
         <div className="nx-alert nx-alert-danger mt-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{t("安装失败：{error}。可选择「重试」，仍失败，请前往 Releases 页面手动下载。", { error: install.error })}</span>
+          <span className="min-w-0 flex-1 break-words">
+            {t("安装失败：{error}。可选择「重试」，仍失败，请前往 Releases 页面手动下载。", { error: install.error })}{" "}
+            <UpdateLink href={releasePage}>{t("打开 Releases 页面")}</UpdateLink>
+          </span>
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
@@ -203,6 +265,7 @@ export function UpdateCard() {
           <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1">
             {t("已安装 v{installedVersion}，重启应用后生效。", { installedVersion })}
+            <span className="mt-0.5 block text-neutral-400">{RESTART_NOTE}</span>
             {restartError && <span className="mt-0.5 block text-red-300">{t("重启失败：{restartError}。请手动退出并重新打开应用。", { restartError })}</span>}
           </span>
           {DESKTOP && (

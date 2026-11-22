@@ -323,12 +323,14 @@ export interface SnippetContent {
   steps?: SnippetStep[];
 }
 
-import type { UpdateChannelDto, UpdateReleaseChannel, UpdateResultDto, UpdateStatusDto } from "./types";
+import type { UpdateChannelDto, UpdateInstallStateDto, UpdateReleaseChannel, UpdateResultDto, UpdateStatusDto } from "./types";
 
 export const appUpdateApi = {
   check: (): Promise<UpdateStatusDto> => call("app_update_check"),
   install: (version?: string): Promise<UpdateResultDto> =>
     call("app_update_install", { version: version ?? null }),
+  // state reports the running or last install, so a reloaded interface can resume it.
+  state: (): Promise<UpdateInstallStateDto> => call("app_update_state"),
   restart: (): Promise<UpdateResultDto> => call("app_restart"),
   // The release channel is stored on this machine only (never synced); desktop builds only.
   getChannel: (): Promise<UpdateChannelDto> => call("app_update_channel_get"),
