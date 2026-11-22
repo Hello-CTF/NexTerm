@@ -164,7 +164,7 @@ describe("ProcessFinderPanel", () => {
     expect(mocks.openTerminal).toHaveBeenCalledWith(sessions[0]);
 
     clickButton(matchRow(), "转发");
-    const listen = panel().container.querySelector<HTMLInputElement>('input[aria-label="finder 本地监听端口"]');
+    const listen = panel().container.querySelector<HTMLInputElement>('input[aria-label="本地监听端口"]');
     if (!listen) throw new Error("listen input not found");
     setInputValue(listen, "18080");
     clickButton(panel().container, "保存规则");
@@ -226,7 +226,7 @@ describe("ProcessFinderPanel", () => {
       batchId: "batch-2", productionConfirmation: { confirmed: true, targetSetHash, commandHash, environmentNames: ["prod"] },
     });
     await flushUntil(() =>
-      panel().container.textContent?.includes("kill 逐目标结果") === true &&
+      panel().container.textContent?.includes("结束进程结果（逐台）") === true &&
       [...matchRow().querySelectorAll("button")].some((button) => button.textContent?.trim() === "kill" && !button.disabled),
     );
     expect(panel().container.textContent).toContain("sudo 不可用或需要密码");

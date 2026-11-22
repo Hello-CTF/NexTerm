@@ -166,7 +166,7 @@ describe("M119 AI responsive fixes", () => {
   it("keeps long uninterrupted user content wrapped inside the bubble", async () => {
     const token = "a1b2c3d4e5".repeat(22);
     setInputValue(composer(), token);
-    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
     const pre = view!.container.querySelector('div[role="log"] pre.break-words');
     expect(pre).not.toBeNull();
@@ -177,7 +177,7 @@ describe("M119 AI responsive fixes", () => {
 
   it("renders the confirmation card inside the log scroll flow with a readable body", async () => {
     setInputValue(composer(), "Run a command");
-    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
     emit({
       type: "confirmRequired",

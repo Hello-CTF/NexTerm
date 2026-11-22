@@ -357,7 +357,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
               {t("· 远程终端{value}", { value: agent.terminal_enabled ? t("已开启") : t("已关闭") })}
             </span>
             {sharedHelper && (
-              <span title={t("两个设备连接同一个持久终端组件，会话只列出一份（经代理设备）；各自的设置仍然独立。")}>· {sharedHelper}</span>
+              <span title={t("这两台设备共用同一个持久终端组件，终端只列出一次；各自的设置互不影响。")}>· {sharedHelper}</span>
             )}
           </>
         ) : (

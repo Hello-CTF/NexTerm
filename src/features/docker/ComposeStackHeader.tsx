@@ -122,7 +122,7 @@ export function ComposeStackHeader({
         disposeChannel(channel);
         return;
       }
-      setStream({ id, sessionId, title: t("{project} · Compose logs（按 service 前缀合并）", { project }), channel, sink });
+      setStream({ id, sessionId, title: t("{project} · Compose 日志（按服务名合并）", { project }), channel, sink });
     } catch (cause) {
       disposeChannel(channel);
       pushToast("error", t("{project} 日志打开失败：{value}", { project, value: describeError(cause) }));

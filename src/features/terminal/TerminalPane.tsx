@@ -1508,7 +1508,7 @@ export function TerminalPane({
       if (isSessionSuspect(sessionStatus, sessionLiveness) && !(await confirmSuspectReconnect(workspace?.id))) return;
       const result = await reconnectLiveSession(sessionId, workspace?.id);
       if (result.kind === "missing") {
-        pushToast("error", tr("原连接已不存在。请再次选择「重新连接」以重新连接该主机"));
+        pushToast("error", tr("原连接已失效，请选择「重新连接」"));
         return;
       }
       if (result.kind === "pending") return;
@@ -1535,7 +1535,7 @@ export function TerminalPane({
       setEpoch((n) => n + 1);
     } catch (e) {
       if ((e as { code?: string } | null)?.code === "not_found") {
-        pushToast("error", tr("原连接已不存在。请再次选择「重新连接」以重新连接该主机"));
+        pushToast("error", tr("原连接已失效，请选择「重新连接」"));
         return;
       }
       pushToast("error", tr("重新连接失败：{value}。请检查网络后重试", { value: describeError(e) }));
@@ -2732,7 +2732,7 @@ export function TerminalPane({
           <button
             type="button"
             className="nx-badge nx-badge-red shrink-0 cursor-pointer @max-[560px]:order-1"
-            title={tr("命令广播已开启：目标共 {broadcastCount} 个，不可写目标会跳过；单击可关闭广播", { broadcastCount })}
+            title={tr("命令广播已开启（{broadcastCount} 个终端），只读终端会跳过；单击关闭", { broadcastCount })}
             aria-label={tr("关闭命令广播")}
             onClick={closeBroadcast}
           >

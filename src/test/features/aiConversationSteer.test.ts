@@ -97,7 +97,7 @@ function textareaOf(view: MountedView): HTMLTextAreaElement {
 
 async function send(view: MountedView, text: string) {
   setInputValue(textareaOf(view), text);
-  click(view.container.querySelector('button[title="发送 (Enter)"]')!);
+  click(view.container.querySelector('button[title="发送（Enter）"]')!);
   await flush();
 }
 

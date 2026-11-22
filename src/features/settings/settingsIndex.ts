@@ -147,7 +147,7 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
     keywords: ["ai", "model", "api key", "openai", "ollama", "llm", t("模型"), t("密钥"), t("大模型"), t("连通性")],
   },
   "settings-ai-privacy": {
-    description: t("本地模型检测敏感信息、稳定占位符与回复还原，下载或删除本地模型"),
+    description: t("用本地模型识别敏感信息，以占位符替换并在回复中还原；下载或删除本地模型"),
     keywords: ["privacy", "guard", "astrlink", "int8", "fp32", "fp16", t("脱敏"), t("隐私"), t("敏感"), t("还原"), t("模型下载"), t("删除模型"), t("磁盘占用")],
   },
   "settings-ai-rules": {
@@ -253,7 +253,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "terminal-durable-history", section: "settings-terminal", label: t("持久终端历史上限"), description: t("每个新建的持久终端在主机上保留的输出量"), keywords: ["history", "durable", "limit", "quota", "scrollback", t("历史"), t("持久"), t("上限"), t("配额")], panel: "terminal-advanced", available: terminalDefaultUsesAccount },
   { id: "system-notifications", section: "settings-notifications", label: t("系统通知"), description: t("会话需要处理或长时间命令结束时，在本机显示系统通知"), keywords: ["notification", "notify", "bell", "inbox", "osc9", t("通知"), t("系统通知"), t("响铃"), t("铃铛"), t("收件箱")] },
   { id: "state-rules-import", section: "settings-state-rules", label: t("导入或导出状态规则"), keywords: ["import", "export", "json", t("导入"), t("导出")] },
-  { id: "state-rules-status", section: "settings-state-rules", label: t("各主机的规则状态"), description: t("各主机的持久终端是否已应用当前规则"), keywords: ["push", "helper", "host", t("下发"), t("主机"), t("组件"), t("生效")] },
+  { id: "state-rules-status", section: "settings-state-rules", label: t("各主机的规则状态"), description: t("各主机的持久终端组件是否已应用当前规则"), keywords: ["push", "helper", "host", t("下发"), t("主机"), t("组件"), t("生效")] },
   { id: "keyword-highlight-presets", section: "settings-keyword-highlight", label: t("内置预设"), description: t("错误、警告、成功、IPv4 地址和 UUID 的高亮"), keywords: ["preset", "error", "warning", "ip", "uuid", t("预设")] },
   { id: "keyword-highlight-preview", section: "settings-keyword-highlight", label: t("高亮预览"), keywords: ["preview", "sample", t("预览"), t("示例")] },
   { id: "layout-templates", section: "settings-layout-templates", label: t("布局模板"), description: t("保存工作区分屏布局，按模板打开主机终端并运行启动片段"), keywords: ["layout", "template", "arrangement", "split", t("布局"), t("模板"), t("分屏")] },

@@ -850,14 +850,14 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
           ) : sessionId ? (
             kind === "remote" ? (
               <>
-                {tr("出口走当前会话（{value}）的连接；远端监听地址为{value2}", { value: sessionName(sessionId), value2: " " })}
+                {tr("经当前会话（{value}）的 SSH 连接转发；远端监听地址为{value2}", { value: sessionName(sessionId), value2: " " })}
                 <span className="nx-code">
                   {bindHost}:{listenPort}
                 </span>{tr("{value}（绑定在远端主机上{value2}）。重新连接后会自动尝试恢复。", { value: " ", value2: isLoopbackHost(bindHost) ? tr("，只有远端本机能连") : tr("，对远端网络开放，创建前会确认风险") })}
               </>
             ) : (
             <>
-              {tr("出口走当前会话（{value}）的连接；监听地址为{value2}", { value: sessionName(sessionId), value2: " " })}
+              {tr("经当前会话（{value}）的 SSH 连接转发；监听地址为{value2}", { value: sessionName(sessionId), value2: " " })}
               <span className="nx-code">
                 {listenHost}:{listenPort}
               </span>

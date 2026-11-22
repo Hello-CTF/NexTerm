@@ -506,10 +506,10 @@ describe("Host key confirmation for TerminalPane menu reconnect (reconnectSessio
 
     await clickTerminalMenuItem("重新连接");
     await waitForRendered(() => expect(mocks.reconnect).toHaveBeenCalledWith("s1"));
-    await waitForRendered(() => expect(toastTexts()).toContain("原连接已不存在"));
+    await waitForRendered(() => expect(toastTexts()).toContain("原连接已失效"));
     expect(toastTexts()).not.toContain("请刷新后重试");
     expect(
-      useUi.getState().toasts.some((t) => t.kind === "error" && t.text.includes("原连接已不存在")),
+      useUi.getState().toasts.some((t) => t.kind === "error" && t.text.includes("原连接已失效")),
     ).toBe(true);
   });
 });

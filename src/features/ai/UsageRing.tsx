@@ -288,7 +288,7 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
               ) : null}
               {hasSummary ? (
                 <span className="block">
-                  {t("上下文上下文摘要 输入 {value} · 输出 {value2} tokens", { value: formatTokens(summaryPrompt), value2: formatTokens(summaryCompletion) })}</span>
+                  {t("上下文摘要：输入 {value} · 输出 {value2} tokens", { value: formatTokens(summaryPrompt), value2: formatTokens(summaryCompletion) })}</span>
               ) : null}
             </>
           ) : (
@@ -335,7 +335,7 @@ function UsageDetails({
       ) : null}
       {hasSummary ? (
         <span className="block text-neutral-300">
-          {t("上下文上下文摘要 输入 {value} · 输出 {value2} tokens", { value: formatTokens(summaryPrompt), value2: formatTokens(summaryCompletion) })}</span>
+          {t("上下文摘要：输入 {value} · 输出 {value2} tokens", { value: formatTokens(summaryPrompt), value2: formatTokens(summaryCompletion) })}</span>
       ) : null}
       {errorStats && errorStats.runs > 0 ? (
         <span className="block text-neutral-300">

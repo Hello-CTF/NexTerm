@@ -58,7 +58,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
     ? [
         {
           key: "export",
-          label: t("导出当前会话"),
+          label: t("导出当前对话"),
           icon: <IconDownload size={12} />,
           title: t("将当前会话导出为 Markdown 文件"),
           run: () => void exportConversationMarkdown({ id: conversationId, title: dockTitle }),
@@ -295,14 +295,14 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
                 ? t("运行中：可发送补充指令，AI 会在当前步骤完成后收到")
                 : sessionId
                   ? t("向 NexTerm 提问，@ 引用，/ 命令与技能")
-                  : t("未连接会话（仍可全局提问）")
+                  : t("未连接终端，仍可直接提问")
               : busy
                 ? t("运行中：Enter 发送补充指令，AI 会在当前步骤完成后收到")
                 : sessionId
                   ? DESKTOP
                     ? t("向 NexTerm 提问（Enter 发送，Shift+Enter 换行），@ 引用，/ 命令与技能")
                     : t("向 NexTerm 提问（Enter 发送，Shift+Enter 换行），@ 引用，/ 命令与技能，可粘贴图片")
-                  : t("未连接会话（仍可全局提问）")
+                  : t("未连接终端，仍可直接提问")
           }
           enterKeyHint={touch ? "enter" : "send"}
           aria-label={t("消息输入")}
@@ -422,7 +422,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
                 className="nx-send-btn"
                 aria-label={editing ? t("编辑并重新发送") : t("发送")}
                 aria-keyshortcuts={touch ? undefined : "Enter"}
-                title={editing ? t("编辑并重新发送") : touch ? t("发送") : t("发送 (Enter)")}
+                title={editing ? t("编辑并重新发送") : touch ? t("发送") : t("发送（Enter）")}
                 disabled={sendDisabled}
                 onClick={() => (editing ? void submitEditResend() : sendMessage())}
               >

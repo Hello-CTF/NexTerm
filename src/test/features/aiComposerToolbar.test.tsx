@@ -174,7 +174,7 @@ describe("AI composer toolbar", () => {
   it("disables send until there is content, then swaps to stop while running", async () => {
     const send = () => q('button[aria-label="发送"]');
     expect(send()?.disabled).toBe(true);
-    expect(send()?.getAttribute("title")).toBe("发送 (Enter)");
+    expect(send()?.getAttribute("title")).toBe("发送（Enter）");
     setInputValue(mounted!.container.querySelector("textarea")!, "hello");
     await flush();
     expect(send()?.disabled).toBe(false);

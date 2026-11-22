@@ -176,7 +176,7 @@ describe("AiSidebar takeover controls", () => {
 
   async function sendChat() {
     setInputValue(view!.container.querySelector("textarea")!, "Chat question");
-    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
     return mocks.channels[0];
   }

@@ -148,7 +148,7 @@ describe("AI conversation streaming render performance", () => {
     const textarea = view!.container.querySelector("textarea");
     if (!textarea) throw new Error("input textarea not found");
     setInputValue(textarea, text);
-    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
   }
 

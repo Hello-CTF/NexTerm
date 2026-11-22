@@ -510,7 +510,7 @@ describe("Log viewer entries", () => {
       el.textContent?.includes("查看日志"),
     );
     expect(item).toBeDefined();
-    expect(item?.textContent).toContain("只读分块");
+    expect(item?.textContent).toContain("只读");
     click(item as Element);
     await flush();
 

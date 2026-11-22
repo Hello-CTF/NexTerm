@@ -240,7 +240,7 @@ describe("FileTree tilde handling", () => {
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "/"));
     expect(mocks.list).not.toHaveBeenCalledWith(SID, "~");
     const home = mounted!.container.querySelector<HTMLButtonElement>(
-      'button[title="WinRM 后端不支持 ~ 展开"]',
+      'button[title="WinRM 主机不支持 ~（主目录）"]',
     );
     expect(home?.disabled).toBe(true);
   });
@@ -260,7 +260,7 @@ describe("FileTree tilde handling", () => {
     await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "/"));
     expect(mounted!.container.textContent).not.toContain("tilde unsupported");
     const home = mounted!.container.querySelector<HTMLButtonElement>(
-      'button[title="WinRM 后端不支持 ~ 展开"]',
+      'button[title="WinRM 主机不支持 ~（主目录）"]',
     );
     expect(home?.disabled).toBe(true);
   });

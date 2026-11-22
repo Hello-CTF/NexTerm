@@ -410,7 +410,7 @@ describe("HelperOperationView", () => {
 
     expect(view.container.textContent).toContain("无法转到后台");
     expect(view.container.textContent).toContain("保留当前连接");
-    click(buttonByText(view.container, "重试持久终端"));
+    click(buttonByText(view.container, "重试安装组件"));
     click(buttonByText(view.container, "继续使用临时终端"));
     click(buttonByText(view.container, "取消后台操作"));
 
@@ -433,7 +433,7 @@ describe("HelperOperationView", () => {
       onCancel,
     });
 
-    const retry = buttonByText(view.container, "重试持久终端");
+    const retry = buttonByText(view.container, "重试安装组件");
     retry.focus();
     expect(document.activeElement).toBe(retry);
     expect(keyDown(retry, "Enter").defaultPrevented).toBe(true);

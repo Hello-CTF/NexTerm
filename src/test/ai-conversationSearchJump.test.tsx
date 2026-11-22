@@ -486,7 +486,7 @@ describe("AiSidebar search jump", () => {
 
     mocks.chat.mockResolvedValue({ jobId: "job-live", conversationId: "conv-1" });
     setInputValue(view!.container.querySelector('textarea[aria-label="消息输入"]')!, "stream");
-    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
     act(() => mocks.channels.at(-1)!.onEvent({ type: "delta", text: "more" }));
     await flush();

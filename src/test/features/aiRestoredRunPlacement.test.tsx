@@ -174,7 +174,7 @@ describe("AiSidebar restored run placement", () => {
 
   async function send(message: string) {
     setInputValue(view!.container.querySelector("textarea")!, message);
-    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
   }
 

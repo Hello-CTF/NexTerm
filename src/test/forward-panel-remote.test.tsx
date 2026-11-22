@@ -352,7 +352,7 @@ describe("Forward settings", () => {
     const toggle = settingsSwitch(settingsMounted.container, "启动时自动恢复转发");
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     expect(settingsMounted.container.textContent).toContain("默认关闭");
-    expect(settingsMounted.container.textContent).toContain("最多同时建立 4 个设备连接");
+    expect(settingsMounted.container.textContent).toContain("最多同时连接 4 台主机");
     expect(settingsMounted.container.textContent).toContain("自动跳过生产环境资产");
     expect(settingsMounted.container.textContent).toContain("仅本地固定端口转发，只监听 127.0.0.1");
     expect(settingsMounted.container.textContent).toContain("SOCKS5、远程转发和公共监听不支持自动启动");

@@ -251,7 +251,7 @@ describe("AiSidebar conversation stream UX", () => {
     const textarea = view!.container.querySelector("textarea");
     if (!textarea) throw new Error("input textarea not found");
     setInputValue(textarea, text);
-    click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
   }
 
@@ -269,7 +269,7 @@ describe("AiSidebar conversation stream UX", () => {
     emit({ type: "done", answer: "流式回答" });
     await flush();
     expect(textOf(view!)).toContain("回答已完成");
-    expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
+    expect(view!.container.querySelector('button[title="发送（Enter）"]')).not.toBeNull();
 
     const bubblesBefore = textOf(view!);
     emit({ type: "done", answer: "流式回答" });
@@ -357,7 +357,7 @@ describe("AiSidebar conversation stream UX", () => {
     expect(alert?.textContent).toContain("网络断开");
     expect(textOf(view!)).toContain("失败前的输出");
     expect(mocks.toast).toHaveBeenCalledWith("error", "AI 回答出错：网络断开");
-    expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
+    expect(view!.container.querySelector('button[title="发送（Enter）"]')).not.toBeNull();
 
     emit({ type: "done", answer: "迟到答案" });
     await flush();
@@ -500,7 +500,7 @@ describe("AiSidebar conversation stream UX", () => {
     emit({ type: "done", answer: "Running answer" });
     await flush();
     expect(textOf(view!)).toContain("回答已完成");
-    expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
+    expect(view!.container.querySelector('button[title="发送（Enter）"]')).not.toBeNull();
   });
 
   it("re-checks the run guard after the confirm dialog resolves", async () => {
@@ -557,7 +557,7 @@ describe("AiSidebar conversation stream UX", () => {
     emit({ type: "done", answer: "第二轮回答" });
     await flush();
     expect(textOf(view!)).toContain("回答已完成");
-    expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
+    expect(view!.container.querySelector('button[title="发送（Enter）"]')).not.toBeNull();
     await send("Third round");
     expect(mocks.chat).toHaveBeenLastCalledWith(
       expect.objectContaining({ conversationId: undefined }),
@@ -597,7 +597,7 @@ describe("AiSidebar conversation stream UX", () => {
     emit({ type: "done", answer: "第二轮回答" });
     await flush();
     expect(textOf(view!)).toContain("回答已完成");
-    expect(view!.container.querySelector('button[title="发送 (Enter)"]')).not.toBeNull();
+    expect(view!.container.querySelector('button[title="发送（Enter）"]')).not.toBeNull();
     await send("Third round");
     expect(mocks.chat).toHaveBeenLastCalledWith(
       expect.objectContaining({ conversationId: undefined }),
@@ -899,7 +899,7 @@ describe("AiSidebar conversation stream UX", () => {
     expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
     expect(textOf(view!)).not.toContain("需要你确认");
     expect(textOf(view!)).toContain("执行命令 · 已在其他地方处理");
-    expect(view!.container.querySelector('button[title="发送 (Enter)"]')).toBeNull();
+    expect(view!.container.querySelector('button[title="发送（Enter）"]')).toBeNull();
   });
 
   it("keeps the card when a confirmation fails but the server still has it pending", async () => {

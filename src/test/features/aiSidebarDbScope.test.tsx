@@ -113,7 +113,7 @@ async function send(text: string): Promise<void> {
   const input = view?.container.querySelector("textarea");
   if (!input) throw new Error("message input not found");
   setInputValue(input, text);
-  click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
+  click(view!.container.querySelector('button[title="发送（Enter）"]')!);
   await flush();
 }
 

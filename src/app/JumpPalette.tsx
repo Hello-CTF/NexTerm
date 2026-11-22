@@ -665,7 +665,7 @@ export function JumpPalette({
       return;
     }
     if (row.kind === "session" || row.kind === "asset") {
-      st.pushToast("info", t("只能把当前工作区的会话或同一主机拆到右侧，已直接打开"));
+      st.pushToast("info", t("只能将当前工作区的终端或同一主机分屏到右侧，已直接打开"));
     }
     activate(row);
   };

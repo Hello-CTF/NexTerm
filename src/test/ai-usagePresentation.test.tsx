@@ -235,7 +235,7 @@ describe("UsageRing details", () => {
     );
     const text = view.container.textContent ?? "";
     expect(text).toContain("对话请求 输入 120 · 输出 25 tokens");
-    expect(text).toContain("摘要 输入 120 · 输出 21 tokens");
+    expect(text).toContain("摘要：输入 120 · 输出 21 tokens");
     expect(text).not.toContain("价格");
     expect(text).not.toContain("¥");
     expect(text).not.toContain("$");

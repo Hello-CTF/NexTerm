@@ -91,7 +91,7 @@ async function sendAndEmit(events: Record<string, unknown>[]): Promise<void> {
   if (!input) throw new Error("message input not found");
   setInputValue(input, "继续");
   const send = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
-    (b) => b.getAttribute("title") === "发送 (Enter)",
+    (b) => b.getAttribute("title") === "发送（Enter）",
   );
   click(send as HTMLButtonElement);
   await flush();
@@ -464,7 +464,7 @@ describe("AiSidebar permission request dialogs", () => {
       )!,
     );
     setInputValue(textarea, "重试快照");
-    click(mounted!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(mounted!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
     act(() => {
       mocks.channels[0].onEvent({ type: "error", message: "Network timeout", retryable: true });
@@ -506,7 +506,7 @@ describe("AiSidebar permission request dialogs", () => {
     click(planToggleAgain!);
     const input = mounted!.container.querySelector<HTMLTextAreaElement>("textarea[aria-label='消息输入']")!;
     setInputValue(input, "Continue");
-    click(mounted!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(mounted!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
     act(() => {
       mocks.channels.at(-1)!.onEvent({ type: "planSubmitted" });
@@ -562,7 +562,7 @@ describe("AiSidebar permission request dialogs", () => {
       )!,
     );
     setInputValue(textarea(), "Inspect these two");
-    click(mounted!.container.querySelector('button[title="发送 (Enter)"]')!);
+    click(mounted!.container.querySelector('button[title="发送（Enter）"]')!);
     await flush();
 
     const call = mocks.chat.mock.calls[0][0] as Record<string, unknown>;

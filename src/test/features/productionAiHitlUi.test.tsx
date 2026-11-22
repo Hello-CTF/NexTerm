@@ -116,7 +116,7 @@ async function sendAndEmit(events: Record<string, unknown>[]): Promise<void> {
   if (!input) throw new Error("message input not found");
   setInputValue(input, "继续");
   const send = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
-    (b) => b.getAttribute("title") === "发送 (Enter)",
+    (b) => b.getAttribute("title") === "发送（Enter）",
   );
   click(send as HTMLButtonElement);
   await flush();

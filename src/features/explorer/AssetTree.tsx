@@ -172,8 +172,8 @@ const KIND_LABEL: Record<string, string> = {
   postgres: "PostgreSQL",
   redis: "Redis",
   docker: tr("Docker 主机"),
-  "docker-context": tr("Docker context（仅清单）"),
-  kubernetes: tr("Kubernetes（仅清单）"),
+  "docker-context": tr("Docker context（仅记录，不可连接）"),
+  kubernetes: tr("Kubernetes（仅记录，不可连接）"),
 };
 
 
@@ -1001,7 +1001,7 @@ export function AssetTree() {
           },
           {
             kind: "item",
-            label: tr("同步外部主机"),
+            label: tr("从外部来源同步主机"),
             icon: <IconGlobe size={13} />,
             hint: "SSH、Docker、Kubernetes",
             onSelect: () => setInventoryOpen(true),
@@ -1263,7 +1263,7 @@ export function AssetTree() {
           type="button"
           className="nx-btn nx-btn-sm nx-btn-primary"
           aria-haspopup="menu"
-          title={tr("新建资产、分组，或导入已有主机")}
+          title={tr("新建资产或分组，或导入已有配置")}
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
             setHeaderMenu({ kind: "new", x: r.left, y: r.bottom });
@@ -1362,7 +1362,7 @@ export function AssetTree() {
                 {query
                   ? tr("没有匹配的资产")
                   : activeProject !== ALL_PROJECTS
-                    ? tr("当前项目下没有可见的资产")
+                    ? tr("当前项目没有可显示的资产")
                     : (assets.data?.length ?? 0) > 0
                       ? tr("全部资产已隐藏。在「视图」菜单中选择「显示已隐藏的资产」查看")
                       : tr("暂无资产。选择上方的「新建」添加资产")}
@@ -2114,7 +2114,7 @@ function GroupNode({
         <div>
           {assets.map(renderGroupAsset)}
           {assets.length === 0 && children.length === 0 && (
-            <div className="px-2 py-1.5 text-[11px] text-neutral-500">{tr("分组为空。可将资产拖入，或选择 + 新建资产。")}</div>
+            <div className="px-2 py-1.5 text-[11px] text-neutral-500">{tr("分组为空。可拖入资产，或选择「新建资产」。")}</div>
           )}
         </div>
       )}{children.map(renderChildGroup)}</div>}
@@ -3271,7 +3271,7 @@ export function AssetEditor({
             <div className="nx-form-row">
               <span className="nx-label">{tr("同步来源")}</span>
               <div className="rounded-md border border-neutral-800/70 bg-neutral-950/40 px-3 py-2 text-[12px] text-neutral-400">
-                <div className="break-all">{initial?.host || inventoryTargetText(initial?.options) || tr("仅清单记录")}</div>
+                <div className="break-all">{initial?.host || inventoryTargetText(initial?.options) || tr("仅记录，不可连接")}</div>
                 <div className="nx-hint mt-1">{tr("此类型仅作清单展示，暂不能打开终端；连接信息随同步来源更新。")}</div>
               </div>
             </div>
@@ -3296,7 +3296,7 @@ export function AssetEditor({
                 />
               </div>
               <div className="nx-hint mb-3">
-                {tr("↳ 只对新开的终端生效，已打开的标签不变。本机资产双击即连，不需要凭据。")}
+                {tr("↳ 只对新开的终端生效，已打开的标签页不变。本机资产双击即连，不需要凭据。")}
               </div>
             </>
           )}
@@ -3469,7 +3469,7 @@ export function AssetEditor({
                     value={viaAssetId}
                     onChange={setViaAssetId}
                     options={[
-                      { value: "", label: tr("（直连，不通过SSH）") },
+                      { value: "", label: tr("（直连，不经过 SSH）") },
                       ...(viaAssetId && !viaCandidates.some((a) => a.id === viaAssetId)
                         ? [{ value: viaAssetId, label: tr("当前配置的 SSH 资产（不在可选列表）") }]
                         : []),
