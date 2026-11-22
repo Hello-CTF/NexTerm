@@ -5,6 +5,7 @@ import type { FileEntryDto } from "../../ipc/types";
 import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
 import {
   ask,
+  askChoice,
   discardStaged,
   pickLocalFile,
   pickDownloadTarget,
@@ -1314,6 +1315,21 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       showTerminal(target.id);
       pushToast("info", t("终端里有命令正在运行，未切换目录；请等命令结束后再试"), openNew);
       return;
+    }
+    // The busy check above relies on shell integration. A remote terminal whose state is unknown may be running a
+    // program such as tail -f that would read the command as input, so the user decides.
+    if (sessionKind !== "local" && (!awareness || awareness.state === "unknown")) {
+      showTerminal(target.id);
+      const choice = await askChoice(t("无法确认当前终端是否空闲：正在运行的程序（如 tail -f）会把切换目录的命令当作输入。"), {
+        title: t("在当前终端打开"),
+        level: "warning",
+        choices: [
+          { key: "current", label: t("在当前终端打开") },
+          { key: "new", label: t("在新终端打开"), primary: true },
+        ],
+      });
+      if (choice === "new") openTerminalAt(dir);
+      if (choice !== "current") return;
     }
     const { command, failure } = directoryCommandFor(
       dir,

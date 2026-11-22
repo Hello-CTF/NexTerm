@@ -6,6 +6,7 @@ import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, 
 
 const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
+  askChoice: vi.fn(),
   promptText: vi.fn(),
   pickLocalFile: vi.fn(),
   pickSavePath: vi.fn(),
@@ -39,6 +40,7 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
   return {
     ...actual,
     ask: mocks.ask,
+    askChoice: mocks.askChoice,
     promptText: mocks.promptText,
     pickLocalFile: mocks.pickLocalFile,
     pickSavePath: mocks.pickSavePath,
@@ -267,6 +269,10 @@ beforeEach(() => {
   document.body.replaceChildren();
   window.localStorage.clear();
   resetCwdFollowForTest();
+  // The backend reports the terminals idle, so writing into the current terminal needs no confirmation.
+  const idle = { state: "idle" as const, seen: true, notable: false, version: 1 };
+  useAwarenessStore.setState({ byTabId: new Map([["k1", idle], ["k2", idle]]) });
+  mocks.askChoice.mockResolvedValue(null);
   mocks.roots.mockResolvedValue({
     pathStyle: "unknown",
     roots: [],
@@ -1012,5 +1018,21 @@ describe("FileTree open in the current terminal", () => {
     });
     await openCurrent();
     await waitForRendered(() => expect(written()).toEqual(["k1:cd '/srv/app'\n"]));
+  });
+
+  it.each([
+    { answer: "current", writes: ["k1:cd '/srv/app'\n"], opened: 0 },
+    { answer: "new", writes: [], opened: 1 },
+    { answer: null, writes: [], opened: 0 },
+  ])("lets the user decide when a remote terminal's state is unknown: $answer", async ({ answer, writes, opened }) => {
+    seedTwoPanes("p1");
+    useAwarenessStore.setState({ byTabId: new Map() });
+    mocks.askChoice.mockResolvedValue(answer);
+    await openCurrent();
+    await flush();
+    expect(mocks.askChoice).toHaveBeenCalledTimes(1);
+    expect(written()).toEqual(writes);
+    const terminals = useUi.getState().workspaces[0]?.panes.flatMap((pane) => pane.tabs).filter((tab) => tab.kind === "terminal");
+    expect(terminals).toHaveLength(2 + opened);
   });
 });
