@@ -12,7 +12,7 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 import type { UpdateReleaseChannel } from "../../ipc/types";
-import { RESTART_NOTE } from "../../app/UpdateBanner";
+import { RESTART_NOTE } from "../../app/updateText";
 import { UpdateLink } from "../../app/UpdateLink";
 import {
   effectiveReleaseChannel,
