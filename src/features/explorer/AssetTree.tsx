@@ -1406,8 +1406,7 @@ export function AssetTree() {
           kind="asset"
           initial={editingAsset}
           onClose={() => setEditingAsset(null)}
-          onSaved={(saved) => {
-            noticeLiveAssetEdit(editingAsset, saved);
+          onSaved={() => {
             setEditingAsset(null);
             void qc.invalidateQueries({ queryKey: ["assets"] });
             void qc.invalidateQueries({ queryKey: ["asset-search"] });
@@ -2959,6 +2958,9 @@ export function AssetEditor({
         ? await assetApi.update({ id: initial.id, ...fields })
         : await assetApi.create(fields);
       if (stale()) return;
+      // Every editor entry point (asset tree, jump palette, terminal pane) tells about a live connection the edit
+      // does not reach yet.
+      if (initial) noticeLiveAssetEdit(initial, saved);
       onSaved(saved);
     } catch (e) {
       if (stale()) return;

@@ -373,15 +373,51 @@ export function noticeLiveAssetEdit(before: EditedAsset, after: EditedAsset | un
       workspace.assetId === after.id &&
       st.sessions.some((session) => session.id === workspace.sessionId && LIVE_SESSION_STATUSES.has(session.status)),
   );
-  if (!live) return;
+  if (live) {
+    st.pushToast("info", t("已保存，当前连接仍使用旧设置"), {
+      label: t("重新连接"),
+      onSelect: () => {
+        void (async () => {
+          if (await confirmSuspectReconnect(live.id)) await reconnectWorkspaceConnection(live.id);
+        })();
+      },
+    });
+    return;
+  }
+  // An open remote desktop read the asset when its tab opened; reopening the tab reads the saved settings.
+  const desktop = st.workspaces.find(
+    (workspace) =>
+      workspace.kind === "remote" &&
+      workspace.assetId === after.id &&
+      workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "remote")),
+  );
+  if (!desktop) return;
   st.pushToast("info", t("已保存，当前连接仍使用旧设置"), {
     label: t("重新连接"),
-    onSelect: () => {
-      void (async () => {
-        if (await confirmSuspectReconnect(live.id)) await reconnectWorkspaceConnection(live.id);
-      })();
-    },
+    onSelect: () => void reopenRemoteDesktopWithSavedSettings(desktop.id),
   });
+}
+
+async function reopenRemoteDesktopWithSavedSettings(workspaceId: string): Promise<void> {
+  const workspace = useUi.getState().workspaces.find((item) => item.id === workspaceId);
+  const pane = workspace?.panes.find((item) => item.tabs.some((tab) => tab.kind === "remote"));
+  const tab = pane?.tabs.find((item) => item.kind === "remote");
+  if (!workspace || !pane || !tab) return;
+  let outcome: ConnectOutcome;
+  try {
+    await useUi.getState().closeTab(tab.id);
+    // Closing the last tab may close the workspace; then a fresh connection opens the desktop instead.
+    outcome = useUi.getState().workspaces.some((item) => item.id === workspaceId)
+      ? await reopenRemoteDesktopTab(workspaceId, pane.id)
+      : workspace.assetId
+        ? await connectAsset(await assetApi.get(workspace.assetId))
+        : { ok: false, error: t("远程桌面目标已丢失，请从资产树重新连接") };
+  } catch (error) {
+    outcome = { ok: false, error: describeError(error) };
+  }
+  if (!outcome.ok && !outcome.canceled) {
+    useUi.getState().pushToast("error", t("重新连接失败：{value}", { value: outcome.error ?? t("未知错误") }));
+  }
 }
 
 async function runConnectAsset(
