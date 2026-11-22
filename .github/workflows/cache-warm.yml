@@ -1,31 +1,39 @@
 name: Cache warm
 
-# Pull request caches are scoped to their own ref, and CI does not run on
-# master, so without this workflow every new pull request starts cold. This
-# workflow runs no quality gates; it only fills the master-scoped caches that
-# every pull request can restore, using the same composite actions and keys as
-# CI. It reruns when the dependency inputs change and weekly, which also picks
-# up new runner images.
+# Pull request and release-tag caches are scoped to their own ref, so the
+# composite actions save only on master and CI (which never runs on master)
+# only restores. This workflow is the one writer: it runs no quality gates
+# (failing warm steps continue, so the job still saves) and fills the
+# master-scoped caches that every pull request and tag can restore, using the
+# same composite actions, keys and commands as CI. Build caches are saved per commit, so it reruns when
+# Go sources or build inputs land on master; the daily run picks up new runner
+# images and Ubuntu package updates for the apt cache.
 on:
   push:
     branches: [master]
     paths:
+      - "**/*.go"
       - go.mod
       - go.sum
       - package.json
       - pnpm-lock.yaml
+      - scripts/build.mjs
+      - scripts/lib/build-*.mjs
+      - scripts/ai-privacy-runtime.mjs
       - .github/actions/**
       - .github/workflows/cache-warm.yml
   schedule:
-    - cron: "17 3 * * 1"
+    - cron: "17 3 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A cancelled job never reaches its post-job cache save, so a newer push waits
+# for the running warm instead of cancelling it.
 concurrency:
   group: cache-warm
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   GOTOOLCHAIN: go1.27.3
@@ -64,6 +72,7 @@ jobs:
       # -exec=true builds, vets and links every test binary but runs none of them.
       - name: Compile every test binary without running it
         if: matrix.arch == 'amd64'
+        continue-on-error: true
         run: go test -count=1 -exec=true ./...
       - name: Warm the Wails CLI cache
         if: matrix.arch == 'amd64'
@@ -71,24 +80,157 @@ jobs:
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         if: matrix.arch == 'amd64'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: matrix.arch == 'amd64'
         with:
           node-version: 24.22.0
-          cache: pnpm
+          cache: ${{ matrix.arch == 'amd64' && 'pnpm' || '' }}
       - name: Warm the pnpm store
         if: matrix.arch == 'amd64'
         run: pnpm install --frozen-lockfile
+      # A failed download must not fail the job: the build cache is saved only
+      # when the job succeeds.
+      - name: Resolve the ONNX Runtime version CI resolves
+        id: toolchain
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEXTERM_ORT_VERSION: ${{ vars.NEXTERM_ORT_VERSION }}
+        run: node scripts/resolve-toolchain.mjs >> "$GITHUB_OUTPUT"
+      - name: Warm the ONNX Runtime download cache
+        if: steps.toolchain.outputs.ort_version != ''
+        uses: ./.github/actions/ort-cache
+        with:
+          version: ${{ steps.toolchain.outputs.ort_version }}
+          target: linux-${{ matrix.arch }}
+      - name: Download the ONNX Runtime the native linux/${{ matrix.arch }} job stages
+        if: steps.toolchain.outputs.ort_version != ''
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEXTERM_ORT_VERSION: ${{ steps.toolchain.outputs.ort_version }}
+        run: node scripts/ai-privacy-runtime.mjs --os=linux --arch=${{ matrix.arch }} --output="$RUNNER_TEMP/ort-stage"
 
-  modules:
-    name: ${{ matrix.os }} Go modules and Wails CLI
+  # The Go/Wails quality gates job has its own build cache profile. Its Go
+  # compilation is go vet (host and Windows) plus the go run tools of
+  # check:ci-quality; the formatting, lockfile and script gates are not run.
+  quality:
+    name: Linux quality build cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/linux-gui-deps
+      - uses: ./.github/actions/go-toolchain
+        with:
+          build-cache: quality
+      - name: Compile what the host vet compiles
+        continue-on-error: true
+        run: go vet ./...
+      - name: Compile what the Windows vet compiles
+        continue-on-error: true
+        env:
+          GOOS: windows
+        run: go vet ./...
+      - name: Compile the go run tools of the quality gates
+        continue-on-error: true
+        run: go build ./scripts/...
+
+  # Fills the "native" build cache profile of the smoke-target desktop jobs that
+  # compile every test package (the slowest PR jobs). The Linux native profile
+  # is shared by the linux/amd64 job and three cross-compiled helper jobs on the
+  # same runner, so it is left cold rather than warmed with a partial set.
+  native:
+    name: ${{ matrix.os }}/${{ matrix.arch }} native build cache
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: macos-15
-            os: macOS
+            os: darwin
+            arch: arm64
           - runner: windows-latest
-            os: Windows
+            os: windows
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+      - uses: ./.github/actions/go-toolchain
+        with:
+          build-cache: native
+      - name: Compile native platform tests without running TestMain
+        continue-on-error: true
+        run: go run -mod=readonly ./scripts/compile-only ./...
+      # scripts/build.mjs needs the verified frontend for the desktop binary, but
+      # only the main package embeds it, so a placeholder lets every other
+      # package compile with the flags and environment of
+      # scripts/lib/build-binary.mjs and scripts/lib/build-targets.mjs.
+      - name: Compile the production desktop dependencies
+        continue-on-error: true
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: ${{ matrix.os == 'darwin' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          if [ "$GOOS" = darwin ]; then
+            export MACOSX_DEPLOYMENT_TARGET=12.0 CGO_CFLAGS=-mmacosx-version-min=12.0 CGO_LDFLAGS=-mmacosx-version-min=12.0
+          fi
+          mkdir cmd/nexterm-desktop/dist
+          echo placeholder > cmd/nexterm-desktop/dist/index.html
+          trap 'rm -rf cmd/nexterm-desktop/dist' EXIT
+          go build -mod=readonly -trimpath -buildvcs=false -tags production -o "$RUNNER_TEMP/nexterm-desktop-warm" ./cmd/nexterm-desktop
+      - name: Build the production helper and agent
+        continue-on-error: true
+        run: |
+          node scripts/build.mjs helper --release --os=${{ matrix.os }} --arch=${{ matrix.arch }}
+          node scripts/build.mjs agent --release --os=${{ matrix.os }} --arch=${{ matrix.arch }}
+      # A failed download must not fail the job: the build cache is saved only
+      # when the job succeeds.
+      - name: Resolve the ONNX Runtime version CI resolves
+        id: toolchain
+        continue-on-error: true
+        env:
+          NEXTERM_ORT_VERSION: ${{ vars.NEXTERM_ORT_VERSION }}
+        run: node scripts/resolve-toolchain.mjs >> "$GITHUB_OUTPUT"
+      - name: Warm the ONNX Runtime download cache
+        if: steps.toolchain.outputs.ort_version != ''
+        uses: ./.github/actions/ort-cache
+        with:
+          version: ${{ steps.toolchain.outputs.ort_version }}
+          target: ${{ matrix.os }}-${{ matrix.arch }}
+      - name: Download the ONNX Runtime the native desktop job stages
+        if: steps.toolchain.outputs.ort_version != ''
+        continue-on-error: true
+        env:
+          NEXTERM_ORT_VERSION: ${{ steps.toolchain.outputs.ort_version }}
+        run: node scripts/ai-privacy-runtime.mjs --os=${{ matrix.os }} --arch=${{ matrix.arch }} --output="$RUNNER_TEMP/ort-stage"
+
+  # windows-11-arm keeps its temp directory on C: and windows-latest on D:; the
+  # cache version includes the path, so they cannot share a module cache entry.
+  modules:
+    name: ${{ matrix.name }} Go modules and Wails CLI
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            name: macOS
+          - runner: windows-latest
+            name: Windows x64
+          - runner: windows-11-arm
+            name: Windows arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     defaults:
@@ -103,3 +245,54 @@ jobs:
         run: go mod download
       - name: Warm the Wails CLI cache
         uses: ./.github/actions/wails-cli
+
+  # Every warm run saves new build cache and apt entries, and cache keys are
+  # immutable, so older master entries of the same profile would only fill the
+  # 10 GB repository quota. Keep the newest master entry of each.
+  prune:
+    name: Prune superseded master caches
+    needs: [linux, quality, native, modules]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Delete all but the newest master entry of each cache profile
+        run: |
+          set -euo pipefail
+          gh cache list --ref refs/heads/master --limit 1000 --json id,key,version,createdAt > "$RUNNER_TEMP/caches.json"
+          node - "$RUNNER_TEMP/caches.json" > "$RUNNER_TEMP/stale.txt" <<'EOF'
+          const fs = require("node:fs");
+          // Each pattern captures the part of the key that names one profile. The cache
+          // version (paths and compression) separates runners that share a key but
+          // cannot restore each other's entry, such as windows-latest and windows-11-arm.
+          const profiles = [
+            /^(go-build-.+-go[^-]+)-[0-9a-f]{64}(?:-[0-9a-f]{40})?$/,
+            /^(go-mod-[^-]+)-[0-9a-f]{64}$/,
+            /^(apt-.+-[0-9a-f]{16})-[^-]+$/,
+          ];
+          const newest = new Map();
+          const stale = [];
+          const caches = JSON.parse(fs.readFileSync(process.argv[2], "utf8"))
+            .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+          for (const cache of caches) {
+            const match = profiles.map((pattern) => pattern.exec(cache.key)).find(Boolean);
+            if (!match) continue;
+            const profile = `${match[1]} ${cache.version}`;
+            if (newest.has(profile)) stale.push(`${cache.id} ${cache.key}`);
+            else newest.set(profile, cache.key);
+          }
+          process.stdout.write(stale.map((line) => `${line}\n`).join(""));
+          EOF
+          if [ ! -s "$RUNNER_TEMP/stale.txt" ]; then
+            echo "No superseded master caches"
+            exit 0
+          fi
+          while read -r id key; do
+            echo "Deleting $key"
+            gh cache delete "$id"
+          done < "$RUNNER_TEMP/stale.txt"

@@ -6,7 +6,11 @@ description: >-
   keyed by OS, architecture and a named profile, so jobs that compile different
   package sets or tags do not overwrite each other's entry. Both paths are set
   explicitly through GOMODCACHE and GOCACHE so the cached paths always match
-  what go uses.
+  what go uses. Only master runs (the cache-warm workflow) save: caches saved
+  from a pull request or tag ref cannot be restored by any other ref and only
+  evict the master entries from the repository quota. A saved build cache is
+  keyed by commit as well, because a cache key is immutable and a go.sum-only
+  key would never pick up later source changes.
 inputs:
   go-version:
     description: Go toolchain version
@@ -17,7 +21,9 @@ inputs:
     required: false
     default: ""
   save-build-cache:
-    description: Save the build cache profile on a miss ("false" only restores it)
+    description: >-
+      Save the module cache and build cache profile on a miss ("false" only
+      restores them); saving also requires the refs/heads/master ref
     required: false
     default: "true"
 runs:
@@ -35,23 +41,36 @@ runs:
       run: |
         echo "GOMODCACHE=$MOD_DIR" >> "$GITHUB_ENV"
         echo "GOCACHE=$BUILD_DIR" >> "$GITHUB_ENV"
-    - name: Restore the Go module cache
+    - name: Restore and save the Go module cache
+      if: inputs.save-build-cache != 'false' && github.ref == 'refs/heads/master'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/go-mod
         key: go-mod-${{ runner.os }}-${{ hashFiles('go.sum') }}
         restore-keys: go-mod-${{ runner.os }}-
+    - name: Restore the Go module cache
+      if: inputs.save-build-cache == 'false' || github.ref != 'refs/heads/master'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/go-mod
+        key: go-mod-${{ runner.os }}-${{ hashFiles('go.sum') }}
+        restore-keys: go-mod-${{ runner.os }}-
+    # The newest entry for this go.sum wins, then the newest for any go.sum.
     - name: Restore and save the Go build cache profile
-      if: inputs.build-cache != '' && inputs.save-build-cache != 'false'
+      if: inputs.build-cache != '' && inputs.save-build-cache != 'false' && github.ref == 'refs/heads/master'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/go-build
-        key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-${{ hashFiles('go.sum') }}
-        restore-keys: go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-
+        key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+        restore-keys: |
+          go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-${{ hashFiles('go.sum') }}-
+          go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-
     - name: Restore the Go build cache profile
-      if: inputs.build-cache != '' && inputs.save-build-cache == 'false'
+      if: inputs.build-cache != '' && (inputs.save-build-cache == 'false' || github.ref != 'refs/heads/master')
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/go-build
-        key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-${{ hashFiles('go.sum') }}
-        restore-keys: go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-
+        key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+        restore-keys: |
+          go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-${{ hashFiles('go.sum') }}-
+          go-build-${{ runner.os }}-${{ runner.arch }}-${{ inputs.build-cache }}-go${{ inputs.go-version }}-

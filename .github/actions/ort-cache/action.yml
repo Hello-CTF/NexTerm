@@ -1,9 +1,10 @@
 name: ONNX Runtime download cache
 description: >-
-  Points NEXTERM_ORT_CACHE at a fixed directory and restores the ONNX Runtime
-  archives the privacy runtime tool downloaded there for this version, runner
-  and staging target. The privacy runtime tool owns the directory layout and
-  verifies archives against their published digests.
+  Restores the ONNX Runtime archives that scripts/ai-privacy-runtime.mjs
+  downloaded into .tmp/ai-privacy-runtime/<version> for this runner and staging
+  target. The privacy runtime tool owns that layout and reuses an archive only
+  when it matches the published digest. Only master runs (the cache-warm
+  workflow) save.
 inputs:
   version:
     description: Resolved ONNX Runtime version (needs.version.outputs.ort-version)
@@ -14,14 +15,19 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Export the ONNX Runtime download cache directory
-      shell: bash
-      env:
-        ORT_CACHE: ${{ runner.temp }}/nexterm-ort
-      run: echo "NEXTERM_ORT_CACHE=$ORT_CACHE" >> "$GITHUB_ENV"
-    - name: Restore ONNX Runtime downloads
+    # Archive names keep their dots while the tool's extraction directories
+    # replace them with hyphens, so *.* caches the downloads alone.
+    - name: Restore and save ONNX Runtime downloads
+      if: github.ref == 'refs/heads/master'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ runner.temp }}/nexterm-ort
+        path: .tmp/ai-privacy-runtime/${{ inputs.version }}/*.*
+        key: nexterm-ort-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}
+        restore-keys: nexterm-ort-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-
+    - name: Restore ONNX Runtime downloads
+      if: github.ref != 'refs/heads/master'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .tmp/ai-privacy-runtime/${{ inputs.version }}/*.*
         key: nexterm-ort-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}
         restore-keys: nexterm-ort-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-

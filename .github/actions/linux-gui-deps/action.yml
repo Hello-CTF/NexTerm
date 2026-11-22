@@ -2,9 +2,11 @@ name: Linux GUI build dependencies
 description: >-
   Installs the GTK 4 and WebKitGTK 6.0 development packages that Wails cgo
   links, plus any extra packages a job needs, on a hosted Ubuntu runner. The
-  downloaded .deb files are cached per runner image, architecture and package
-  list, so a repeated run only refreshes the package indexes and installs from
-  the cache.
+  downloaded .deb files are cached per image OS, architecture and package list,
+  so a run only refreshes the package indexes and installs from the cache. Only
+  master runs (the cache-warm workflow) save; the saved key names the exact .deb
+  set, so a warm run saves a new entry whenever the archive or the runner image
+  moved a package to a new version, and every other run restores the newest one.
 inputs:
   packages:
     description: Additional space-separated apt packages a single job needs
@@ -25,16 +27,17 @@ runs:
         list_hash="$(printf '%s' "$packages" | sha256sum | cut -c1-16)"
         echo "packages=$packages" >> "$GITHUB_OUTPUT"
         echo "prefix=apt-${ImageOS:-unknown}-${RUNNER_ARCH}-${list_hash}-" >> "$GITHUB_OUTPUT"
-        echo "image=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
-    # A new runner image misses the exact key; the prefix restores the previous
-    # image's .debs and apt downloads only the packages whose versions changed.
+    # The prefix restores the newest saved .deb set; apt downloads only the
+    # packages whose versions changed since then.
     - name: Restore downloaded packages
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/apt-archives
-        key: ${{ steps.plan.outputs.prefix }}${{ steps.plan.outputs.image }}
+        key: ${{ steps.plan.outputs.prefix }}restore
         restore-keys: ${{ steps.plan.outputs.prefix }}
     - name: Install packages
+      id: install
       shell: bash
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -50,4 +53,12 @@ runs:
         sudo apt-get install -y --no-install-recommends -o Dir::Cache::Archives="$archives" "${packages[@]}"
         sudo apt-get autoclean -o Dir::Cache::Archives="$archives"
         sudo chown -R "$(id -u):$(id -g)" "$archives"
+        debs_hash="$(find "$archives" -maxdepth 1 -name '*.deb' -printf '%f\n' | sort | sha256sum | cut -c1-16)"
+        echo "debs=$debs_hash" >> "$GITHUB_OUTPUT"
         echo "gtk4 $(pkg-config --modversion gtk4), webkitgtk-6.0 $(pkg-config --modversion webkitgtk-6.0), $(getconf GNU_LIBC_VERSION)"
+    - name: Save downloaded packages
+      if: github.ref == 'refs/heads/master' && steps.restore.outputs.cache-matched-key != format('{0}{1}', steps.plan.outputs.prefix, steps.install.outputs.debs)
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/apt-archives
+        key: ${{ steps.plan.outputs.prefix }}${{ steps.install.outputs.debs }}
