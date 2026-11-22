@@ -135,6 +135,13 @@ export function pruneBroadcastToWorkspaces(
   };
 }
 
+// neighbourAfterRemoval picks what takes over from the item that sat at removedIndex before it was removed from
+// remaining: its right neighbour, or its left one when it was last (the browser and editor convention).
+export function neighbourAfterRemoval<T>(remaining: readonly T[], removedIndex: number): T | undefined {
+  if (removedIndex < 0) return remaining[remaining.length - 1];
+  return remaining[removedIndex] ?? remaining[removedIndex - 1] ?? remaining[remaining.length - 1];
+}
+
 export function nextTabId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${tabSeq++}`;
 }

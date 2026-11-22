@@ -16,7 +16,7 @@ import {
   saveTerminalPrefs,
 } from "./persistence";
 import { detailForText } from "../../ui/errorText";
-import type { UiGet, UiSet, UiState } from "./types";
+import type { ToastItem, UiGet, UiSet, UiState } from "./types";
 
 let toastSeq = 1;
 
@@ -33,6 +33,17 @@ function clearToastTimer(id: number): void {
   const timer = toastTimers.get(id);
   if (timer?.handle !== undefined) window.clearTimeout(timer.handle);
   toastTimers.delete(id);
+}
+
+// Keeps at most TOAST_LIMIT toasts by dropping the oldest timed ones; persistent toasts leave only when dismissed.
+function limitToasts(toasts: ToastItem[]): ToastItem[] {
+  let excess = toasts.length - TOAST_LIMIT;
+  if (excess <= 0) return toasts;
+  return toasts.filter((toast) => {
+    if (excess <= 0 || toast.persistent) return true;
+    excess--;
+    return false;
+  });
 }
 
 function startToastTimer(id: number, ms: number, onExpire: () => void): void {
@@ -107,16 +118,20 @@ export function createUiSlice(set: UiSet, get: UiGet) {
       set({ terminalOsc52: v });
       saveTerminalPrefs({ osc52: v });
     },
-    pushToast: (kind, rawText, action) => {
+    pushToast: (kind, rawText, action, options) => {
       // Toasts often carry a backend message as is; it shows in the interface language when a catalog has it.
       const text = translateMessage(rawText);
       const existing = get().toasts.find((t) => t.kind === kind && t.text === text);
       if (existing) get().dismissToast(existing.id);
       const id = toastSeq++;
+      const detail = kind === "error" ? detailForText(text) ?? undefined : undefined;
+      if (options?.persistent) {
+        set((st) => ({ toasts: limitToasts([...st.toasts, { id, kind, text, action, detail, persistent: true }]) }));
+        return;
+      }
       // An error or a toast with a button needs time to read or act on; a warning sits in between.
       const duration = kind === "error" || action ? 8000 : kind === "warning" ? 6000 : 3500;
-      const detail = kind === "error" ? detailForText(text) ?? undefined : undefined;
-      set((st) => ({ toasts: [...st.toasts, { id, kind, text, action, detail, duration, remaining: duration }].slice(-TOAST_LIMIT) }));
+      set((st) => ({ toasts: limitToasts([...st.toasts, { id, kind, text, action, detail, duration, remaining: duration }]) }));
       for (const key of [...toastTimers.keys()]) {
         if (!get().toasts.some((t) => t.id === key)) clearToastTimer(key);
       }

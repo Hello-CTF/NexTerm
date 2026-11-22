@@ -87,19 +87,22 @@ describe("partial failures during batch close", () => {
     expect(texts).toContain("1 个标签页未能关闭，已保留并在标签页上标出原因");
   });
 
-  it("does not count canceled confirmations as failures or include them in the summary", async () => {
+  it("asks once for the whole batch, and Cancel closes nothing and reports no failure", async () => {
+    const audit: AppTab = { id: "a1", kind: "audit", title: "Audit", closable: true };
     useUi.setState({
-      workspaces: [ws([{ id: "p", tabs: [terminal("t1"), terminal("t2")], activeTabId: "t1" }])],
+      workspaces: [ws([{ id: "p", tabs: [terminal("t1"), terminal("t2"), audit], activeTabId: "t1" }])],
       activeWorkspaceId: "ws",
       sessions: [{ ...sessionInfo(), kind: "winrm" }],
     });
-    mocks.ask.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    mocks.ask.mockResolvedValueOnce(false);
     mocks.closeTab.mockResolvedValue(undefined);
 
-    await requestCloseTabs(["t1", "t2"]);
+    await requestCloseTabs(["t1", "t2", "a1"]);
 
-    expect(tabById("t1")).toBeUndefined();
-    expect(tabById("t2")?.closeError).toBeUndefined();
+    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.ask.mock.calls[0][0]).toContain("2 个WinRM 非交互终端不支持转入后台，将结束进程");
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(["t1", "t2", "a1"].map((id) => tabById(id)?.id)).toEqual(["t1", "t2", "a1"]);
     expect(useUi.getState().toasts.map((t) => t.text)).not.toContain(
       "1 个标签页未能关闭，已保留并在标签页上标出原因",
     );
@@ -111,12 +114,12 @@ describe("partial failures during batch close", () => {
       activeWorkspaceId: "ws",
       sessions: [{ ...sessionInfo(), kind: "winrm" }],
     });
-    mocks.ask.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    mocks.ask.mockResolvedValueOnce(false);
     mocks.closeTab.mockResolvedValue(undefined);
 
     await requestCloseTabs(["t1", "t2"]);
 
-    expect(tabById("t1")).toBeUndefined();
+    expect(tabById("t1")?.id).toBe("t1");
     expect(tabById("t2")?.closeError).toBeUndefined();
     expect(useUi.getState().toasts.map((t) => t.text)).not.toContain(
       "1 个标签页未能关闭，已保留并在标签页上标出原因",
@@ -195,14 +198,13 @@ describe("a regular SSH terminal can never go to the background", () => {
   it("offers only the close action and never sends detach, even when the remembered choice is background", async () => {
     setTerminalCloseAction("detach");
     open(regular("t1"));
-    mocks.askChoice.mockResolvedValue("kill");
+    mocks.askChoiceRemember.mockResolvedValue({ key: "kill", remember: false });
     mocks.closeTab.mockResolvedValue(undefined);
 
     await requestCloseTab("t1");
 
-    const choices = (mocks.askChoice.mock.calls[0][1] as { choices: { key: string }[] }).choices;
+    const choices = (mocks.askChoiceRemember.mock.calls[0][1] as { choices: { key: string }[] }).choices;
     expect(choices.map((choice) => choice.key)).toEqual(["kill"]);
-    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill", "s");
     expect(tabById("t1")).toBeUndefined();
   });
@@ -210,12 +212,13 @@ describe("a regular SSH terminal can never go to the background", () => {
   it("treats a tab that reports itself as not retainable the same way before the durable flag arrives", async () => {
     setTerminalCloseAction("ask");
     open({ id: "t2", kind: "terminal", title: "t2", sessionId: "s", tabId: "kernel-t2", closable: true, retainable: false });
-    mocks.askChoice.mockResolvedValue("kill");
+    mocks.askChoiceRemember.mockResolvedValue({ key: "kill", remember: false });
     mocks.closeTab.mockResolvedValue(undefined);
 
     await requestCloseTab("t2");
 
-    expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
+    const choices = (mocks.askChoiceRemember.mock.calls[0][1] as { choices: { key: string }[] }).choices;
+    expect(choices.map((choice) => choice.key)).toEqual(["kill"]);
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "kill", "s");
   });
 

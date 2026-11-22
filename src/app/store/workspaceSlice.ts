@@ -11,6 +11,7 @@ import { closedTabEntryFromTab, useClosedTabs } from "../closedTabs";
 import { reorderWorkspaces } from "../workspaceOrdering";
 import { ALL_PROJECTS, reconcileActiveWorkspaceForFocus } from "../projectFocus";
 import {
+  applyPreconfirmedClose,
   collectWorkspaceClose,
   confirmWorkspaceClose,
   executeWorkspaceClose,
@@ -22,6 +23,7 @@ import {
   explicitWorkspaceMatchesTab,
   findTabLocation,
   makePane,
+  neighbourAfterRemoval,
   nextTabId,
   normalizeWorkspacePanes,
   omitAiBoard,
@@ -284,7 +286,9 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
         );
         return false;
       }
-      if (!(await confirmWorkspaceClose(closePlan, currentTarget.title, mode === "detach"))) return false;
+      const preconfirmed = typeof mode === "object" ? mode : undefined;
+      if (!(preconfirmed && applyPreconfirmedClose(closePlan, preconfirmed)) &&
+        !(await confirmWorkspaceClose(closePlan, currentTarget.title, mode === "detach"))) return false;
       if (get().workspaceRuntimeEpoch !== epoch) return false;
       for (const tab of closePlan.runningAiTabs) {
         const cancelAndConfirm = aiTabRunControls.get(tab.id);
@@ -367,9 +371,11 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
         : null;
       set({
         workspaces: nextWorkspaces,
+        // Closing the active workspace activates its right neighbour, or the left one at the end; a workspace kept
+        // open stays active.
         activeWorkspaceId:
-          latest.activeWorkspaceId === id
-            ? (nextWorkspaces[nextWorkspaces.length - 1]?.id ?? null)
+          latest.activeWorkspaceId === id && deleteWorkspace
+            ? (neighbourAfterRemoval(nextWorkspaces, latest.workspaces.findIndex((w) => w.id === id))?.id ?? null)
             : latest.activeWorkspaceId,
         ...(latest.broadcast ? { broadcast } : {}),
         ...(deleteWorkspace && latest.aiBoards[id]

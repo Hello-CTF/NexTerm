@@ -521,12 +521,12 @@ describe("telnet tabs are temporary terminals", () => {
   it("close offers only ending the terminal, never the background", async () => {
     const tab = { ...terminal(), retainable: false };
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }], "telnet");
-    mocks.askChoice.mockResolvedValueOnce("kill");
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "kill", remember: false });
 
     await requestCloseTab(tab.id);
 
-    expect(mocks.askChoice).toHaveBeenCalledTimes(1);
-    const [message, options] = mocks.askChoice.mock.calls[0];
+    expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
+    const [message, options] = mocks.askChoiceRemember.mock.calls[0];
     expect(message).toContain("临时终端");
     expect(options.choices.map((choice: { key: string }) => choice.key)).toEqual(["kill"]);
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
