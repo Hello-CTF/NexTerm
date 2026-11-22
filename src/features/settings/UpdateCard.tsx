@@ -61,7 +61,7 @@ function externalChannelNote(channel: string | undefined): string {
 
 export function UpdateCard() {
   const update = useUpdate();
-  const { status, checking, checkError, install, installedVersion, restarting, restartError } =
+  const { status, checking, checkError, install, readyVersion, restarting, restartError } =
     update;
   const verdict = updateVerdict(update);
   const badge = verdictBadge(verdict);
@@ -75,13 +75,14 @@ export function UpdateCard() {
       ? (status?.unavailableReason ? translateMessage(status.unavailableReason) : null) || envReason || t("当前环境不支持应用内安装")
       : null;
   const showInstall =
-    verdict === "available" && installAllowed && !install.active && !installedVersion;
+    verdict === "available" && installAllowed && !install.active && !readyVersion;
   const failReason = checkError || (status?.unavailableReason ? translateMessage(status.unavailableReason) : "") || t("原因未知");
   const releasePage = releasePageURL(status);
   const hasUpdate = (verdict === "available" || verdict === "unavailable") && Boolean(status?.version);
   const skipped = hasUpdate && status?.version === update.skippedVersion;
   const notes = hasUpdate ? status?.notes?.trim() ?? "" : "";
   const pendingVersion = verdict !== "external" ? status?.pendingVersion : undefined;
+  const incompleteVersion = verdict !== "external" ? status?.incompleteVersion : undefined;
   const channel = effectiveReleaseChannel(update);
   // The channel only applies where the app installs updates itself: not in server mode, not on iOS or Android.
   const showChannel = DESKTOP && verdict !== "external";
@@ -163,6 +164,11 @@ export function UpdateCard() {
           <div className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border border-neutral-800/60 p-2">{notes}</div>
         </details>
       )}
+      {incompleteVersion && (
+        <p className="mb-2 text-[12px] text-neutral-400">
+          {t("v{incompleteVersion} 没有此平台的安装包。", { incompleteVersion })}
+        </p>
+      )}
       {pendingVersion && (
         <p className="mb-2 text-[12px] text-neutral-400">
           {t("v{pendingVersion} 已发布，此平台的安装包还在上传，请稍后再检查。", { pendingVersion })}
@@ -220,10 +226,10 @@ export function UpdateCard() {
             onClick={() => void update.installUpdate()}
           >
             <IconDownload size={12} />
-            {t("下载并安装")}
+            {t("下载更新")}
           </button>
         )}
-        {hasUpdate && !skipped && !install.active && !installedVersion && status && (
+        {hasUpdate && !skipped && !install.active && !readyVersion && status && (
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm"
@@ -233,7 +239,7 @@ export function UpdateCard() {
           </button>
         )}
       </div>
-      {showInstall && <p className="nx-hint mt-2">{t("安装完成后不会自动重启，可选择立即重启或稍后。")}</p>}
+      {showInstall && <p className="nx-hint mt-2">{t("下载并校验后不会自动重启：重启时才安装，可选择立即重启并安装或稍后。")}</p>}
 
       {install.active && (
         <>
@@ -260,11 +266,11 @@ export function UpdateCard() {
         </div>
       )}
 
-      {installedVersion && (
+      {readyVersion && (
         <div className="nx-alert nx-alert-success mt-3 flex items-start gap-2">
           <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1">
-            {t("已安装 v{installedVersion}，重启应用后生效。", { installedVersion })}
+            {t("v{readyVersion} 下载完成，重启时安装。", { readyVersion })}
             <span className="mt-0.5 block text-neutral-400">{RESTART_NOTE}</span>
             {restartError && <span className="mt-0.5 block text-red-300">{t("重启失败：{restartError}。请手动退出并重新打开应用。", { restartError })}</span>}
           </span>
@@ -277,9 +283,15 @@ export function UpdateCard() {
               onClick={() => void update.restart()}
             >
               <IconRestart size={12} />
-              {restarting ? t("正在重启…") : t("立即重启")}
+              {restarting ? t("正在安装并重启…") : t("立即重启并安装")}
             </button>
           )}
+        </div>
+      )}
+      {restartError && !readyVersion && (
+        <div className="nx-alert nx-alert-danger mt-3 flex items-start gap-2">
+          <IconXCircle size={13} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 flex-1 break-words">{t("安装失败：{error}。可选择「重试」，仍失败，请前往 Releases 页面手动下载。", { error: restartError })}</span>
         </div>
       )}
     </section>

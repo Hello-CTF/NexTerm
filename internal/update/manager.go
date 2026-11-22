@@ -15,7 +15,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/idleread"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/netproxy"
-	"github.com/Hello-CTF/NexTerm/internal/platform"
 )
 
 const apiTimeout = 20 * time.Second
@@ -41,9 +40,12 @@ type Status struct {
 	// when the app cannot install it itself.
 	ReleaseURL  string `json:"releaseUrl,omitempty"`
 	DownloadURL string `json:"downloadUrl,omitempty"`
-	// PendingVersion names a newer release that is published without this platform's package or its SHA256SUMS
-	// yet (a release still uploading). It is skipped rather than reported as a failed check.
+	// PendingVersion names a newer release published within pendingWindow without this platform's package or its
+	// SHA256SUMS yet (a release still uploading). It is skipped rather than reported as a failed check.
 	PendingVersion string `json:"pendingVersion,omitempty"`
+	// IncompleteVersion names a newer release, published longer ago than pendingWindow (or at an unknown time),
+	// that has no package or SHA256SUMS for this platform. It is skipped like a pending one.
+	IncompleteVersion string `json:"incompleteVersion,omitempty"`
 	// Channel names how this platform receives updates when the app cannot install them itself (see
 	// externalChannel). It is empty where in-app updates apply, and it is not a failure.
 	Channel string `json:"channel"`
@@ -53,9 +55,11 @@ type Status struct {
 	RunningPrerelease bool           `json:"runningPrerelease"`
 }
 
-// Result reports an install or a restart. An install never restarts the app: Installed means the new version is
-// on disk and applies after Restart; only Restart sets Restarted.
+// Result reports an install or a restart. Install never touches the installed app: Ready means the package is
+// downloaded, verified and staged, and it is applied by the next Restart. Restart sets Installed once it applied a
+// staged package and Restarted once the app relaunches.
 type Result struct {
+	Ready             bool   `json:"ready"`
 	Installed         bool   `json:"installed"`
 	Restarted         bool   `json:"restarted"`
 	Version           string `json:"version"`
@@ -64,27 +68,34 @@ type Result struct {
 
 // Install states reported by State besides the progress phases.
 const (
-	StateIdle      = "idle"
+	StateIdle = "idle"
+	// StateReady: a verified package is staged and waits for Restart to apply it.
+	StateReady = "ready"
+	// StateInstalled: Restart applied the package but could not relaunch the app.
 	StateInstalled = "installed"
 	StateFailed    = "failed"
 )
 
-// InstallState is the progress of the current or last install, kept by the process so a reloaded interface can
-// pick it up. Phase is idle, a progress phase while an install runs, installed or failed. InstalledVersion stays
-// set once a version is installed and waits for a restart, even when a later attempt fails.
+// InstallState is the progress of the current or last install, kept by the process (and, for a staged package, on
+// disk) so a reloaded interface or the next launch can pick it up. Phase is idle, a progress phase while a download
+// or an apply runs, ready, installed or failed. ReadyVersion names the staged package, and stays set when a later
+// attempt fails.
 type InstallState struct {
-	Phase            string `json:"phase"`
-	Version          string `json:"version"`
-	TaskID           string `json:"taskId"`
-	Transferred      int64  `json:"transferred"`
-	Total            int64  `json:"total"`
-	Error            string `json:"error"`
-	InstalledVersion string `json:"installedVersion"`
+	Phase        string `json:"phase"`
+	Version      string `json:"version"`
+	TaskID       string `json:"taskId"`
+	Transferred  int64  `json:"transferred"`
+	Total        int64  `json:"total"`
+	Error        string `json:"error"`
+	ReadyVersion string `json:"readyVersion"`
 }
 
 // progressInterval bounds how often intermediate download progress is emitted; phase changes, completion and
 // errors are always emitted.
 const progressInterval = 200 * time.Millisecond
+
+// pendingWindow is how long after publishing a release missing this platform's assets counts as still uploading.
+const pendingWindow = 6 * time.Hour
 
 // Manager is the in-app update entry point; every check failure degrades to Status.UnavailableReason
 // instead of returning an error to the caller. RestartFunc is injected by the wiring layer (desktop restarts the wails app); it is nil on the server.
@@ -105,8 +116,12 @@ type Manager struct {
 	// ChannelProvider supplies the release channel on every Check and Install, so a change applies at once.
 	// Nil means stable.
 	ChannelProvider func(context.Context) ReleaseChannel
+	// StageDir keeps the verified package between Install and the Restart that applies it, so it survives the
+	// process; it must not be a directory removed on exit. Install refuses to run without one.
+	StageDir string
 
 	installing atomic.Bool
+	stageOnce  sync.Once
 	// now is the clock that throttles progress events; nil means time.Now.
 	now func() time.Time
 
@@ -148,8 +163,10 @@ func (m *Manager) emit(ctx context.Context, progress Progress) {
 	}
 }
 
-// State returns the current or last install, so a reloaded interface can resume showing it.
+// State returns the current or last install, so a reloaded interface can resume showing it; a package staged by an
+// earlier run that was never restarted is reported as ready.
 func (m *Manager) State() InstallState {
+	m.loadStaged()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	state := m.state
@@ -239,8 +256,14 @@ func (m *Manager) check(ctx context.Context, channel ReleaseChannel) (Status, *r
 	for _, release := range candidateReleases(releases, m.CurrentVersion, channel) {
 		asset, ok := matchAsset(release, m.GOOS, m.GOARCH)
 		if !ok || !releaseHasChecksums(release) {
-			if status.PendingVersion == "" {
-				status.PendingVersion = release.version()
+			// Releases are published from a complete draft, so only a release published moments ago can still be
+			// uploading; an older one stays without this platform's package.
+			if status.PendingVersion == "" && status.IncompleteVersion == "" {
+				if !release.PublishedAt.IsZero() && m.clock().Sub(release.PublishedAt) < pendingWindow {
+					status.PendingVersion = release.version()
+				} else {
+					status.IncompleteVersion = release.version()
+				}
 			}
 			continue
 		}
@@ -277,21 +300,44 @@ func releaseHasChecksums(release Release) bool {
 	return ok && asset.BrowserDownloadURL != ""
 }
 
-// Install downloads, verifies and installs the newest release; it does not restart the app. The install runs to
-// completion even when the caller goes away (a reloaded interface), and State reports it meanwhile. An install of
-// the version already installed and waiting for a restart returns at once.
+// Install downloads and verifies the newest release and stages it for the next Restart; nothing installed is
+// touched, so the running app never runs against new files. The download runs to completion even when the caller
+// goes away (a reloaded interface), and State reports it meanwhile. A package already staged for that version is
+// verified again and reused instead of downloaded; one for another version is discarded once the new one is staged.
 func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 	if !m.CanInstall {
 		return Result{UnavailableReason: "服务端模式不支持桌面应用内安装"}, nil
+	}
+	if m.StageDir == "" {
+		return Result{UnavailableReason: "未配置更新暂存目录，无法在应用内安装"}, nil
 	}
 	if !m.installing.CompareAndSwap(false, true) {
 		return Result{}, userErrorf(UserErrorBadParam, "正在安装更新，请稍候")
 	}
 	defer m.installing.Store(false)
+	m.loadStaged()
 	ctx = context.WithoutCancel(ctx)
+	// The install is reported active from the start, before the release check, so an interface reloaded during
+	// the check finds it running; a check that ends the attempt puts the previous state back.
+	previous := m.State()
+	taskID := ids.New()
+	m.updateState(func(state *InstallState) {
+		state.Phase = PhaseDownload
+		state.Version = version
+		state.TaskID = taskID
+		state.Transferred = 0
+		state.Total = 0
+		state.Error = ""
+	})
+	restore := func() {
+		m.mu.Lock()
+		m.state = previous
+		m.mu.Unlock()
+	}
 	channel := m.releaseChannel(ctx)
 	status, found := m.check(ctx, channel)
 	if !status.Available {
+		restore()
 		reason := status.UnavailableReason
 		if reason == "" {
 			reason = "当前已是最新版本"
@@ -299,26 +345,33 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 		return Result{UnavailableReason: reason}, nil
 	}
 	if !status.CanInstall {
+		restore()
 		return Result{UnavailableReason: status.UnavailableReason}, nil
 	}
 	if version != "" && version != status.Version {
+		restore()
 		return Result{}, userErrorf(UserErrorBadParam, "待安装版本 %s 与最新版本 %s 不一致", version, status.Version)
 	}
-	if m.State().InstalledVersion == status.Version {
-		return Result{Installed: true, Version: status.Version}, nil
-	}
 	asset := found.asset
-	taskID := ids.New()
+	if staged, ok := m.stagedPackage(); ok && staged.Version == status.Version && staged.SHA256 == found.sums[asset.Name] {
+		if err := staged.verify(m.stageDir()); err == nil {
+			m.markReady(staged.Version)
+			return Result{Ready: true, Version: staged.Version}, nil
+		}
+	}
 	m.updateState(func(state *InstallState) {
 		state.Version = status.Version
-		state.Error = ""
 	})
 	failed := func(phase string, transferred, total int64, err error) (Result, error) {
 		m.report(ctx, Progress{TaskID: taskID, Phase: phase, Transferred: transferred, Total: total, Done: true, Error: err.Error()}, false)
 		return Result{}, err
 	}
 	m.report(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Total: asset.Size}, false)
-	directory, err := os.MkdirTemp(platform.TempDir(), "nexterm-update-")
+	stageDir := m.stageDir()
+	if err := os.MkdirAll(stageDir, 0o700); err != nil {
+		return failed(PhaseDownload, 0, asset.Size, err)
+	}
+	directory, err := os.MkdirTemp(stageDir, ".download-")
 	if err != nil {
 		return failed(PhaseDownload, 0, asset.Size, err)
 	}
@@ -329,20 +382,26 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 	}
 	m.report(ctx, Progress{TaskID: taskID, Phase: PhaseVerify, Transferred: asset.Size, Total: asset.Size}, false)
 	if err := verifyChecksumFile(archive, asset.Name, found.sums); err != nil {
-		_ = os.Remove(archive)
 		return failed(PhaseVerify, asset.Size, asset.Size, err)
 	}
-	m.report(ctx, Progress{TaskID: taskID, Phase: PhaseInstall}, false)
-	target, err := m.applyInstall(ctx, archive)
-	if err != nil {
-		return failed(PhaseInstall, 0, 0, err)
+	if err := m.checkPackage(ctx, archive); err != nil {
+		return failed(PhaseVerify, asset.Size, asset.Size, err)
+	}
+	staged := stagedPackage{Version: status.Version, AssetName: asset.Name, SHA256: found.sums[asset.Name]}
+	if err := stagePackage(stageDir, archive, staged); err != nil {
+		return failed(PhaseVerify, asset.Size, asset.Size, userErrorf(UserErrorIO, "保存更新包失败: %w", err))
 	}
 	m.mu.Lock()
-	m.restartTarget = target
-	m.state = InstallState{Phase: StateInstalled, Version: status.Version, TaskID: taskID, InstalledVersion: status.Version}
+	m.state = InstallState{Phase: StateReady, Version: status.Version, TaskID: taskID, ReadyVersion: status.Version}
 	m.mu.Unlock()
-	m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseInstall, Done: true})
-	return Result{Installed: true, Version: status.Version}, nil
+	m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseVerify, Transferred: asset.Size, Total: asset.Size, Done: true})
+	return Result{Ready: true, Version: status.Version}, nil
+}
+
+func (m *Manager) markReady(version string) {
+	m.mu.Lock()
+	m.state = InstallState{Phase: StateReady, Version: version, ReadyVersion: version}
+	m.mu.Unlock()
 }
 
 func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string) error {
@@ -397,12 +456,35 @@ func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string
 	return nil
 }
 
+// Restart applies a staged package, then relaunches the app into it: the same order as an install followed by a
+// restart, done only when the user chose to restart. The package is verified against its recorded SHA-256 again
+// and refused (and discarded) when it changed or is not newer than the running version. A failed apply leaves the
+// app as it was and keeps the package; a successful one removes it.
 func (m *Manager) Restart(ctx context.Context) Result {
 	if m.RestartFunc == nil {
 		return Result{UnavailableReason: "服务端模式不支持应用内重启"}
 	}
-	if m.installing.Load() {
+	if !m.installing.CompareAndSwap(false, true) {
 		return Result{UnavailableReason: "正在安装更新，请等待安装完成后再重启"}
+	}
+	defer m.installing.Store(false)
+	m.loadStaged()
+	result := Result{}
+	if staged, ok := m.stagedPackage(); ok {
+		target, err := m.applyStaged(ctx, staged)
+		if err != nil {
+			m.updateState(func(state *InstallState) {
+				state.Phase = StateFailed
+				state.Error = err.Error()
+			})
+			return Result{UnavailableReason: err.Error()}
+		}
+		m.mu.Lock()
+		m.restartTarget = target
+		m.state = InstallState{Phase: StateInstalled, Version: staged.Version}
+		m.mu.Unlock()
+		result.Installed = true
+		result.Version = staged.Version
 	}
 	m.mu.Lock()
 	target := m.restartTarget
@@ -411,12 +493,37 @@ func (m *Manager) Restart(ctx context.Context) Result {
 		target = m.ExePath
 	}
 	if target == "" {
-		return Result{UnavailableReason: "无法确定当前可执行文件路径"}
+		result.UnavailableReason = "无法确定当前可执行文件路径"
+		return result
 	}
 	if err := m.RestartFunc(ctx, target); err != nil {
-		return Result{UnavailableReason: "重启失败: " + err.Error()}
+		result.UnavailableReason = "重启失败: " + err.Error()
+		return result
 	}
-	return Result{Restarted: true}
+	result.Restarted = true
+	return result
+}
+
+func (m *Manager) applyStaged(ctx context.Context, staged stagedPackage) (string, error) {
+	directory := m.stageDir()
+	if !isNewerVersion(staged.Version, m.CurrentVersion) {
+		m.discardStaged()
+		return "", userErrorf(UserErrorIO, "已下载的更新 %s 不比当前版本新，已丢弃", staged.Version)
+	}
+	if err := staged.verify(directory); err != nil {
+		m.discardStaged()
+		return "", userErrorf(UserErrorIO, "已下载的更新包校验失败，已丢弃，请重新下载: %w", err)
+	}
+	taskID := ids.New()
+	m.report(ctx, Progress{TaskID: taskID, Phase: PhaseInstall}, false)
+	target, err := m.applyInstall(ctx, staged.path(directory))
+	if err != nil {
+		m.report(ctx, Progress{TaskID: taskID, Phase: PhaseInstall, Done: true, Error: err.Error()}, false)
+		return "", err
+	}
+	m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseInstall, Done: true})
+	m.discardStaged()
+	return target, nil
 }
 
 // installTargetFor decides where the new exe lands after install: the registry-registered install target wins,

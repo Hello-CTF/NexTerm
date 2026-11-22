@@ -63,7 +63,7 @@ function resetStore(status: UpdateStatusDto | null): void {
     checking: false,
     checkError: null,
     install: { active: false, phase: null, transferred: 0, total: 0, error: null, taskId: null },
-    installedVersion: null,
+    readyVersion: null,
     restarting: false,
     restartError: null,
     skippedVersion: null,

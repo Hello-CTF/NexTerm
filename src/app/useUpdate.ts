@@ -31,8 +31,9 @@ export interface UpdateState {
   checking: boolean;
   checkError: string | null;
   install: UpdateInstallState;
-  // The version installed and waiting for a restart; the backend keeps it, so a reloaded interface restores it.
-  installedVersion: string | null;
+  // The downloaded and verified version that the next restart installs; the backend keeps it (on disk, across
+  // launches), so a reloaded interface or the next launch restores it.
+  readyVersion: string | null;
   restarting: boolean;
   restartError: string | null;
   // skippedVersion persists ("跳过此版本"); dismissedVersion only hides the banner until the next launch.
@@ -99,7 +100,7 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
   checking: false,
   checkError: null,
   install: { ...idleInstall },
-  installedVersion: null,
+  readyVersion: null,
   restarting: false,
   restartError: null,
   skippedVersion: loadSkippedVersion(),
@@ -165,9 +166,9 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
         }
       }
       const result = await appUpdateApi.install(get().status?.version || undefined);
-      if (result.installed) {
+      if (result.ready) {
         set({
-          installedVersion: result.version || get().status?.version || "",
+          readyVersion: result.version || get().status?.version || "",
           restartDeferred: false,
           install: { ...idleInstall },
         });
@@ -192,6 +193,8 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
     } catch (e) {
       set({ restarting: false, restartError: describeError(e) });
     }
+    // A refused or failed install at restart may have discarded the package or applied it without relaunching.
+    await get().syncInstallState();
   },
 
   skipVersion: (version) => {
@@ -226,12 +229,13 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
       console.warn("[NexTerm] Failed to read update install state", e);
       return;
     }
-    if (installCallPending) return;
-    const installedVersion = state.installedVersion || get().installedVersion;
+    if (installCallPending || !state) return;
+    // An applied package whose relaunch failed still needs the restart; anything else follows the backend.
+    const readyVersion = state.readyVersion || (state.phase === "installed" ? state.version : "") || null;
     if (state.phase === "download" || state.phase === "verify" || state.phase === "install") {
       recoveryRelease ??= acquireProgressListener();
       set({
-        installedVersion,
+        readyVersion,
         install: {
           active: true,
           phase: progressPhase(state.phase),
@@ -245,14 +249,19 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
     }
     releaseRecovery();
     set({
-      installedVersion,
+      readyVersion,
       install: { ...idleInstall, error: reportFailure && state.phase === "failed" && state.error ? translateMessage(state.error) : null },
     });
   },
 
   onProgress: (event) => {
     const install = get().install;
-    if (!install.active) return;
+    // An event for an install this interface does not know about (it started before a reload, or the restart is
+    // applying the package) is picked up from the backend state.
+    if (!install.active) {
+      if (!installCallPending) void get().syncInstallState();
+      return;
+    }
     if (install.taskId === null ? !event.taskId : event.taskId !== install.taskId) return;
     // The end of an install, failed or completed, is settled by the install() result while this interface awaits
     // it, and by the backend state otherwise; an error here would only race that result into a second report.

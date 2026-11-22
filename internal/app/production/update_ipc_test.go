@@ -221,15 +221,15 @@ func TestUpdateInstallEmitsProgressEvents(t *testing.T) {
 	response := dispatchHostKeyTest(t, production, "app_update_install", `null`)
 	var result update.Result
 	requireStoreTestResponse(t, response, &result)
-	if !result.Installed || result.Restarted || result.Version != "0.3.0" {
+	if !result.Ready || result.Installed || result.Restarted || result.Version != "0.3.0" {
 		t.Fatalf("install result = %+v", result)
 	}
 	content, err := os.ReadFile(executable)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(content) != "new-binary-0.3.0" {
-		t.Fatalf("executable content = %q", content)
+	if string(content) != "old-binary" {
+		t.Fatalf("install must only stage the package, executable content = %q", content)
 	}
 	if restarted != "" {
 		t.Fatalf("install must wait for an explicit restart, restarted %q", restarted)
@@ -237,14 +237,17 @@ func TestUpdateInstallEmitsProgressEvents(t *testing.T) {
 	response = dispatchHostKeyTest(t, production, "app_update_state", `null`)
 	var state update.InstallState
 	requireStoreTestResponse(t, response, &state)
-	if state.Phase != update.StateInstalled || state.InstalledVersion != "0.3.0" {
+	if state.Phase != update.StateReady || state.ReadyVersion != "0.3.0" {
 		t.Fatalf("install state = %+v", state)
 	}
 	response = dispatchHostKeyTest(t, production, "app_restart", `null`)
 	var restart update.Result
 	requireStoreTestResponse(t, response, &restart)
-	if !restart.Restarted || restarted != executable {
+	if !restart.Installed || !restart.Restarted || restarted != executable {
 		t.Fatalf("restart = %+v, target = %q", restart, restarted)
+	}
+	if content, _ := os.ReadFile(executable); string(content) != "new-binary-0.3.0" {
+		t.Fatalf("restart must apply the staged package, executable content = %q", content)
 	}
 
 	recorder.mu.Lock()
@@ -383,7 +386,7 @@ func TestUpdateInstallIPCPreservesLinuxDebErrors(t *testing.T) {
 			archiveName, archive := test.archive(t)
 			server, _, _ := updateIPCFixtureArchive(t, "0.3.0", archiveName, archive)
 			manager := &update.Manager{
-				CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: runtime.GOARCH, CanInstall: true,
+				CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: runtime.GOARCH, CanInstall: true, StageDir: t.TempDir(),
 				ExePath: filepath.Join(t.TempDir(), "nexterm-desktop"), APIURL: server.URL + "/releases",
 			}
 			dispatcher := ipc.NewDispatcher()
@@ -403,7 +406,9 @@ func TestUpdateInstallIPCPreservesLinuxDebErrors(t *testing.T) {
 	}
 }
 
-func TestUpdateInstallIPCPreservesPlatformInstallerFailure(t *testing.T) {
+// The macOS and Windows installers run only when the user restarts: the failure is reported by app_restart, the
+// app is not relaunched and the installed copy stays as it was.
+func TestUpdateRestartReportsPlatformInstallerFailure(t *testing.T) {
 	var archiveName, wantPrefix string
 	switch runtime.GOOS {
 	case "darwin":
@@ -420,21 +425,31 @@ func TestUpdateInstallIPCPreservesPlatformInstallerFailure(t *testing.T) {
 	if err := os.WriteFile(executable, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	restarted := false
 	manager := &update.Manager{
-		CurrentVersion: "0.2.2", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, CanInstall: true,
+		CurrentVersion: "0.2.2", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, CanInstall: true, StageDir: t.TempDir(),
 		ExePath: executable, APIURL: server.URL + "/releases",
+		RestartFunc: func(context.Context, string) error {
+			restarted = true
+			return nil
+		},
 	}
 	dispatcher := ipc.NewDispatcher()
 	if err := registerUpdateCommands(dispatcher, manager); err != nil {
 		t.Fatal(err)
 	}
-	response := dispatchStoreTest(dispatcher, "app_update_install", `null`)
-	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeIO || !strings.HasPrefix(response.Error.Message, wantPrefix) {
-		t.Fatalf("install response = %+v, want io error with prefix %q", response, wantPrefix)
+	var install update.Result
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "app_update_install", `null`), &install)
+	if !install.Ready {
+		t.Fatalf("install = %+v, want the package staged", install)
 	}
-	cause, ok := response.Error.Unwrap().(*update.UserError)
-	if !ok || cause.Kind != update.UserErrorIO || cause.Error() != response.Error.Message {
-		t.Fatalf("install cause = %+v, want the preserved installer error", response.Error.Unwrap())
+	var restart update.Result
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "app_restart", `null`), &restart)
+	if restart.Installed || restart.Restarted || restarted || !strings.HasPrefix(restart.UnavailableReason, wantPrefix) {
+		t.Fatalf("restart = %+v, want the installer failure with prefix %q", restart, wantPrefix)
+	}
+	if content, _ := os.ReadFile(executable); string(content) != "old-binary" {
+		t.Fatalf("executable content = %q", content)
 	}
 }
 

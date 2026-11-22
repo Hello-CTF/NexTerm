@@ -21,7 +21,7 @@ export async function promptUpdateIfNeeded(): Promise<void> {
   const state = getUpdateState();
   const status = state.status;
   if (!status?.available || !status.version || !status.canInstall) return;
-  if (state.install.active || state.installedVersion) return;
+  if (state.install.active || state.readyVersion) return;
   if (!isReleaseVersion(status.currentVersion)) return;
   if (status.version === state.skippedVersion) return;
   if (status.version === state.remindedVersion) return;
@@ -33,7 +33,7 @@ export async function promptUpdateIfNeeded(): Promise<void> {
       title: t("软件更新"),
       level: "info",
       choices: [
-        { key: "update", label: t("更新"), hint: t("下载并安装 v{version}", { version: status.version }), primary: true },
+        { key: "update", label: t("更新"), hint: t("下载 v{version}，重启时安装", { version: status.version }), primary: true },
         { key: "skip", label: t("跳过当前版本"), hint: t("不再提醒此版本") },
         { key: "later", label: t("稍后再说") },
       ],

@@ -42,7 +42,7 @@ vi.mock("../ipc/events", async (importOriginal) => {
 
 import { UpdateCard } from "../features/settings/UpdateCard";
 import { UpdateBanner } from "../app/UpdateBanner";
-import { updateVerdict, useUpdateStore } from "../app/useUpdate";
+import { acquireProgressListener, updateVerdict, useUpdateStore } from "../app/useUpdate";
 import { useUi } from "../app/store";
 import { applyLocale } from "../i18n";
 
@@ -61,13 +61,17 @@ function makeStatus(patch: Partial<UpdateStatusDto> = {}): UpdateStatusDto {
   };
 }
 
+// Some tests replace the restart action; every test starts with the real one.
+const realRestart = useUpdateStore.getState().restart;
+
 function resetUpdateStore(): void {
   useUpdateStore.setState({
+    restart: realRestart,
     status: null,
     checking: false,
     checkError: null,
     install: { active: false, phase: null, transferred: 0, total: 0, error: null, taskId: null },
-    installedVersion: null,
+    readyVersion: null,
     restarting: false,
     restartError: null,
     skippedVersion: null,
@@ -85,6 +89,7 @@ let mounted: MountedView | undefined;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.state.mockResolvedValue({ phase: "idle", version: "", taskId: "", transferred: 0, total: 0, error: "", readyVersion: "" });
   document.body.replaceChildren();
   window.localStorage.clear();
   resetUpdateStore();
@@ -161,7 +166,7 @@ describe("UpdateCard check flow", () => {
     expect(text).not.toContain("不可安装");
     expect(
       [...mounted.container.querySelectorAll("button")].some(
-        (b) => b.textContent?.trim() === "下载并安装",
+        (b) => b.textContent?.trim() === "下载更新",
       ),
     ).toBe(true);
   });
@@ -176,7 +181,7 @@ describe("UpdateCard check flow", () => {
     expect(text).toContain("当前平台没有安装包");
     expect(
       [...mounted.container.querySelectorAll("button")].some(
-        (b) => b.textContent?.trim() === "下载并安装",
+        (b) => b.textContent?.trim() === "下载更新",
       ),
     ).toBe(false);
   });
@@ -231,7 +236,7 @@ describe("UpdateCard installation flow", () => {
     mocks.install.mockReturnValue(pending.promise);
     useUpdateStore.setState({ status: makeStatus() });
     mounted = mount(createElement(UpdateCard));
-    clickButton(mounted.container, "下载并安装");
+    clickButton(mounted.container, "下载更新");
     expect(mocks.install).toHaveBeenCalledWith("0.3.0");
 
     act(() => {
@@ -257,26 +262,27 @@ describe("UpdateCard installation flow", () => {
     expect(mounted.container.textContent).toContain("请稍候");
     expect(mounted.container.textContent).not.toContain("进度未知");
 
-    pending.resolve({ installed: true, restarted: false, version: "0.3.0", unavailableReason: "" });
-    await flushUntil(() => (mounted?.container.textContent ?? "").includes("已安装 v0.3.0"));
+    pending.resolve({ ready: true, installed: false, restarted: false, version: "0.3.0", unavailableReason: "" });
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("v0.3.0 下载完成"));
   });
 
   it("shows installation failure reasons and calls install again on retry", async () => {
     mocks.install.mockRejectedValueOnce(new Error("磁盘已满"));
     useUpdateStore.setState({ status: makeStatus() });
     mounted = mount(createElement(UpdateCard));
-    clickButton(mounted.container, "下载并安装");
+    clickButton(mounted.container, "下载更新");
     await flushUntil(() => (mounted?.container.textContent ?? "").includes("安装失败"));
     expect(mounted.container.textContent).toContain("磁盘已满");
 
     mocks.install.mockResolvedValueOnce({
-      installed: true,
+      ready: true,
+      installed: false,
       restarted: false,
       version: "0.3.0",
       unavailableReason: "",
     });
     clickButton(mounted.container, "重试");
-    await flushUntil(() => (mounted?.container.textContent ?? "").includes("已安装 v0.3.0"));
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("v0.3.0 下载完成"));
     expect(mocks.install).toHaveBeenCalledTimes(2);
   });
 
@@ -287,7 +293,7 @@ describe("UpdateCard installation flow", () => {
     mocks.install.mockReturnValue(pending.promise);
     useUpdateStore.setState({ status: makeStatus() });
     mounted = mount(createElement("div", null, createElement(UpdateCard), createElement(UpdateBanner, { onOpenSettings: vi.fn() })));
-    clickButton(mounted.container, "下载并安装");
+    clickButton(mounted.container, "下载更新");
     act(() => {
       emitProgress({ taskId: "t1", phase: "verify", transferred: 8, total: 8, done: false });
     });
@@ -308,24 +314,24 @@ describe("UpdateCard installation flow", () => {
     mocks.install.mockRejectedValueOnce(new Error("待安装版本 0.3.0 与最新版本 0.3.1 不一致"));
     useUpdateStore.setState({ status: makeStatus() });
     mounted = mount(createElement(UpdateCard));
-    clickButton(mounted.container, "下载并安装");
+    clickButton(mounted.container, "下载更新");
     await flushUntil(() => (mounted?.container.textContent ?? "").includes("安装失败"));
 
     mocks.check.mockResolvedValue(makeStatus({ version: "0.3.1" }));
-    mocks.install.mockResolvedValueOnce({ installed: true, restarted: false, version: "0.3.1", unavailableReason: "" });
+    mocks.install.mockResolvedValueOnce({ ready: true, installed: false, restarted: false, version: "0.3.1", unavailableReason: "" });
     clickButton(mounted.container, "重试");
-    await flushUntil(() => (mounted?.container.textContent ?? "").includes("已安装 v0.3.1"));
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("v0.3.1 下载完成"));
     expect(mocks.check).toHaveBeenCalledTimes(1);
     expect(mocks.install).toHaveBeenLastCalledWith("0.3.1");
   });
 
   it("keeps the install waiting for a restart and explains what a restart ends", async () => {
-    mocks.install.mockResolvedValue({ installed: true, restarted: false, version: "0.3.0", unavailableReason: "" });
+    mocks.install.mockResolvedValue({ ready: true, installed: false, restarted: false, version: "0.3.0", unavailableReason: "" });
     useUpdateStore.setState({ status: makeStatus() });
     mounted = mount(createElement(UpdateCard));
     expect(mounted.container.textContent).toContain("不会自动重启");
-    clickButton(mounted.container, "下载并安装");
-    await flushUntil(() => (mounted?.container.textContent ?? "").includes("已安装 v0.3.0"));
+    clickButton(mounted.container, "下载更新");
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("v0.3.0 下载完成"));
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("临时终端会结束");
     expect(text).toContain("持久终端继续运行");
@@ -335,10 +341,11 @@ describe("UpdateCard installation flow", () => {
 
   it("prompts for restart after installation and shows restart failure reasons", async () => {
     mocks.restart.mockResolvedValue({ restarted: false, version: "", unavailableReason: "Unable to determine current executable path" });
-    useUpdateStore.setState({ status: makeStatus(), installedVersion: "0.3.0" });
+    mocks.state.mockResolvedValue({ phase: "ready", version: "0.3.0", taskId: "", transferred: 0, total: 0, error: "", readyVersion: "0.3.0" });
+    useUpdateStore.setState({ status: makeStatus(), readyVersion: "0.3.0" });
     mounted = mount(createElement(UpdateCard));
-    expect(mounted.container.textContent).toContain("重启应用后生效");
-    clickButton(mounted.container, "立即重启");
+    expect(mounted.container.textContent).toContain("重启时安装");
+    clickButton(mounted.container, "立即重启并安装");
     await flushUntil(() => (mounted?.container.textContent ?? "").includes("Unable to determine current executable path"));
     expect(mocks.restart).toHaveBeenCalledTimes(1);
   });
@@ -374,9 +381,9 @@ describe("UpdateBanner desktop banner", () => {
   });
 
   it("offers a later restart that hides the restart banner", async () => {
-    useUpdateStore.setState({ status: makeStatus(), installedVersion: "0.3.0" });
+    useUpdateStore.setState({ status: makeStatus(), readyVersion: "0.3.0" });
     mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
-    expect(mounted.container.textContent).toContain("重启应用后生效");
+    expect(mounted.container.textContent).toContain("重启时安装");
     clickButton(mounted.container, "稍后");
     await flush();
     expect(mounted.container.querySelector('[aria-label="软件更新"]')).toBeNull();
@@ -458,15 +465,14 @@ describe("UpdateBanner desktop banner", () => {
 
     const restart = vi.fn();
     act(() => {
-      useUpdateStore.setState({ status: makeStatus(), installedVersion: "0.3.0", restart });
+      useUpdateStore.setState({ status: makeStatus(), readyVersion: "0.3.0", restart });
     });
     await flush();
     const banner = mounted.container.querySelector('[aria-label="软件更新"]');
     expect(banner).not.toBeNull();
-    expect(banner!.textContent).toContain("已安装");
-    expect(banner!.textContent).toContain("v0.3.0");
-    expect(banner!.textContent).toContain("重启应用后生效");
-    clickButton(mounted.container, "立即重启");
+    expect(banner!.textContent).toContain("v0.3.0 下载完成");
+    expect(banner!.textContent).toContain("重启时安装");
+    clickButton(mounted.container, "立即重启并安装");
     expect(restart).toHaveBeenCalled();
   });
 });
@@ -508,7 +514,7 @@ describe("UpdateCard release details", () => {
     const link = [...mounted.container.querySelectorAll("a")].find((a) => a.textContent === "下载安装包");
     expect(link?.getAttribute("href")).toBe("https://example.invalid/nexterm-desktop_linux_amd64_0.3.0.deb");
     expect(
-      [...mounted.container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "下载并安装"),
+      [...mounted.container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "下载更新"),
     ).toBe(false);
   });
 
@@ -524,10 +530,57 @@ describe("UpdateCard release details", () => {
   });
 });
 
+describe("install only at restart", () => {
+  it("installs nothing when the download completes and applies the package on 立即重启并安装", async () => {
+    mocks.install.mockResolvedValue({ ready: true, installed: false, restarted: false, version: "0.3.0", unavailableReason: "" });
+    mocks.restart.mockResolvedValue({ ready: false, installed: true, restarted: true, version: "0.3.0", unavailableReason: "" });
+    useUpdateStore.setState({ status: makeStatus() });
+    mounted = mount(createElement(UpdateCard));
+    clickButton(mounted.container, "下载更新");
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("v0.3.0 下载完成，重启时安装"));
+    expect(mocks.restart).not.toHaveBeenCalled();
+    clickButton(mounted.container, "立即重启并安装");
+    await flushUntil(() => mocks.restart.mock.calls.length === 1);
+  });
+
+  it("drops the restart offer when the restart refuses a changed package", async () => {
+    mocks.restart.mockResolvedValue({ installed: false, restarted: false, version: "", unavailableReason: "已下载的更新包校验失败，已丢弃，请重新下载: x" });
+    mocks.state.mockResolvedValue({ phase: "failed", version: "0.3.0", taskId: "", transferred: 0, total: 0, error: "已下载的更新包校验失败", readyVersion: "" });
+    useUpdateStore.setState({ status: makeStatus(), readyVersion: "0.3.0" });
+    mounted = mount(createElement(UpdateCard));
+    clickButton(mounted.container, "立即重启并安装");
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("校验失败"));
+    await flushUntil(() => useUpdateStore.getState().readyVersion === null);
+    expect([...mounted.container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "下载更新")).toBe(true);
+  });
+
+  it("names an old release without this platform's package neutrally", async () => {
+    useUpdateStore.setState({ status: makeStatus({ incompleteVersion: "0.4.0" }) });
+    mounted = mount(createElement(UpdateCard));
+    expect(mounted.container.textContent).toContain("v0.4.0 没有此平台的安装包");
+    expect(mounted.container.textContent).not.toContain("还在上传");
+  });
+
+  it("picks up an install it does not know about from the first progress event", async () => {
+    mocks.state.mockResolvedValueOnce({ phase: "download", version: "0.3.0", taskId: "t5", transferred: 4, total: 8, error: "", readyVersion: "" });
+    useUpdateStore.setState({ status: makeStatus() });
+    mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
+    // A listener exists while another holder keeps it, as when an event arrives after a reload.
+    const release = acquireProgressListener();
+    await flushUntil(() => mocks.progressHandlers.length > 0);
+    act(() => {
+      emitProgress({ taskId: "t5", phase: "download", transferred: 4, total: 8, done: false });
+    });
+    await flushUntil(() => useUpdateStore.getState().install.active);
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("50%"));
+    release();
+  });
+});
+
 describe("install state recovery after a reload", () => {
   it("resumes a running install and settles it from the backend state", async () => {
     mocks.state.mockResolvedValueOnce({
-      phase: "download", version: "0.3.0", taskId: "t9", transferred: 2, total: 8, error: "", installedVersion: "",
+      phase: "download", version: "0.3.0", taskId: "t9", transferred: 2, total: 8, error: "", readyVersion: "",
     });
     useUpdateStore.setState({ status: makeStatus() });
     mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
@@ -538,13 +591,13 @@ describe("install state recovery after a reload", () => {
     await flushUntil(() => mocks.progressHandlers.length > 0);
 
     mocks.state.mockResolvedValueOnce({
-      phase: "installed", version: "0.3.0", taskId: "t9", transferred: 0, total: 0, error: "", installedVersion: "0.3.0",
+      phase: "ready", version: "0.3.0", taskId: "t9", transferred: 0, total: 0, error: "", readyVersion: "0.3.0",
     });
     act(() => {
       emitProgress({ taskId: "t9", phase: "install", transferred: 0, total: 0, done: true });
     });
-    await flushUntil(() => (mounted?.container.textContent ?? "").includes("重启应用后生效"));
-    expect(useUpdateStore.getState().installedVersion).toBe("0.3.0");
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("重启时安装"));
+    expect(useUpdateStore.getState().readyVersion).toBe("0.3.0");
     expect(useUpdateStore.getState().install.active).toBe(false);
     expect(mocks.progressHandlers.length).toBe(0);
   });
@@ -552,7 +605,7 @@ describe("install state recovery after a reload", () => {
   it("reports a recovered install that fails, but not an old failure on the next reload", async () => {
     const toast = vi.fn();
     useUi.setState({ pushToast: toast });
-    const failed = { phase: "failed", version: "0.3.0", taskId: "t9", transferred: 0, total: 0, error: "磁盘已满", installedVersion: "" };
+    const failed = { phase: "failed", version: "0.3.0", taskId: "t9", transferred: 0, total: 0, error: "磁盘已满", readyVersion: "" };
     mocks.state.mockResolvedValueOnce(failed);
     useUpdateStore.setState({ status: makeStatus() });
     mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));

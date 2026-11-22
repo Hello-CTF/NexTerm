@@ -435,7 +435,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 			GOARCH:         runtime.GOARCH,
 			CanInstall:     config.Desktop,
 			ExePath:        executablePath,
-			RestartFunc:    config.RestartFunc,
+			// A downloaded update waits here for the restart that applies it, across launches.
+			StageDir:    filepath.Join(config.DataDir, "update"),
+			RestartFunc: config.RestartFunc,
 			Emit: func(ctx context.Context, progress update.Progress) {
 				_ = ipc.Emit(ctx, config.Config.Events, ipc.TopicUpdateProgress, progress)
 			},

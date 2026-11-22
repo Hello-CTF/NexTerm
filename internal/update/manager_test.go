@@ -167,7 +167,7 @@ func (fixture *releaseFixture) sign(key releasesigtest.Key, version string) {
 func TestCheckFindsUpdate(t *testing.T) {
 	fixture := linuxFixture(t, "0.3.0", false)
 	server := fixture.server(t)
-	manager := &Manager{CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, APIURL: server.URL + "/releases"}
+	manager := &Manager{CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(), APIURL: server.URL + "/releases"}
 	status := manager.Check(context.Background())
 	if !status.Available || status.Version != "0.3.0" || status.AssetName != fixture.archiveName {
 		t.Fatalf("status = %+v", status)
@@ -183,7 +183,7 @@ func TestCheckFindsUpdate(t *testing.T) {
 func TestCheckUpToDateHasNoReason(t *testing.T) {
 	fixture := linuxFixture(t, "0.3.0", false)
 	server := fixture.server(t)
-	manager := &Manager{CurrentVersion: "0.3.0", GOOS: "linux", GOARCH: "amd64", CanInstall: true, APIURL: server.URL + "/releases"}
+	manager := &Manager{CurrentVersion: "0.3.0", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(), APIURL: server.URL + "/releases"}
 	status := manager.Check(context.Background())
 	if status.Available || status.UnavailableReason != "" {
 		t.Fatalf("status = %+v", status)
@@ -266,7 +266,7 @@ func TestCheckServerModeReportsCanInstallFalse(t *testing.T) {
 	}
 }
 
-func TestInstallReplacesBinaryAndWaitsForRestart(t *testing.T) {
+func TestInstallStagesAndRestartApplies(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("linux deb install test")
 	}
@@ -276,16 +276,20 @@ func TestInstallReplacesBinaryAndWaitsForRestart(t *testing.T) {
 	if err := os.WriteFile(executable, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	stageDir := t.TempDir()
 	var progress []Progress
 	restarts := 0
 	restartTarget := ""
+	contentAtRestart := ""
 	manager := &Manager{
-		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
+		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: stageDir,
 		ExePath: executable, APIURL: server.URL + "/releases",
 		Emit: func(_ context.Context, event Progress) { progress = append(progress, event) },
 		RestartFunc: func(_ context.Context, target string) error {
 			restarts++
 			restartTarget = target
+			data, _ := os.ReadFile(target)
+			contentAtRestart = string(data)
 			return nil
 		},
 	}
@@ -293,45 +297,49 @@ func TestInstallReplacesBinaryAndWaitsForRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Installed || result.Restarted || result.Version != "0.3.0" {
+	if !result.Ready || result.Installed || result.Restarted || result.Version != "0.3.0" {
 		t.Fatalf("result = %+v", result)
 	}
 	if restarts != 0 {
 		t.Fatal("install must not restart the app")
 	}
-	content, err := os.ReadFile(executable)
-	if err != nil {
-		t.Fatal(err)
+	if content, _ := os.ReadFile(executable); string(content) != "old-binary" {
+		t.Fatalf("install must not touch the installed app before the restart, content = %q", content)
 	}
-	if string(content) != "new-binary-0.3.0" {
-		t.Fatalf("executable content = %q", content)
-	}
-	if state := manager.State(); state.Phase != StateInstalled || state.InstalledVersion != "0.3.0" || state.Error != "" {
+	if state := manager.State(); state.Phase != StateReady || state.ReadyVersion != "0.3.0" || state.Error != "" {
 		t.Fatalf("state = %+v", state)
 	}
 	phases := map[string]bool{}
 	for _, event := range progress {
 		phases[event.Phase] = true
 	}
-	if !phases[PhaseDownload] || !phases[PhaseVerify] || !phases[PhaseInstall] {
-		t.Fatalf("progress events = %+v, want download, verify and install phases", progress)
+	if !phases[PhaseDownload] || !phases[PhaseVerify] || phases[PhaseInstall] {
+		t.Fatalf("progress events = %+v, want download and verify phases and no install yet", progress)
 	}
 	if progress[0].Phase != PhaseDownload || progress[0].Total != int64(len(fixture.archive)) {
 		t.Fatalf("first progress = %+v", progress[0])
+	}
+	// A repeated install of the staged version reuses the package instead of downloading it again.
+	before := len(progress)
+	again, err := manager.Install(context.Background(), "0.3.0")
+	if err != nil || !again.Ready || again.Version != "0.3.0" || len(progress) != before {
+		t.Fatalf("repeat install = %+v, %v, events %d -> %d", again, err, before, len(progress))
+	}
+	restart := manager.Restart(context.Background())
+	if !restart.Installed || !restart.Restarted || restartTarget != executable || restarts != 1 {
+		t.Fatalf("restart = %+v, target = %q, restarts = %d", restart, restartTarget, restarts)
+	}
+	if contentAtRestart != "new-binary-0.3.0" {
+		t.Fatalf("the restart must apply the package before relaunching, content = %q", contentAtRestart)
 	}
 	last := progress[len(progress)-1]
 	if last.Phase != PhaseInstall || !last.Done || last.Error != "" {
 		t.Fatalf("last progress = %+v", last)
 	}
-	// A repeated install of the version waiting for a restart does not download it again.
-	before := len(progress)
-	again, err := manager.Install(context.Background(), "0.3.0")
-	if err != nil || !again.Installed || again.Version != "0.3.0" || len(progress) != before {
-		t.Fatalf("repeat install = %+v, %v, events %d -> %d", again, err, before, len(progress))
+	if _, ok := manager.stagedPackage(); ok {
+		t.Fatal("a successful apply must remove the staged package")
 	}
-	if restart := manager.Restart(context.Background()); !restart.Restarted || restartTarget != executable || restarts != 1 {
-		t.Fatalf("restart = %+v, target = %q, restarts = %d", restart, restartTarget, restarts)
-	}
+	requireStageEmpty(t, stageDir)
 }
 
 func TestInstallChecksumMismatchKeepsOldBinary(t *testing.T) {
@@ -343,7 +351,7 @@ func TestInstallChecksumMismatchKeepsOldBinary(t *testing.T) {
 	}
 	var progress []Progress
 	manager := &Manager{
-		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
+		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(),
 		ExePath: executable, APIURL: server.URL + "/releases",
 		Emit: func(_ context.Context, event Progress) { progress = append(progress, event) },
 	}
@@ -366,7 +374,7 @@ func TestInstallChecksumMismatchKeepsOldBinary(t *testing.T) {
 func TestInstallRejectsVersionMismatch(t *testing.T) {
 	fixture := linuxFixture(t, "0.3.0", false)
 	server := fixture.server(t)
-	manager := &Manager{CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, APIURL: server.URL + "/releases"}
+	manager := &Manager{CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(), APIURL: server.URL + "/releases"}
 	if _, err := manager.Install(context.Background(), "9.9.9"); err == nil || !strings.Contains(err.Error(), "不一致") {
 		t.Fatalf("install error = %v", err)
 	}
@@ -390,7 +398,7 @@ func TestInstallServerModeDegrades(t *testing.T) {
 func TestRestartUsesInjectedFunc(t *testing.T) {
 	executable := filepath.Join(t.TempDir(), "nexterm-desktop")
 	target := ""
-	manager := &Manager{ExePath: executable, RestartFunc: func(_ context.Context, path string) error {
+	manager := &Manager{ExePath: executable, StageDir: t.TempDir(), RestartFunc: func(_ context.Context, path string) error {
 		target = path
 		return nil
 	}}
@@ -440,7 +448,7 @@ func TestCheckFollowsChannelProviderAtCallTime(t *testing.T) {
 	server := fixture.server(t)
 	channel := ChannelStable
 	manager := &Manager{
-		CurrentVersion: "1.3.6", GOOS: "linux", GOARCH: "amd64", CanInstall: true, APIURL: server.URL + "/releases",
+		CurrentVersion: "1.3.6", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(), APIURL: server.URL + "/releases",
 		ChannelProvider: func(context.Context) ReleaseChannel { return channel },
 	}
 	status := manager.Check(context.Background())
@@ -472,7 +480,7 @@ func TestCheckReportsRunningPrerelease(t *testing.T) {
 func TestInstallCannotBypassStableChannel(t *testing.T) {
 	fixture := rcFixture(t, "1.4.0-rc.1")
 	server := fixture.server(t)
-	manager := &Manager{CurrentVersion: "1.3.6", GOOS: "linux", GOARCH: "amd64", CanInstall: true, APIURL: server.URL + "/releases"}
+	manager := &Manager{CurrentVersion: "1.3.6", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(), APIURL: server.URL + "/releases"}
 	result, err := manager.Install(context.Background(), "1.4.0-rc.1")
 	if err != nil || result.Installed || result.UnavailableReason == "" {
 		t.Fatalf("Install on stable must not install an rc: %+v, %v", result, err)
@@ -490,7 +498,7 @@ func TestInstallRefusesRCWhenProviderFlipsBackToStable(t *testing.T) {
 	server := fixture.server(t)
 	channel := ChannelRC
 	manager := &Manager{
-		CurrentVersion: "1.3.6", GOOS: "linux", GOARCH: "amd64", CanInstall: true, APIURL: server.URL + "/releases",
+		CurrentVersion: "1.3.6", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(), APIURL: server.URL + "/releases",
 		ChannelProvider: func(context.Context) ReleaseChannel { return channel },
 	}
 	if status := manager.Check(context.Background()); !status.Available {

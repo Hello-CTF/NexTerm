@@ -15,7 +15,7 @@ import (
 // this platform, as GitHub shows a release whose assets are still uploading.
 func halfPublished(fixture *releaseFixture, versions ...string) {
 	for index, version := range versions {
-		release := Release{TagName: "v" + version, Body: "notes " + version}
+		release := Release{TagName: "v" + version, Body: "notes " + version, PublishedAt: time.Now().Add(-time.Hour)}
 		if index%2 == 0 {
 			release.Assets = []Asset{{Name: "nexterm-desktop_linux_amd64_" + version + ".deb", Size: 1}}
 		} else {
@@ -45,11 +45,61 @@ func TestCheckSkipsHalfPublishedReleases(t *testing.T) {
 
 func TestCheckReportsOnlyHalfPublishedReleaseAsPending(t *testing.T) {
 	fixture := linuxFixture(t, "0.3.0", false)
+	fixture.releases[0].PublishedAt = time.Now().Add(-time.Hour)
 	server := fixture.server(t)
 	manager := &Manager{CurrentVersion: "0.2.2", GOOS: "windows", GOARCH: "amd64", APIURL: server.URL + "/releases"}
 	status := manager.Check(context.Background())
 	if status.Available || status.UnavailableReason != "" || status.PendingVersion != "0.3.0" {
 		t.Fatalf("status = %+v, want no failure and the pending version", status)
+	}
+}
+
+func TestCheckReportsOldReleaseWithoutPackageNeutrally(t *testing.T) {
+	for name, published := range map[string]time.Time{"old": time.Now().Add(-3 * 24 * time.Hour), "unknown": {}} {
+		t.Run(name, func(t *testing.T) {
+			fixture := linuxFixture(t, "0.3.0", false)
+			halfPublished(fixture, "0.4.0")
+			fixture.releases[0].PublishedAt = published
+			server := fixture.server(t)
+			manager := &Manager{CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", APIURL: server.URL + "/releases"}
+			status := manager.Check(context.Background())
+			if !status.Available || status.Version != "0.3.0" || status.PendingVersion != "" || status.IncompleteVersion != "0.4.0" {
+				t.Fatalf("status = %+v, want the complete release offered and the old one named incomplete", status)
+			}
+		})
+	}
+}
+
+func TestInstallReportsActiveDuringCheck(t *testing.T) {
+	fixture := linuxFixture(t, "0.3.0", false)
+	inCheck := make(chan InstallState, 1)
+	var manager *Manager
+	release := make(chan struct{})
+	server := fixture.server(t)
+	manager = &Manager{
+		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(),
+		ExePath: filepath.Join(t.TempDir(), "nexterm-desktop"), APIURL: server.URL + "/releases",
+		ChannelProvider: func(context.Context) ReleaseChannel {
+			inCheck <- manager.State()
+			<-release
+			return ChannelStable
+		},
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := manager.Install(context.Background(), "9.9.9")
+		done <- err
+	}()
+	state := <-inCheck
+	close(release)
+	if state.Phase != PhaseDownload || state.TaskID == "" || state.Error != "" {
+		t.Fatalf("state during the check = %+v, want an active install", state)
+	}
+	if err := <-done; err == nil {
+		t.Fatal("a version mismatch must fail")
+	}
+	if state := manager.State(); state.Phase != StateIdle {
+		t.Fatalf("state after the check ended the attempt = %+v, want the previous state", state)
 	}
 }
 
@@ -107,14 +157,14 @@ func TestInstallFailureIsKeptInState(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := &Manager{
-		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
+		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(),
 		ExePath: executable, APIURL: server.URL + "/releases",
 	}
 	if _, err := manager.Install(context.Background(), ""); err == nil {
 		t.Fatal("install must fail on a checksum mismatch")
 	}
 	state := manager.State()
-	if state.Phase != StateFailed || state.Version != "0.3.0" || !strings.Contains(state.Error, "SHA-256") || state.InstalledVersion != "" {
+	if state.Phase != StateFailed || state.Version != "0.3.0" || !strings.Contains(state.Error, "SHA-256") || state.ReadyVersion != "" {
 		t.Fatalf("state = %+v", state)
 	}
 }
@@ -130,7 +180,7 @@ func TestInstallSurvivesCallerCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := &Manager{
-		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
+		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(),
 		ExePath: executable, APIURL: server.URL + "/releases",
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -142,7 +192,7 @@ func TestInstallSurvivesCallerCancellation(t *testing.T) {
 
 func TestRestartWaitsForRunningInstall(t *testing.T) {
 	restarted := false
-	manager := &Manager{ExePath: "/opt/nexterm/nexterm-desktop", RestartFunc: func(context.Context, string) error {
+	manager := &Manager{ExePath: "/opt/nexterm/nexterm-desktop", StageDir: t.TempDir(), RestartFunc: func(context.Context, string) error {
 		restarted = true
 		return nil
 	}}

@@ -58,7 +58,7 @@ func TestLinuxInstallBlockedBeforeDownload(t *testing.T) {
 			}
 			test.setup(t, executable)
 			manager := &Manager{
-				CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
+				CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(),
 				ExePath: executable, APIURL: server.server.URL + "/releases",
 			}
 			status := manager.Check(context.Background())

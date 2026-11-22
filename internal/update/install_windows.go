@@ -71,3 +71,8 @@ func registeredInstallTarget() string {
 	}
 	return filepath.Join(dir, canonicalExeName())
 }
+
+// checkPackage accepts the installer as verified by its checksum: NSIS runs only when the user restarts.
+func (m *Manager) checkPackage(context.Context, string) error {
+	return nil
+}

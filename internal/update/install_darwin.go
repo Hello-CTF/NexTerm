@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Hello-CTF/NexTerm/internal/platform"
 )
 
 // installBlocker reports a copy that cannot be replaced: one whose own location and /Applications are both
@@ -32,10 +34,12 @@ func (m *Manager) installBlocker() string {
 // it in; the old bundle is removed only after the new one is in place. It returns the new bundle executable as
 // the restart target.
 func (m *Manager) applyInstall(ctx context.Context, archive string) (string, error) {
-	mountpoint := filepath.Join(filepath.Dir(archive), "mnt")
-	if err := os.Mkdir(mountpoint, 0o700); err != nil {
+	// The package is staged in a directory that outlives the process; the mount point is a fresh temporary one.
+	mountpoint, err := os.MkdirTemp(platform.TempDir(), "nexterm-update-mnt-")
+	if err != nil {
 		return "", err
 	}
+	defer os.Remove(mountpoint)
 	attach := exec.CommandContext(ctx, "hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", mountpoint, archive)
 	if output, err := attach.CombinedOutput(); err != nil {
 		return "", userErrorf(UserErrorIO, "hdiutil attach 失败: %w (%s)", err, output)
@@ -77,4 +81,10 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) (string, err
 		return m.ExePath, nil
 	}
 	return executable, nil
+}
+
+// checkPackage accepts the dmg as verified by its checksum: it is mounted and its .app copied only when the user
+// restarts.
+func (m *Manager) checkPackage(context.Context, string) error {
+	return nil
 }

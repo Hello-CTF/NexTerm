@@ -54,7 +54,7 @@ func TestSignedReleaseAssetSizeBoundaries(t *testing.T) {
 			}
 			restartCalled := false
 			manager := &Manager{
-				CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
+				CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(),
 				ExePath: executable, APIURL: server.server.URL + "/releases",
 				MinisignPublicKey: key.PublicKeyFile(), RequireSignedChecksums: true,
 				RestartFunc: func(context.Context, string) error {
@@ -129,7 +129,7 @@ func TestInstallRevalidatesSignature(t *testing.T) {
 			}
 			restartCalled := false
 			manager := &Manager{
-				CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
+				CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(),
 				ExePath: executable, APIURL: server.server.URL + "/releases",
 				MinisignPublicKey: key.PublicKeyFile(), RequireSignedChecksums: true,
 				RestartFunc: func(context.Context, string) error {
