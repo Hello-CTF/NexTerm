@@ -1,15 +1,29 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
-import { click, flush, mount, type MountedView } from "../features/reactTestUtils";
+import { act, createElement } from "react";
+import { click, flush, mount, waitForRendered, type MountedView } from "../features/reactTestUtils";
 import type { Workspace } from "../../app/store";
 
-const mocks = vi.hoisted(() => ({ reopen: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  reopen: vi.fn(),
+  listLive: vi.fn(),
+  listDurable: vi.fn(),
+  sessionList: vi.fn(),
+}));
 
 vi.mock("../../app/store", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../app/store")>();
   return { ...actual, reopenRemoteDesktopTab: mocks.reopen };
+});
+
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/commands")>();
+  return {
+    ...actual,
+    terminalApi: { ...actual.terminalApi, listLive: mocks.listLive, listDurable: mocks.listDurable },
+    sessionApi: { ...actual.sessionApi, list: mocks.sessionList },
+  };
 });
 
 import { useUi } from "../../app/store";
@@ -44,7 +58,10 @@ function text(): string {
 
 beforeEach(() => {
   mocks.reopen.mockReset().mockResolvedValue({ ok: true });
-  useUi.setState({ toasts: [] });
+  mocks.listLive.mockReset().mockResolvedValue([]);
+  mocks.listDurable.mockReset().mockResolvedValue([]);
+  mocks.sessionList.mockReset().mockResolvedValue([]);
+  useUi.setState({ toasts: [], sessions: [] });
 });
 
 afterEach(() => {
@@ -60,6 +77,76 @@ describe("WorkspaceEmpty", () => {
     click(view!.container.querySelector("button")!);
     expect(onNew).toHaveBeenCalledTimes(1);
     expect(mocks.reopen).not.toHaveBeenCalled();
+  });
+
+  it("lists the host's background 持久终端 next to 新建终端 and takes one over into this pane", async () => {
+    const session = { id: "s1", assetId: "a1", name: "prod", kind: "ssh", status: "connected" as const, tabs: [], createdAt: 0 };
+    useUi.setState({
+      sessions: [session],
+      workspaces: [
+        workspace({
+          sessionId: "s1",
+          assetId: "a1",
+          assetKind: "ssh",
+          panes: [
+            { id: "p0", tabs: [], activeTabId: null },
+            { id: "p1", tabs: [], activeTabId: null },
+          ],
+          activePaneId: "p0",
+        }),
+      ],
+      activeWorkspaceId: "ws",
+    });
+    mocks.listDurable.mockResolvedValue([
+      { id: "d1", title: "deploy", windowTitle: "", cols: 80, rows: 24, dead: false, createdAt: 1 },
+      { id: "d2", title: "", windowTitle: "", cols: 80, rows: 24, dead: true, createdAt: 1 },
+    ]);
+    mocks.sessionList.mockResolvedValue([session]);
+    render();
+    await waitForRendered(() => expect(buttons()).toEqual(["新建终端", "接管"]));
+    expect(text()).toContain("后台运行的持久终端");
+    expect(text()).toContain("deploy");
+    expect(mocks.listDurable).toHaveBeenCalledWith("s1");
+
+    click(view!.container.querySelector<HTMLButtonElement>('button[aria-label="接管 deploy"]')!);
+    await waitForRendered(() =>
+      expect(useUi.getState().workspaces[0]?.panes.find((pane) => pane.id === "p1")?.tabs).toEqual([
+        expect.objectContaining({ kind: "terminal", sessionId: "s1", tabId: "d1", title: "deploy" }),
+      ]),
+    );
+    expect(useUi.getState().workspaces[0]?.panes.find((pane) => pane.id === "p0")?.tabs).toEqual([]);
+  });
+
+  it("picks up background terminals the host lists only after its helper started", async () => {
+    vi.useFakeTimers();
+    try {
+      useUi.setState({
+        sessions: [{ id: "s1", assetId: "a1", name: "prod", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
+        workspaces: [workspace({ sessionId: "s1", assetId: "a1", assetKind: "ssh" })],
+      });
+      render();
+      await flush();
+      expect(buttons()).toEqual(["新建终端"]);
+
+      mocks.listDurable.mockResolvedValue([{ id: "d1", title: "deploy", windowTitle: "", cols: 80, rows: 24, dead: false, createdAt: 1 }]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(buttons()).toEqual(["新建终端", "接管"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows only 新建终端 when the host has no background terminal", async () => {
+    useUi.setState({
+      sessions: [{ id: "s1", assetId: "a1", name: "prod", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
+      workspaces: [workspace({ sessionId: "s1", assetId: "a1", assetKind: "ssh" })],
+    });
+    render();
+    await waitForRendered(() => expect(mocks.listDurable).toHaveBeenCalledWith("s1"));
+    await flush();
+    expect(buttons()).toEqual(["新建终端"]);
   });
 
   it("offers reconnect, not a terminal, in a closed remote desktop workspace", async () => {
