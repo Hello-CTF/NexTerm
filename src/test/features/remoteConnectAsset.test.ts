@@ -6,12 +6,14 @@ const mocks = vi.hoisted(() => ({
   sessionConnect: vi.fn(),
   dbConnect: vi.fn(),
   ask: vi.fn(),
+  assetGet: vi.fn(),
 }));
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
   return {
     ...actual,
+    assetApi: { ...actual.assetApi, get: mocks.assetGet },
     sessionApi: { connect: mocks.sessionConnect },
     dbApi: { connect: mocks.dbConnect },
     vaultApi: { status: vi.fn(async () => ({ initialized: true, unlocked: true, passwordless: false })) },
@@ -45,12 +47,40 @@ describe("opening a remote desktop asset", () => {
     expect(workspaces[0].panes[0].tabs[0]).toMatchObject({ kind: "remote", assetId: "asset-1", title: "远程桌面" });
   });
 
-  it("allows several connections to one asset, each its own workspace", async () => {
+  it("shows the open workspace when the asset is connected again", async () => {
     await connectAsset(rdp);
+    await connectAsset({ id: "asset-2", name: "box", kind: "vnc" });
+    const first = useUi.getState().workspaces[0];
+    const revision = useUi.getState().connectFocusRevision;
+    expect(await connectAsset(rdp)).toEqual({ ok: true });
+    const { workspaces, activeWorkspaceId, connectFocusRevision } = useUi.getState();
+    expect(workspaces).toHaveLength(2);
+    expect(activeWorkspaceId).toBe(first.id);
+    expect(connectFocusRevision).toBeGreaterThan(revision);
+    expect(workspaces[0].panes.flatMap((pane) => pane.tabs)).toHaveLength(1);
+  });
+
+  it("reopens the desktop of the open workspace when its tab was closed", async () => {
     await connectAsset(rdp);
+    const workspace = useUi.getState().workspaces[0];
+    useUi.setState({
+      workspaces: [{ ...workspace, panes: workspace.panes.map((pane) => ({ ...pane, tabs: [], activeTabId: null })) }],
+    });
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", name: "win-01", kind: "rdp", credId: null, groupId: null });
+    expect(await connectAsset(rdp)).toEqual({ ok: true });
     const { workspaces } = useUi.getState();
+    expect(workspaces).toHaveLength(1);
+    expect(workspaces[0].id).toBe(workspace.id);
+    expect(workspaces[0].panes.flatMap((pane) => pane.tabs).map((tab) => tab.kind)).toEqual(["remote"]);
+  });
+
+  it("opens a second workspace only for an explicit new connection", async () => {
+    await connectAsset(rdp);
+    await connectAsset(rdp, { newConnection: true });
+    const { workspaces, activeWorkspaceId } = useUi.getState();
     expect(workspaces).toHaveLength(2);
     expect(workspaces.map((workspace) => workspace.title)).toEqual(["win-01", "win-01（2）"]);
+    expect(activeWorkspaceId).toBe(workspaces[1].id);
     expect(new Set(workspaces.flatMap((workspace) => workspace.panes.flatMap((pane) => pane.tabs.map((tab) => tab.id)))).size).toBe(2);
   });
 

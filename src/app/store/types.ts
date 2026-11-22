@@ -559,6 +559,8 @@ export interface ConnectAssetOptions {
   preserveUserFocus?: boolean;
   // openTerminal opens a terminal with the new workspace; quick connections use it, host clicks do not.
   openTerminal?: boolean;
+  // newConnection opens another remote desktop workspace for an asset that already has one, instead of showing it.
+  newConnection?: boolean;
 }
 
 export type ConnectOutcome =
