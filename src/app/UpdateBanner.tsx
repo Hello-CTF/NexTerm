@@ -12,7 +12,7 @@ const BANNER_CLASS =
 
 export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void }) {
   const {
-    status, installedVersion, skippedVersion, dismissedVersion, restartDeferred, install,
+    status, readyVersion, skippedVersion, dismissedVersion, restartDeferred, install,
     dismissVersion, deferRestart, restart, restarting, restartError,
   } = useUpdate();
   const installError = install.error;
@@ -43,13 +43,13 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
     );
   }
   const version = status?.available ? status.version : "";
-  if (installedVersion) {
+  if (readyVersion) {
     if (restartDeferred) return null;
     return (
       <div className={BANNER_CLASS} role="region" aria-label={t("软件更新")}>
         <IconDownload size={13} className="shrink-0 text-green-300" />
         <span className="min-w-0 truncate" title={RESTART_NOTE}>
-          {t("已安装")} <span className="font-medium text-neutral-100">v{installedVersion}</span>{t("，重启应用后生效")}
+          {t("v{readyVersion} 下载完成，重启时安装", { readyVersion })}
         </span>
         {restartError && <span className="shrink-0 text-red-300">{t("重启失败：{restartError}", { restartError })}</span>}
         <div className="nx-spacer" />
@@ -60,7 +60,7 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
           title={RESTART_NOTE}
           onClick={() => void restart()}
         >
-          {restarting ? t("正在重启…") : t("立即重启")}
+          {restarting ? t("正在安装并重启…") : t("立即重启并安装")}
         </button>
         <button
           type="button"

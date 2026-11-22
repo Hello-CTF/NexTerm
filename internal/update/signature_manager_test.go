@@ -16,7 +16,7 @@ func TestCheckSignedRelease(t *testing.T) {
 	fixture.sign(key, "0.3.0")
 	server := fixture.server(t)
 	manager := &Manager{
-		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
+		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(),
 		APIURL: server.URL + "/releases", MinisignPublicKey: key.PublicKeyFile(), RequireSignedChecksums: true,
 	}
 	status := manager.Check(context.Background())
@@ -90,7 +90,7 @@ func TestInstallSignatureFailuresKeepOldBinary(t *testing.T) {
 				t.Fatal(err)
 			}
 			manager := &Manager{
-				CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, ExePath: executable,
+				CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(), ExePath: executable,
 			}
 			test.setup(fixture, key, manager)
 			server := fixture.server(t)
@@ -128,7 +128,7 @@ func TestInstallSignedChecksumMismatchKeepsOldBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := &Manager{
-		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
+		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(),
 		ExePath: executable, APIURL: server.URL + "/releases", MinisignPublicKey: key.PublicKeyFile(),
 	}
 	if _, err := manager.Install(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "SHA-256") {
@@ -156,7 +156,7 @@ func TestInstallSignedReleaseReplacesBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := &Manager{
-		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
+		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: t.TempDir(),
 		ExePath: executable, APIURL: server.URL + "/releases", MinisignPublicKey: key.PublicKeyFile(), RequireSignedChecksums: true,
 		RestartFunc: func(context.Context, string) error { return nil },
 	}
@@ -164,8 +164,11 @@ func TestInstallSignedReleaseReplacesBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Installed || result.Restarted || result.Version != "0.3.0" {
+	if !result.Ready || result.Installed || result.Version != "0.3.0" {
 		t.Fatalf("result = %+v", result)
+	}
+	if restart := manager.Restart(context.Background()); !restart.Installed || !restart.Restarted {
+		t.Fatalf("restart = %+v", restart)
 	}
 	content, err := os.ReadFile(executable)
 	if err != nil {

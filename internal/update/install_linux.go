@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/ulikunitz/xz"
 )
 
@@ -59,38 +60,56 @@ func debPackageOwns(infoDir, executable string) bool {
 
 // applyInstall installs the executable and bundled privacy runtime from the signed deb.
 func (m *Manager) applyInstall(ctx context.Context, archive string) (string, error) {
+	if err := extractDebPayload(ctx, archive, m.ExePath); err != nil {
+		return "", err
+	}
+	return m.ExePath, nil
+}
+
+// checkPackage extracts the deb into a scratch directory exactly as applyInstall would, so a package that cannot
+// be installed is reported when it is staged rather than when the user restarts.
+func (m *Manager) checkPackage(ctx context.Context, archive string) error {
+	scratch, err := os.MkdirTemp(platform.TempDir(), "nexterm-update-check-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(scratch)
+	return extractDebPayload(ctx, archive, filepath.Join(scratch, "nexterm-desktop"))
+}
+
+func extractDebPayload(ctx context.Context, archive, executable string) error {
 	file, err := os.Open(archive)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer file.Close()
 	source, member, err := debDataTar(file)
 	if err != nil {
-		return "", err
+		return err
 	}
 	var payload io.Reader
 	switch member {
 	case "data.tar.xz":
 		reader, err := xz.NewReader(source)
 		if err != nil {
-			return "", userErrorf(UserErrorIO, "解压 %s 失败: %w", filepath.Base(archive), err)
+			return userErrorf(UserErrorIO, "解压 %s 失败: %w", filepath.Base(archive), err)
 		}
 		payload = reader
 	default:
 		reader, err := gzip.NewReader(source)
 		if err != nil {
-			return "", userErrorf(UserErrorIO, "解压 %s 失败: %w", filepath.Base(archive), err)
+			return userErrorf(UserErrorIO, "解压 %s 失败: %w", filepath.Base(archive), err)
 		}
 		defer reader.Close()
 		payload = reader
 	}
-	if err := installLinuxPayload(ctx, tar.NewReader(payload), m.ExePath); err != nil {
+	if err := installLinuxPayload(ctx, tar.NewReader(payload), executable); err != nil {
 		if errors.Is(err, errPayloadMissingExecutable) {
-			return "", userErrorf(UserErrorIO, "%s 中没有 nexterm-desktop", filepath.Base(archive))
+			return userErrorf(UserErrorIO, "%s 中没有 nexterm-desktop", filepath.Base(archive))
 		}
-		return "", userErrorf(UserErrorIO, "安装更新文件失败: %w", err)
+		return userErrorf(UserErrorIO, "安装更新文件失败: %w", err)
 	}
-	return m.ExePath, nil
+	return nil
 }
 
 // debDataTar locates the data.tar.xz or data.tar.gz member in the deb (ar container) and returns its content

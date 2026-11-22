@@ -1829,7 +1829,7 @@ export type InstallState = {
   transferred: number;
   total: number;
   error: string;
-  installedVersion: string;
+  readyVersion: string;
 };
 
 export type InventoryCandidateDTO = {
@@ -3836,6 +3836,7 @@ export type UpdateChannelResponse = {
 };
 
 export type UpdateResult = {
+  ready: boolean;
   installed: boolean;
   restarted: boolean;
   version: string;
@@ -3855,6 +3856,7 @@ export type UpdateStatus = {
   releaseUrl?: string;
   downloadUrl?: string;
   pendingVersion?: string;
+  incompleteVersion?: string;
   channel: string;
   releaseChannel: string;
   runningPrerelease: boolean;

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/releasesig"
 )
@@ -26,13 +27,15 @@ const (
 )
 
 type Release struct {
-	TagName    string  `json:"tag_name"`
-	Name       string  `json:"name"`
-	Body       string  `json:"body"`
-	HTMLURL    string  `json:"html_url"`
-	Draft      bool    `json:"draft"`
-	Prerelease bool    `json:"prerelease"`
-	Assets     []Asset `json:"assets"`
+	TagName string `json:"tag_name"`
+	Name    string `json:"name"`
+	Body    string `json:"body"`
+	HTMLURL string `json:"html_url"`
+	// PublishedAt is zero for drafts and when the API omits it.
+	PublishedAt time.Time `json:"published_at"`
+	Draft       bool      `json:"draft"`
+	Prerelease  bool      `json:"prerelease"`
+	Assets      []Asset   `json:"assets"`
 }
 
 type Asset struct {

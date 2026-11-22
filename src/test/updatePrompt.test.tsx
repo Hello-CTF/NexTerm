@@ -66,7 +66,7 @@ beforeEach(() => {
     checking: false,
     checkError: null,
     install: { active: false, phase: null, transferred: 0, total: 0, error: null, taskId: null },
-    installedVersion: null,
+    readyVersion: null,
     restarting: false,
     restartError: null,
     skippedVersion: null,
@@ -111,7 +111,8 @@ describe("update prompt dialog", () => {
   it("choosing update uses the existing installation flow", async () => {
     mocks.askChoice.mockResolvedValue("update");
     mocks.install.mockResolvedValue({
-      installed: true,
+      ready: true,
+      installed: false,
       restarted: false,
       version: "0.3.0",
       unavailableReason: "",
@@ -179,11 +180,11 @@ describe("update prompt dialog", () => {
   it("leaves an update the app cannot install, or one already installing or installed, to the banner", async () => {
     useUpdateStore.setState({ status: makeStatus({ canInstall: false, unavailableReason: "安装目录不可写" }) });
     await promptUpdateIfNeeded();
-    useUpdateStore.setState({ status: makeStatus(), installedVersion: "0.3.0" });
+    useUpdateStore.setState({ status: makeStatus(), readyVersion: "0.3.0" });
     await promptUpdateIfNeeded();
     useUpdateStore.setState({
       status: makeStatus(),
-      installedVersion: null,
+      readyVersion: null,
       install: { active: true, phase: "download", transferred: 0, total: 0, error: null, taskId: null },
     });
     await promptUpdateIfNeeded();
