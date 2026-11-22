@@ -161,11 +161,12 @@ html[data-nx-keyboard-tight="true"] .nx-takeover-banner {
   display: none;
 }
 
-/* The terminal keeps its full grid while the soft keyboard is open; anchor it to the bottom so the clipped rows are the top ones. */
+/* The terminal keeps its full grid while the soft keyboard is open; anchor it to the bottom so the clipped rows are the top
+   ones. When the cursor is in those rows, XtermView sets --nx-kb-cursor-shift to move the grid down until it shows. */
 html[data-nx-keyboard="open"] .nx-xterm-host > .xterm {
   position: absolute;
   right: 0;
-  bottom: 0;
+  bottom: calc(0px - var(--nx-kb-cursor-shift, 0px));
   left: 0;
 }
 

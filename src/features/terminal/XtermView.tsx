@@ -82,6 +82,7 @@ import { CopyModeOverlay } from "./CopyModeOverlay";
 import { isTouchShell } from "../../app/shell";
 import { createTrzszSession } from "./trzsz/trzszSession";
 import { setTrzszTransferActive } from "./trzsz/trzszActivity";
+import { keyboardViewShift } from "./keyboardViewShift";
 
 export { XTERM_DARK_THEME, XTERM_LIGHT_THEME, xtermThemeFor } from "./xtermTheme";
 
@@ -245,6 +246,28 @@ function LinesBelowBadge({ tabId, onJump }: { tabId: string; onJump: () => void 
   );
 }
 
+// With the soft keyboard open, moves the bottom-anchored terminal down so the cursor row stays visible (see
+// keyboardViewShift); the grid itself is untouched. With the keyboard closed the shift is cleared.
+function alignKeyboardView(host: HTMLElement | null, term: Terminal | null): void {
+  const element = term?.element;
+  if (!host || !term || !element) return;
+  const screen = element.querySelector<HTMLElement>(".xterm-screen");
+  const buffer = term.buffer.active;
+  const shift =
+    document.documentElement.dataset.nxKeyboard === "open" && screen
+      ? keyboardViewShift({
+          hostHeight: host.clientHeight,
+          terminalHeight: element.offsetHeight,
+          screenTop: screen.offsetTop,
+          screenHeight: screen.offsetHeight,
+          rows: term.rows,
+          cursorRow: buffer.cursorY + buffer.baseY - buffer.viewportY,
+        })
+      : 0;
+  if (shift > 0) host.style.setProperty("--nx-kb-cursor-shift", `${shift}px`);
+  else host.style.removeProperty("--nx-kb-cursor-shift");
+}
+
 export function XtermView(props: XtermViewProps) {
   const { sessionId, containerId, resumeTabId } = props;
   const resumeDurableRef = useRef(props.resumeDurable);
@@ -344,6 +367,7 @@ export function XtermView(props: XtermViewProps) {
     const last = lastFitViewportRef.current;
     const keyboardOpen = document.documentElement.dataset.nxKeyboard === "open";
     if (keyboardOpen && last && last.widthPx === geometry.viewport.widthPx && geometry.viewport.heightPx < last.heightPx) {
+      alignKeyboardView(host, term);
       return false;
     }
     lastFitViewportRef.current = geometry.viewport;
@@ -367,6 +391,7 @@ export function XtermView(props: XtermViewProps) {
       }
     }
     onGeometryRef.current?.();
+    alignKeyboardView(host, term);
     return localChanged || remoteChanged;
   };
 
@@ -582,7 +607,19 @@ export function XtermView(props: XtermViewProps) {
         flushUiUpdates();
       });
     };
-    const scrollDisposable = term.onScroll(scheduleUiFlush);
+    let keyboardAlignFrame: number | null = null;
+    const scheduleKeyboardAlign = () => {
+      if (disposed || keyboardAlignFrame !== null || document.documentElement.dataset.nxKeyboard !== "open") return;
+      keyboardAlignFrame = requestAnimationFrame(() => {
+        keyboardAlignFrame = null;
+        alignKeyboardView(hostRef.current, termRef.current);
+      });
+    };
+    const cursorAlignDisposable = term.onCursorMove(scheduleKeyboardAlign);
+    const scrollDisposable = term.onScroll(() => {
+      scheduleUiFlush();
+      scheduleKeyboardAlign();
+    });
     const pasteText = (text: string, submit = false) => {
       if (copyMode.isActive()) return;
       // Like typed input (xterm's scrollOnUserInput), text sent from the composer or key bar returns to the bottom.
@@ -1761,6 +1798,8 @@ export function XtermView(props: XtermViewProps) {
       if (windowResizeTimer !== null) window.clearTimeout(windowResizeTimer);
       if (measureFrame !== null) cancelAnimationFrame(measureFrame);
       if (uiFrame !== null) cancelAnimationFrame(uiFrame);
+      if (keyboardAlignFrame !== null) cancelAnimationFrame(keyboardAlignFrame);
+      cursorAlignDisposable.dispose();
       responses.dispose();
       trzsz.dispose();
       cancelTrzszRef.current = null;

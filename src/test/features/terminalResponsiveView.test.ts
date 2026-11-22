@@ -106,6 +106,9 @@ vi.mock("@xterm/xterm", () => ({
     onData() {
       return { dispose: vi.fn() };
     }
+    onCursorMove() {
+      return { dispose: () => {} };
+    }
     onScroll(callback: () => void) {
       this.scrollCallback = callback;
       return { dispose: vi.fn() };

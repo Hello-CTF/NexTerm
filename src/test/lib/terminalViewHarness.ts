@@ -110,6 +110,9 @@ export const xtermModule = () => ({
       this.handlers.data = callback;
       return { dispose: () => undefined };
     }
+    onCursorMove() {
+      return { dispose: () => {} };
+    }
     onScroll(callback: () => void) {
       this.handlers.scroll = callback;
       return { dispose: () => undefined };
