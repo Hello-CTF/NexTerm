@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flush, mount, waitForRendered, type MountedView } from "../features/reactTestUtils";
+import { click, deferred, flush, mount, waitForRendered, type MountedView } from "../features/reactTestUtils";
 import type { Workspace } from "../../app/store";
 
 const mocks = vi.hoisted(() => ({
@@ -136,6 +136,61 @@ describe("WorkspaceEmpty", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe("taking over while the workspace changes", () => {
+    const session = { id: "s1", assetId: "a1", name: "prod", kind: "ssh", status: "connected" as const, tabs: [], createdAt: 0 };
+    const other: Workspace = {
+      id: "ws-b", kind: "session", title: "other", sessionId: "s2",
+      panes: [{ id: "pb", tabs: [], activeTabId: null }], activePaneId: "pb", closable: true,
+    };
+
+    async function listed() {
+      useUi.setState({
+        sessions: [session],
+        workspaces: [workspace({ sessionId: "s1", assetId: "a1", assetKind: "ssh" }), other],
+        activeWorkspaceId: "ws",
+      });
+      mocks.listDurable.mockResolvedValue([{ id: "d1", title: "deploy", windowTitle: "", cols: 80, rows: 24, dead: false, createdAt: 1 }]);
+      const list = deferred<unknown[]>();
+      mocks.sessionList.mockReturnValue(list.promise);
+      render();
+      await waitForRendered(() => expect(buttons()).toEqual(["新建终端", "接管"]));
+      click(view!.container.querySelector<HTMLButtonElement>('button[aria-label="接管 deploy"]')!);
+      return list;
+    }
+
+    function terminalTabs() {
+      return useUi.getState().workspaces.flatMap((item) => item.panes.flatMap((pane) => pane.tabs));
+    }
+
+    it("drops the takeover when the user switched to another workspace meanwhile", async () => {
+      const list = await listed();
+      act(() => useUi.getState().setActiveWorkspace("ws-b"));
+      await act(async () => {
+        list.resolve([session]);
+        await list.promise;
+      });
+      await flush();
+      expect(useUi.getState().activeWorkspaceId).toBe("ws-b");
+      expect(terminalTabs()).toEqual([]);
+    });
+
+    it("refuses a listed terminal whose session the workspace no longer holds", async () => {
+      const list = await listed();
+      act(() =>
+        useUi.setState((state) => ({
+          workspaces: state.workspaces.map((item) => (item.id === "ws" ? { ...item, sessionId: "s9" } : item)),
+        })),
+      );
+      await act(async () => {
+        list.resolve([session, { ...session, id: "s9" }]);
+        await list.promise;
+      });
+      await flush();
+      expect(terminalTabs()).toEqual([]);
+      expect(useUi.getState().toasts.map((toast) => toast.text).join("\n")).toContain("不属于当前主机");
+    });
   });
 
   it("shows only 新建终端 when the host has no background terminal", async () => {
