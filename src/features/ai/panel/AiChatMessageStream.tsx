@@ -192,12 +192,16 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               aria-label={`${confirmTitle(confirmCard.risk)}：${toolLabel(confirmCard.tool)}`}
               aria-describedby={`ai-confirm-help-${confirmCard.id}`}
               className={`${confirmCard.risk === "danger" ? "nx-alert nx-alert-danger" : "nx-alert"} mt-2.5 outline-none`}
+              onPointerDown={(event) => {
+                delete event.currentTarget.dataset.autoFocused;
+              }}
               onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void confirm("deny");
-                }
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                event.stopPropagation();
+                // Focus the card took by itself (useChatRunSession) is not the user choosing to answer it.
+                if (event.target === event.currentTarget && event.currentTarget.dataset.autoFocused !== undefined) return;
+                void confirm("deny");
               }}
             >
               <div className="mb-1.5 flex items-center gap-1.5 font-semibold">

@@ -69,6 +69,7 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: mocks.promptText }));
 
 import { AiSidebar } from "../../features/ai/AiSidebar";
+import { aiNeedsInputCount } from "../../features/ai/aiNeedsInput";
 import { aiTabBusyIds, aiTabRunControls, clearAiTabRuns } from "../../features/ai/runOwnership";
 import { useUi } from "../../app/store";
 import { resetAllKeybindings } from "../../app/keybindings";
@@ -278,38 +279,81 @@ describe("AiSidebar permission request dialogs", () => {
     });
   });
 
-  it("denies by default when Escape is pressed", async () => {
-    await sendAndEmit([
-      { type: "toolCall", id: "call-5", name: "write_file", display: "write_file", args: {} },
-      {
-        type: "confirmRequired",
-        id: "call-5",
-        tool: "write_file",
-        args: { path: "/var/log/app.log" },
-        risk: "needs_confirm",
-        rendered: "write_file /var/log/app.log",
-        rulePattern: "/var/log/**",
-        confirmationNonce: "n-5",
-        requestId: "req-5",
-        attempt: 1,
-      },
-    ]);
-    const card = mounted?.container.querySelector<HTMLElement>(".nx-alert");
-    expect(card).not.toBeNull();
-    expect(document.activeElement).toBe(card);
+  const writeConfirm = (id: string) => [
+    { type: "toolCall", id, name: "write_file", display: "write_file", args: {} },
+    {
+      type: "confirmRequired",
+      id,
+      tool: "write_file",
+      args: { path: "/var/log/app.log" },
+      risk: "needs_confirm",
+      rendered: "write_file /var/log/app.log",
+      rulePattern: "/var/log/**",
+      confirmationNonce: `n-${id}`,
+      requestId: `req-${id}`,
+      attempt: 1,
+    },
+  ];
+
+  function pressEscape(): void {
     act(() => {
       document.activeElement?.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
       );
     });
+  }
+
+  it("takes focus from the AI panel but denies on Escape only after the user picks the card", async () => {
+    mounted?.container.querySelector<HTMLTextAreaElement>("textarea[aria-label='消息输入']")?.focus();
+    await sendAndEmit(writeConfirm("call-5"));
+    const card = mounted?.container.querySelector<HTMLElement>(".nx-alert");
+    expect(card).not.toBeNull();
+    expect(document.activeElement).toBe(card);
+    expect(aiNeedsInputCount()).toBe(1);
+
+    pressEscape();
+    await flush();
+    expect(mocks.confirm).not.toHaveBeenCalled();
+
+    act(() => {
+      card!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    });
+    pressEscape();
     await flush();
     expect(mocks.confirm.mock.calls[0][0]).toEqual({
       jobId: "job-1",
       callId: "call-5",
-      nonce: "n-5",
+      nonce: "n-call-5",
       decision: "deny",
     });
     await flushUntil(() => mounted?.container.textContent?.includes("已拒绝") === true);
+    expect(aiNeedsInputCount()).toBe(0);
+  });
+
+  it("leaves focus outside the AI panel where it is", async () => {
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+    await sendAndEmit(writeConfirm("call-6"));
+    expect(mounted?.container.querySelector(".nx-alert")).not.toBeNull();
+    expect(document.activeElement).toBe(outside);
+    expect(aiNeedsInputCount()).toBe(1);
+    outside.remove();
+  });
+
+  it("flags an approval that arrives while the AI panel is closed", async () => {
+    await sendAndEmit([]);
+    act(() => useUi.setState({ rightOpen: false }));
+    await flush();
+    act(() => {
+      for (const event of writeConfirm("call-7")) mocks.channels[0].onEvent(event);
+    });
+    await flush();
+    expect(mounted?.container.querySelector(".nx-alert")).toBeNull();
+    expect(aiNeedsInputCount()).toBe(1);
+    act(() => useUi.setState({ rightOpen: true }));
+    await flush();
+    expect(mounted?.container.querySelector(".nx-alert")).not.toBeNull();
   });
 
   it("approves a plan only once without restating it and does not offer approval again after history restoration", async () => {

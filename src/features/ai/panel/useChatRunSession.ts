@@ -8,6 +8,7 @@ import { type ConversationStream, createConversationStream } from "../conversati
 import { ToolHandleRegistry } from "../agentToolData";
 import { type IpcChannel, disposeChannel } from "../../../ipc/events";
 import { pendingInteraction } from "../conversation";
+import { setAiTabNeedsInput } from "../aiNeedsInput";
 import { type RefChip, aiScopeForWorkspace, currentAiBoardKey, AI_SYNC_NOTICE_DISMISS_MS, type AiChatBase } from "./aiSidebarShared";
 import { t } from "../../../i18n";
 
@@ -248,9 +249,25 @@ export function useChatRunSession(p: AiChatBase) {
   const confirmCard = pendingInteraction(conv, activeGeneration, "confirm");
   const questionCard = pendingInteraction(conv, activeGeneration, "question");
   const confirmCardRef = useRef<HTMLDivElement>(null);
+  // The card takes focus only from somewhere else in the AI panel: a user typing in a terminal or editor keeps focus,
+  // so a keystroke meant for them never lands on the approval. data-auto-focused marks focus the card did not get
+  // from the user, which Escape does not treat as a denial (see AiChatMessageStream).
   useEffect(() => {
-    if (confirmCard?.id) confirmCardRef.current?.focus({ preventScroll: true });
+    const card = confirmCardRef.current;
+    if (!confirmCard?.id || !card) return;
+    delete card.dataset.autoFocused;
+    const panel = card.closest("aside");
+    const focused = document.activeElement;
+    if (!panel || !(focused instanceof Node) || !panel.contains(focused)) return;
+    card.dataset.autoFocused = "";
+    card.focus({ preventScroll: true });
   }, [confirmCard?.id]);
+  // A pending approval or question is the panel needing the user; the header shows it while the panel is closed.
+  const needsInputCardId = confirmCard?.id ?? questionCard?.id ?? null;
+  useEffect(() => {
+    setAiTabNeedsInput(tabKey, needsInputCardId !== null);
+  }, [tabKey, needsInputCardId]);
+  useEffect(() => () => setAiTabNeedsInput(tabKey, false), [tabKey]);
   const productionNames = confirmCard?.requiredEnvironmentNames;
   // The confirm state is bound to the owning card id and honored only while
   // that id is the current card: a directly replaced card starts locked in

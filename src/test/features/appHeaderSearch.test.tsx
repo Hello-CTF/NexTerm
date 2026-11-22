@@ -5,6 +5,7 @@ import { act, createElement } from "react";
 import { click, mountWithClient, type MountedView } from "./reactTestUtils";
 import { AppHeader } from "../../app/shell/AppHeader";
 import { resetAllKeybindings, setKeybinding } from "../../app/keybindings";
+import { setAiTabNeedsInput } from "../../features/ai/aiNeedsInput";
 
 let mounted: MountedView | undefined;
 
@@ -55,5 +56,28 @@ describe("header search pill", () => {
     expect(keys()).toEqual(["Alt", "K"]);
     act(() => setKeybinding("commandPalette", null));
     expect(keys()).toEqual([]);
+  });
+});
+
+describe("header AI button", () => {
+  it("shows how many AI requests wait for the user and clears when they are answered", () => {
+    const view = render();
+    const button = () => view.container.querySelector<HTMLButtonElement>("button[aria-pressed]")!;
+    expect(button().getAttribute("aria-label")).toBe("AI 助手");
+    expect(button().querySelector("[data-ai-needs-input]")).toBeNull();
+
+    act(() => {
+      setAiTabNeedsInput("tab-a", true);
+      setAiTabNeedsInput("tab-b", true);
+    });
+    expect(button().querySelector("[data-ai-needs-input]")?.textContent).toBe("2");
+    expect(button().getAttribute("aria-label")).toContain("2 项等待你确认或回答");
+
+    act(() => {
+      setAiTabNeedsInput("tab-a", false);
+      setAiTabNeedsInput("tab-b", false);
+    });
+    expect(button().querySelector("[data-ai-needs-input]")).toBeNull();
+    expect(button().getAttribute("aria-label")).toBe("AI 助手");
   });
 });

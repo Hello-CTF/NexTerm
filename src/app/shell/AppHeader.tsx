@@ -14,6 +14,7 @@ import { formatBinding, useKeybindings } from "../keybindings";
 import { useShell } from "./useShell";
 import { useAssetProductionClassification } from "../../features/production/productionSettings";
 import { InboxButton } from "../../features/inbox/InboxButton";
+import { useAiNeedsInputCount } from "../../features/ai/aiNeedsInput";
 import {
   IconCheckCircle,
   IconChevronDown,
@@ -108,6 +109,9 @@ export function AppHeader({
   const mobile = useShell() === "mobile";
   const paletteKeys = bindingKeys(useKeybindings().commandPalette);
   const paletteLabel = t("跳转面板 ({commandPaletteLabel})", { commandPaletteLabel });
+  // An approval or question waiting in the AI panel is shown on its button, which matters most while the panel is closed.
+  const aiWaiting = useAiNeedsInputCount();
+  const aiLabel = aiWaiting > 0 ? t("AI 助手：{count} 项等待你确认或回答", { count: aiWaiting }) : t("AI 助手");
   return (
     <header
       className="nx-app-header flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pl-2.5 pr-2.5"
@@ -183,13 +187,23 @@ export function AppHeader({
       )}
       <InboxButton />
       <button
-        className={`nx-icon-btn ${rightDockOpen ? "is-active" : ""}`} style={wailsNoDragRegionStyle}
-        title={t("AI 助手")}
-        aria-label={t("AI 助手")}
+        className={`nx-icon-btn relative ${rightDockOpen ? "is-active" : ""}`} style={wailsNoDragRegionStyle}
+        title={aiLabel}
+        aria-label={aiLabel}
         aria-pressed={rightDockOpen}
         onClick={onToggleRight}
       >
         <IconSparkles size={15} />
+        {aiWaiting > 0 && (
+          <span
+            className="absolute -right-0.5 -top-0.5 min-w-[14px] rounded-full bg-amber-400 px-[3px] text-center text-[9.5px] font-semibold leading-[14px] text-neutral-950"
+            data-ai-needs-input={aiWaiting}
+            aria-hidden="true"
+            style={wailsNoDragRegionStyle}
+          >
+            {aiWaiting > 99 ? "99+" : aiWaiting}
+          </span>
+        )}
       </button>
       {mobile && (
         <button
