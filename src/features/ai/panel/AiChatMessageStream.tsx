@@ -195,12 +195,16 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               onPointerDown={(event) => {
                 delete event.currentTarget.dataset.autoFocused;
               }}
+              onBlur={(event) => {
+                if (event.target === event.currentTarget) delete event.currentTarget.dataset.autoFocused;
+              }}
               onKeyDown={(event) => {
                 if (event.key !== "Escape") return;
+                // Focus the card took by itself (useChatRunSession) is not the user choosing to answer it, so the key
+                // goes on to whatever else handles Escape.
+                if (event.target === event.currentTarget && event.currentTarget.dataset.autoFocused !== undefined) return;
                 event.preventDefault();
                 event.stopPropagation();
-                // Focus the card took by itself (useChatRunSession) is not the user choosing to answer it.
-                if (event.target === event.currentTarget && event.currentTarget.dataset.autoFocused !== undefined) return;
                 void confirm("deny");
               }}
             >

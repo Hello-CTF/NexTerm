@@ -1,4 +1,5 @@
 import { GLOBAL_AI_BOARD_KEY, useUi, type AiDockTab, type WorkspaceKind } from "../../app/store";
+import { setAiTabNeedsInput } from "./aiNeedsInput";
 
 export type AiRunKind = "chat" | "takeover";
 export type AiRunCancellation = "idle" | "cancelling" | "unconfirmed";
@@ -12,6 +13,8 @@ export function setAiTabBusy(tabKey: string, busy: boolean): void {
   if (aiTabBusyIds.has(tabKey) === busy) return;
   if (busy) aiTabBusyIds.add(tabKey);
   else aiTabBusyIds.delete(tabKey);
+  // A run that ended has nothing left for the user to approve or answer.
+  if (!busy) setAiTabNeedsInput(tabKey, false);
   aiTabBusyVersion += 1;
   const aiBusy = Object.values(useUi.getState().aiBoards).some((board) =>
     board.tabs.some((tab) => aiTabBusyIds.has(tab.id)),
@@ -61,6 +64,7 @@ export function registerAiRunGeneration(tabKey: string, generation: number): voi
 export function clearAiTabRun(tabKey: string): void {
   // Goes through setAiTabBusy so the tab dot, close guard and global aiBusy see the change.
   setAiTabBusy(tabKey, false);
+  setAiTabNeedsInput(tabKey, false);
   aiTabRunControls.delete(tabKey);
   aiTabRunGenerations.delete(tabKey);
 }

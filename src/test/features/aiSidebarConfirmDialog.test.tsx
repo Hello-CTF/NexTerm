@@ -69,13 +69,14 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, promptText: mocks.promptText }));
 
 import { AiSidebar } from "../../features/ai/AiSidebar";
-import { aiNeedsInputCount } from "../../features/ai/aiNeedsInput";
+import { aiNeedsInputCount, resetAiNeedsInputForTest } from "../../features/ai/aiNeedsInput";
 import { aiTabBusyIds, aiTabRunControls, clearAiTabRuns } from "../../features/ai/runOwnership";
 import { useUi } from "../../app/store";
 import { resetAllKeybindings } from "../../app/keybindings";
 
 beforeEach(() => {
   clearAiTabRuns([...aiTabBusyIds, ...aiTabRunControls.keys()]);
+  resetAiNeedsInputForTest();
 });
 
 let mounted: MountedView | undefined;
@@ -295,12 +296,12 @@ describe("AiSidebar permission request dialogs", () => {
     },
   ];
 
-  function pressEscape(): void {
+  function pressEscape(): KeyboardEvent {
+    const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
     act(() => {
-      document.activeElement?.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
-      );
+      document.activeElement?.dispatchEvent(event);
     });
+    return event;
   }
 
   it("takes focus from the AI panel but denies on Escape only after the user picks the card", async () => {
@@ -311,9 +312,22 @@ describe("AiSidebar permission request dialogs", () => {
     expect(document.activeElement).toBe(card);
     expect(aiNeedsInputCount()).toBe(1);
 
-    pressEscape();
+    const outerEscape = vi.fn();
+    document.addEventListener("keydown", outerEscape);
+    const ignored = pressEscape();
+    document.removeEventListener("keydown", outerEscape);
     await flush();
     expect(mocks.confirm).not.toHaveBeenCalled();
+    // The ignored key still reaches outer Escape handlers.
+    expect(ignored.defaultPrevented).toBe(false);
+    expect(outerEscape).toHaveBeenCalledTimes(1);
+
+    // Leaving the card and coming back by keyboard is not the card's own focus any more.
+    act(() => {
+      card!.blur();
+      card!.focus();
+    });
+    expect(card!.hasAttribute("data-auto-focused")).toBe(false);
 
     act(() => {
       card!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
@@ -339,6 +353,27 @@ describe("AiSidebar permission request dialogs", () => {
     expect(document.activeElement).toBe(outside);
     expect(aiNeedsInputCount()).toBe(1);
     outside.remove();
+  });
+
+  it("keeps the flag of a pending approval while another workspace's board is shown, and drops it when the tab closes", async () => {
+    await sendAndEmit(writeConfirm("call-8"));
+    expect(aiNeedsInputCount()).toBe(1);
+    const globalTabs = Object.values(useUi.getState().aiBoards).flatMap((board) => board.tabs.map((tab) => tab.id));
+    act(() =>
+      useUi.setState({
+        workspaces: [{
+          id: "ws-b", kind: "session", title: "b", sessionId: "s2",
+          panes: [{ id: "p", tabs: [], activeTabId: null }], activePaneId: "p", closable: true,
+        }],
+        activeWorkspaceId: "ws-b",
+      }),
+    );
+    await flush();
+    expect(mounted?.container.querySelector(".nx-alert")).toBeNull();
+    expect(aiNeedsInputCount()).toBe(1);
+
+    act(() => clearAiTabRuns(globalTabs));
+    expect(aiNeedsInputCount()).toBe(0);
   });
 
   it("flags an approval that arrives while the AI panel is closed", async () => {
