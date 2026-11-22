@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -233,7 +234,7 @@ func (m *Manager) check(ctx context.Context, channel ReleaseChannel) (Status, *r
 	defer cancel()
 	releases, err := m.fetchReleases(ctx)
 	if err != nil {
-		return fail("检查更新失败: " + err.Error())
+		return fail(fmt.Errorf("检查更新失败: %w", err).Error())
 	}
 	for _, release := range candidateReleases(releases, m.CurrentVersion, channel) {
 		asset, ok := matchAsset(release, m.GOOS, m.GOARCH)
@@ -245,10 +246,10 @@ func (m *Manager) check(ctx context.Context, channel ReleaseChannel) (Status, *r
 		}
 		sums, err := m.fetchChecksums(ctx, release)
 		if err != nil {
-			return fail("获取校验和失败: " + err.Error())
+			return fail(fmt.Errorf("获取校验和失败: %w", err).Error())
 		}
 		if _, ok := sums[asset.Name]; !ok {
-			return fail(checksumsAssetName + " 缺少 " + asset.Name + " 的校验和")
+			return fail(fmt.Sprintf("%s 缺少 %s 的校验和", checksumsAssetName, asset.Name))
 		}
 		status.Available = true
 		status.Version = release.version()
