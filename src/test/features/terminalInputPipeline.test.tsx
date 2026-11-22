@@ -370,6 +370,36 @@ describe("XtermView input pipeline bytes", () => {
     expect(sent).toEqual(["\x17"]);
   });
 
+  it("in an alternate-screen program, releases bare Ctrl bindings and keeps the Ctrl+Alt and Ctrl+Shift defaults", async () => {
+    const textarea = await show();
+    await act(async () => {
+      harness.emit?.(new TextEncoder().encode("\x1b[?1049h"));
+      await flushMacrotask();
+    });
+    let reachedWindow = 0;
+    const onWindow = () => {
+      reachedWindow++;
+    };
+    window.addEventListener("keydown", onWindow);
+    try {
+      // A binding saved on a bare Ctrl chord: vim reads ^W as its own key, so it goes to the program.
+      setKeybinding("closeTab", "Mod+w");
+      stroke(textarea, { key: "w", code: "KeyW", keyCode: 87, ctrlKey: true });
+      expect(sent).toEqual(["\x17"]);
+      sent = [];
+      // Defaults xterm would send as Meta (ESC =, ESC ^W) stay app shortcuts and inject nothing.
+      stroke(textarea, { key: "=", code: "Equal", keyCode: 187, ctrlKey: true, altKey: true });
+      stroke(textarea, { key: "W", code: "KeyW", keyCode: 87, ctrlKey: true, shiftKey: true, altKey: true });
+      stroke(textarea, { key: "T", code: "KeyT", keyCode: 84, ctrlKey: true, shiftKey: true, altKey: true });
+      // A default xterm does not encode stays an app shortcut too.
+      stroke(textarea, { key: "D", code: "KeyD", keyCode: 68, ctrlKey: true, shiftKey: true });
+      expect(sent).toEqual([]);
+      expect(reachedWindow).toBe(4);
+    } finally {
+      window.removeEventListener("keydown", onWindow);
+    }
+  });
+
   it("applies a key-bar Ctrl latch to the next typed character only", async () => {
     const textarea = await show();
     toggleStickyModifier("ctrl");
