@@ -164,16 +164,20 @@ type Tab struct {
 	titleCustom     bool
 	// titleChangedAt is the client-supplied time (Unix ms) of the last explicit
 	// title decision (a rename or a clear); zero when unknown.
-	titleChangedAt  int64
-	cancelPump      context.CancelFunc
-	cwdTracker      *shellintegr.Tracker
-	cwd             string
-	commandTrack    *shellintegr.CommandTracker
-	commandState    shellintegr.CommandState
-	pendingCmd      *pendingCommand
-	durableFed      int64
-	durableSeqs     durableSeqMap
-	durableIdentity base.DurableIdentity
+	titleChangedAt int64
+	cancelPump     context.CancelFunc
+	cwdTracker     *shellintegr.Tracker
+	cwd            string
+	// recoveredWindowTitle is the program window title the helper reported
+	// when this tab was recovered; it stands in for the OSC title until the
+	// terminal reports one, since the replayed tail may not contain it.
+	recoveredWindowTitle string
+	commandTrack         *shellintegr.CommandTracker
+	commandState         shellintegr.CommandState
+	pendingCmd           *pendingCommand
+	durableFed           int64
+	durableSeqs          durableSeqMap
+	durableIdentity      base.DurableIdentity
 	// durableLost marks a durable tab whose helper session reconnect could
 	// not resume. It stays exited: a later reconnect must not replace it with
 	// a plain PTY, because durable tabs never fall back to volatile shells.
@@ -649,6 +653,10 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 			}
 		}
 		if options.Durable.Recover {
+			// The helper's last OSC 7 directory and window title describe the
+			// running program until the replay or new output reports its own.
+			tab.cwd = options.Durable.Cwd
+			tab.recoveredWindowTitle = options.Durable.WindowTitle
 			// The helper's descriptor title is canonical.
 			tab.title = options.Durable.Title
 			// Only a real custom title latches the precedence over the OSC
@@ -660,6 +668,8 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 				// this backend first observes the title, never zero, so a
 				// stale timestamped client decision cannot overwrite it.
 				tab.titleChangedAt = time.Now().UnixMilli()
+			} else {
+				tab.title = tab.dynamicTitle()
 			}
 		}
 	}
@@ -934,13 +944,18 @@ func clampTitleDecisionTime(at int64, now time.Time) int64 {
 	return min(at, nowMS+maxTitleClockSkew.Milliseconds())
 }
 
-// dynamicTitle reads the OSC 0/2 title the terminal state last reported. The
-// terminal state lock is a leaf lock, so it may be read under tab.mu.
+// dynamicTitle reads the OSC 0/2 title the terminal state last reported, or
+// the helper's window title a recovered tab started with until the terminal
+// reports its own. The terminal state lock is a leaf lock, so it may be read
+// under tab.mu, which callers must hold.
 func (t *Tab) dynamicTitle() string {
 	if source, ok := t.terminal.(interface{ Title() string }); ok {
-		return source.Title()
+		if title := source.Title(); title != "" {
+			t.recoveredWindowTitle = ""
+			return title
+		}
 	}
-	return ""
+	return t.recoveredWindowTitle
 }
 
 // restoreDynamicTitle shows the current OSC dynamic title again after a
@@ -2273,9 +2288,9 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 	// until the user sets a custom one: a custom title (RenameTab or a
 	// durable-restored title) takes precedence and later OSC reports never
 	// override it.
-	if source, ok := tab.terminal.(interface{ Title() string }); ok {
-		dynamic := source.Title()
+	if _, ok := tab.terminal.(interface{ Title() string }); ok {
 		tab.mu.Lock()
+		dynamic := tab.dynamicTitle()
 		var titleEvent ControlEvent
 		titleChanged := false
 		if !tab.titleCustom && !tab.closed && dynamic != tab.title {

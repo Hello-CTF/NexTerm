@@ -218,6 +218,7 @@ func durableDescriptors(infos []Info) []base.DurableDescriptor {
 			CreatedAt:        info.CreatedAt,
 			Title:            info.Title,
 			WindowTitle:      info.WindowTitle,
+			Cwd:              info.Cwd,
 			MetadataRevision: info.MetadataRevision,
 			Cols:             info.Cols,
 			Rows:             info.Rows,

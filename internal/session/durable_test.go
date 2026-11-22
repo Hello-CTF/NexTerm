@@ -45,6 +45,9 @@ type fakeDurableRecord struct {
 	floorGrid   uint64
 	title       string
 	revision    uint64
+	// cwd and windowTitle are what the helper last observed in the output.
+	cwd         string
+	windowTitle string
 }
 
 type fakeDurableAttachment struct {

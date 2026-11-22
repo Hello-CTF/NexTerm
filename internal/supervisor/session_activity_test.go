@@ -242,6 +242,9 @@ func TestListFromHelperWithoutActivityDecodesAsUnknown(t *testing.T) {
 	if descriptor.WindowTitle != "" {
 		t.Fatalf("an old helper decoded window title %q", descriptor.WindowTitle)
 	}
+	if descriptor.Cwd != "" {
+		t.Fatalf("an old helper decoded cwd %q", descriptor.Cwd)
+	}
 	if descriptor.State == nil || descriptor.State.State != "needs_me" {
 		t.Fatalf("state = %+v", descriptor.State)
 	}
@@ -279,6 +282,41 @@ func TestListReportsWindowTitleApartFromCustomTitle(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("window title = %q, want %q", found.WindowTitle, "build 42")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The list reports the last OSC 7 directory, so a recovering client starts in
+// it even when the replayed tail no longer contains the report.
+func TestListReportsLastShellCwd(t *testing.T) {
+	supervisor := testSupervisor(t)
+	server := testServer(t, supervisor)
+	client := testClient(t, server)
+	session := testScriptSession(t, supervisor,
+		`printf '\033]7;file://host/tmp/first\007'; printf '\033]7;file://host/srv/my%%20app\007'; printf 'plain output\r\n'; sleep 30`)
+
+	deadline := time.Now().Add(testReadTimeout)
+	for {
+		descriptors, err := NewRemoteProvider(client).ListDurableDescriptors(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		cwd := ""
+		listed := false
+		for _, descriptor := range descriptors {
+			if descriptor.ID == session.ID() {
+				cwd, listed = descriptor.Cwd, true
+			}
+		}
+		if !listed {
+			t.Fatalf("session %s not listed", session.ID())
+		}
+		if cwd == "/srv/my app" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cwd = %q, want %q", cwd, "/srv/my app")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

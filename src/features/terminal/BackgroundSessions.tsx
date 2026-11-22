@@ -5,6 +5,8 @@ import {
   aggregateBackgroundTabs,
   aggregateTerminatePath,
   backgroundTabKey,
+  backgroundTabName,
+  backgroundWindowTitle,
   backgroundTargets,
   groupBackgroundTabs,
   listBackgroundTabs,
@@ -31,7 +33,6 @@ import {
   reconnectDeadHost,
   reconnectLiveSession,
   reconnectWorkspaceSession,
-  sanitizeRemoteTabTitle,
   useSessionList,
   useUi,
   type Workspace,
@@ -202,26 +203,6 @@ const STATUS_TONE_CLASS: Record<StatusView["tone"], string> = {
   muted: "text-[var(--nx-fg-soft)]",
   normal: "text-[var(--nx-fg)]",
 };
-
-// Short, stable fallback name: the tail of a tab ID is its random part.
-function shortTabId(tabId: string): string {
-  const compact = tabId.replace(/[^0-9a-z]/gi, "");
-  return (compact || tabId).slice(-6);
-}
-
-// The tab strip's rule: the custom title when there is one, otherwise the program's window title; either is
-// sanitized the way the strip shows it. A helper listing carries only the custom title as `title`, so the window
-// title it reports separately names a session nobody renamed.
-export function backgroundTabName(tab: Pick<BackgroundTab, "tabId" | "title" | "windowTitle">): string {
-  return sanitizeRemoteTabTitle(tab.title ?? "") || sanitizeRemoteTabTitle(tab.windowTitle ?? "") || tr("终端 {value}", { value: shortTabId(tab.tabId) });
-}
-
-// backgroundWindowTitle is the program's window title shown under a name it does not already match, so a renamed
-// session can still be found by what it is running.
-export function backgroundWindowTitle(tab: Pick<BackgroundTab, "tabId" | "title" | "windowTitle">): string {
-  const window = sanitizeRemoteTabTitle(tab.windowTitle ?? "");
-  return window && window !== backgroundTabName(tab) ? window : "";
-}
 
 function pad(value: number): string {
   return String(value).padStart(2, "0");
@@ -565,7 +546,7 @@ export function BackgroundSessions({
     try {
       // A row from the cross-host listing is taken over through its host, opening a device workspace when needed.
       const result = info.aggregateHost
-        ? await takeOverAggregateSession(info.aggregateHost, info.tabId, info.title)
+        ? await takeOverAggregateSession(info.aggregateHost, info.tabId, info.title, info.windowTitle)
         : await takeOverBackgroundTab(info, {
           isCurrent: () => ownerGeneration === ownerGenerationRef.current,
           guard: (session) => {

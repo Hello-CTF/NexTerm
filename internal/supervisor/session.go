@@ -16,6 +16,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/pty"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -61,6 +62,11 @@ type Session struct {
 	shellCleanup func()
 
 	versionsMu sync.Mutex
+
+	// cwdTracker reads OSC 7 directory reports from the output; only the
+	// output pump uses it. cwd is the latest report, guarded by mu.
+	cwdTracker *shellintegr.Tracker
+	cwd        string
 }
 
 // execState holds the process of a non-PTY session. drained tracks the two
@@ -665,6 +671,22 @@ func (s *Session) record(chunk []byte) {
 	if s.state != nil {
 		s.state.output(chunk, now)
 	}
+	s.observeCwd(chunk)
+}
+
+// observeCwd keeps the latest OSC 7 directory, so a client recovering the
+// session starts there even when its replayed tail lacks the report.
+func (s *Session) observeCwd(chunk []byte) {
+	if s.cwdTracker == nil {
+		s.cwdTracker = shellintegr.NewTracker()
+	}
+	cwd, ok := s.cwdTracker.Observe(chunk)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	s.cwd = cwd
+	s.mu.Unlock()
 }
 
 func (s *Session) setRecErr(err error) {

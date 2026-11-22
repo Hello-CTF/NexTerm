@@ -215,7 +215,8 @@ export function useCwdFollow(
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
-  const supported = sessionKind === "ssh" || sessionKind === "local";
+  // Device terminals run in the agent's helper, which reports OSC 7 like SSH and local shells.
+  const supported = sessionKind === "ssh" || sessionKind === "local" || sessionKind === "device";
   const preferenceEnabled = useFollowCwdEnabled();
   const sessionCwd = useFollowedCwd(sessionId);
   const enabled = control ? control.attached : preferenceEnabled;
