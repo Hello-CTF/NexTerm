@@ -81,10 +81,10 @@ describe("shortcuts editor", () => {
     expect(getKeybinding("closeTab")).toBeNull();
     expect(kbdText("closeTab")).toBe("未绑定");
     expect(row("closeTab").querySelector('button[aria-label^="清除快捷键"]')).toBeNull();
-    expect(getKeybinding("newTerminal")).toBe("Mod+t");
+    expect(getKeybinding("newTerminal")).toBe("Ctrl+Alt+n");
     const reset = row("closeTab").querySelector<HTMLButtonElement>('button[aria-label="恢复默认快捷键：关闭当前标签页"]');
     click(reset as HTMLButtonElement);
-    expect(getKeybinding("closeTab")).toBe("Mod+w");
+    expect(getKeybinding("closeTab")).toBe("Ctrl+Alt+w");
   });
 
   it("renders every action with its default binding", () => {
@@ -93,11 +93,11 @@ describe("shortcuts editor", () => {
     );
     expect(kbdText("commandPalette")).toBe("Ctrl+Shift+P");
     expect(kbdText("quickConnect")).toBe("Ctrl+Shift+K");
-    expect(kbdText("newTerminal")).toBe("Ctrl+T");
+    expect(kbdText("newTerminal")).toBe("Ctrl+Alt+N");
     expect(kbdText("terminalSearch")).toBe("Ctrl+Shift+F");
-    expect(kbdText("restoreClosedTab")).toBe("Ctrl+Shift+T");
+    expect(kbdText("restoreClosedTab")).toBe("Ctrl+Shift+Alt+T");
     expect(kbdText("reclaimTakeover")).toBe("Ctrl+Shift+E");
-    expect(kbdText("switchTab")).toBe("Ctrl+1…9");
+    expect(kbdText("switchTab")).toBe("Ctrl+Alt+1…9");
   });
 
   it("captures a new binding and persists it", () => {
@@ -144,11 +144,11 @@ describe("shortcuts editor", () => {
 
   it("flags conflicts with the other action and explains resolution", () => {
     click(editButton("commandPalette"));
-    keyDown(captureInput() as HTMLInputElement, "t", { code: "KeyT", ctrlKey: true });
-    expect(getKeybinding("commandPalette")).toBe("Mod+t");
+    keyDown(captureInput() as HTMLInputElement, "K", { code: "KeyK", ctrlKey: true, shiftKey: true });
+    expect(getKeybinding("commandPalette")).toBe("Mod+Shift+k");
     const badge = row("commandPalette").querySelector(".nx-badge-amber");
     expect(badge?.textContent).toContain("冲突");
-    expect(row("newTerminal").querySelector(".nx-badge-amber")).not.toBeNull();
+    expect(row("quickConnect").querySelector(".nx-badge-amber")).not.toBeNull();
     expect(mounted?.container.textContent).toContain("排在前面的操作生效");
   });
 
@@ -161,7 +161,7 @@ describe("shortcuts editor", () => {
     );
     expect(reset).not.toBeNull();
     click(reset as HTMLButtonElement);
-    expect(kbdText("newTerminal")).toBe("Ctrl+T");
+    expect(kbdText("newTerminal")).toBe("Ctrl+Alt+N");
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
@@ -183,8 +183,8 @@ describe("shortcuts editor", () => {
     await act(async () => {
       click(resetAll as HTMLButtonElement);
     });
-    expect(kbdText("newTerminal")).toBe("Ctrl+T");
-    expect(kbdText("toggleSidebar")).toBe("Ctrl+B");
+    expect(kbdText("newTerminal")).toBe("Ctrl+Alt+N");
+    expect(kbdText("toggleSidebar")).toBe("Ctrl+Shift+B");
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
@@ -215,7 +215,7 @@ describe("shortcuts editor", () => {
   it("rejects non-digit capture for switchTab with an inline reason", () => {
     click(editButton("switchTab"));
     keyDown(captureInput() as HTMLInputElement, "q", { code: "KeyQ", altKey: true });
-    expect(getKeybinding("switchTab")).toBe("Mod+1-9");
+    expect(getKeybinding("switchTab")).toBe("Ctrl+Alt+1-9");
     expect(captureInput()).not.toBeNull();
     expect(mounted?.container.textContent).toContain("只支持数字键");
   });

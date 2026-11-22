@@ -246,15 +246,37 @@ describe("XtermView app-level shortcut passthrough", () => {
     expect(handledByXterm({ key: "K", code: "KeyK", ctrlKey: true, shiftKey: true })).toBe(false);
   });
 
-  it("passes Mod+Shift+W to the app while it closes panes, and to xterm once unbound", async () => {
+  it("passes Ctrl+Shift+Alt+W to the app while it closes panes, and to xterm once unbound", async () => {
     await show({ sessionId: "session", tabId: "pending" });
 
-    const bound = dispatchThroughHandler({ key: "W", code: "KeyW", ctrlKey: true, shiftKey: true });
+    const bound = dispatchThroughHandler({ key: "W", code: "KeyW", ctrlKey: true, shiftKey: true, altKey: true });
     expect(bound.handled).toBe(false);
     expect(bound.reachedWindow).toBe(true);
     expect(harness.input).not.toHaveBeenCalled();
     setKeybinding("closePane", null);
-    expect(handledByXterm({ key: "W", code: "KeyW", ctrlKey: true, shiftKey: true })).toBe(true);
+    expect(handledByXterm({ key: "W", code: "KeyW", ctrlKey: true, shiftKey: true, altKey: true })).toBe(true);
+  });
+
+  it("releases every chord but navigation to an alternate-screen program", async () => {
+    await show({ sessionId: "session", tabId: "pending" });
+    // A binding saved before the default change: Ctrl+W closes the tab at the shell prompt.
+    setKeybinding("closeTab", "Mod+w");
+    const ctrlW = { key: "w", code: "KeyW", ctrlKey: true };
+    const focusPane = { key: "ArrowLeft", code: "ArrowLeft", ctrlKey: true, shiftKey: true, altKey: true };
+    const nextTab = { key: "Tab", code: "Tab", ctrlKey: true };
+    expect(handledByXterm(ctrlW)).toBe(false);
+
+    const term = harness.terminals[0] as unknown as { buffer: { active: { type: string } } };
+    term.buffer.active.type = "alternate";
+    // vim gets Ctrl+W (its window commands); a chord xterm sends nothing for still bubbles to the app.
+    expect(handledByXterm(ctrlW)).toBe(true);
+    expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true })).toBe(true);
+    // Moving between panes and tabs stays with the app, so a full-screen program never traps the keyboard.
+    expect(handledByXterm(focusPane)).toBe(false);
+    expect(handledByXterm(nextTab)).toBe(false);
+
+    term.buffer.active.type = "normal";
+    expect(handledByXterm(ctrlW)).toBe(false);
   });
 
   it("sends override bytes in place of xterm's encoding, unless an app shortcut owns the chord", async () => {
@@ -304,7 +326,7 @@ describe("XtermView app-level shortcut passthrough", () => {
     expect(nextTab.reachedWindow).toBe(true);
     const focusPane = dispatchThroughHandler({ key: "ArrowLeft", code: "ArrowLeft", ctrlKey: true, shiftKey: true, altKey: true, repeat: true });
     expect(focusPane.reachedWindow).toBe(true);
-    const split = dispatchThroughHandler({ key: "\\", code: "Backslash", ctrlKey: true, repeat: true });
+    const split = dispatchThroughHandler({ key: "D", code: "KeyD", ctrlKey: true, shiftKey: true, repeat: true });
     expect(split.reachedWindow).toBe(false);
     expect(harness.input).not.toHaveBeenCalled();
   });

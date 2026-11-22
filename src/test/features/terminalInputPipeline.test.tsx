@@ -351,16 +351,22 @@ describe("XtermView input pipeline bytes", () => {
     expect(sent).toEqual(["H", "H", "H", "H"]);
   });
 
-  it("withholds a bound app shortcut and its repeats from the terminal, and delivers the chord once unbound", async () => {
+  it("delivers Ctrl+W to the shell by default, withholds it and its repeats while a user binds it, and delivers it once unbound", async () => {
     const textarea = await show();
-    const closeTab = { key: "w", code: "KeyW", keyCode: 87, ctrlKey: true };
-    stroke(textarea, closeTab);
-    key(textarea, "keydown", { ...closeTab, repeat: true });
+    const ctrlW = { key: "w", code: "KeyW", keyCode: 87, ctrlKey: true };
+    // The default close-tab chord is Ctrl+Shift+W, which the terminal never sees; Ctrl+W deletes a word.
+    stroke(textarea, ctrlW);
     stroke(textarea, { key: "W", code: "KeyW", keyCode: 87, ctrlKey: true, shiftKey: true });
+    expect(sent).toEqual(["\x17"]);
+    sent = [];
+
+    setKeybinding("closeTab", "Mod+w");
+    stroke(textarea, ctrlW);
+    key(textarea, "keydown", { ...ctrlW, repeat: true });
     expect(sent).toEqual([]);
 
     setKeybinding("closeTab", null);
-    stroke(textarea, closeTab);
+    stroke(textarea, ctrlW);
     expect(sent).toEqual(["\x17"]);
   });
 

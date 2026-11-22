@@ -178,7 +178,17 @@ describe("command shortcut availability", () => {
     }
     expect(commandShortcutActive("generateCommand", { normalBuffer: true, blocks: false })).toBe(true);
     expect(commandShortcutActive("generateCommand", { normalBuffer: false, blocks: true })).toBe(false);
-    expect(commandShortcutActive("commandPalette", { normalBuffer: false, blocks: false })).toBe(true);
+    expect(commandShortcutActive("commandPalette", { normalBuffer: true, blocks: false })).toBe(true);
+  });
+
+  it("releases every chord but navigation to an alternate-screen program", () => {
+    const altScreen = { normalBuffer: false, blocks: true };
+    for (const action of ["commandPalette", "closeTab", "newTerminal", "splitDown", "toggleSidebar", "terminalFontDecrease", "terminalSearch"] as const) {
+      expect(commandShortcutActive(action, altScreen), action).toBe(false);
+    }
+    for (const action of ["focusPaneLeft", "focusPaneRight", "focusPaneUp", "focusPaneDown", "nextTab", "previousTab", "switchTab", "nextWorkspace", "previousWorkspace"] as const) {
+      expect(commandShortcutActive(action, altScreen), action).toBe(true);
+    }
   });
 });
 

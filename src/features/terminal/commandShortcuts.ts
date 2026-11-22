@@ -13,10 +13,25 @@ const BLOCK_ACTIONS: ReadonlySet<KeybindingActionId> = new Set<KeybindingActionI
   "copyLastOutput",
 ]);
 
-// commandShortcutActive reports whether a terminal-local command shortcut acts now. When it does not, its chord is
-// not withheld and reaches the program in the terminal as usual. Every other action is unaffected.
+// Moving between panes, tabs and workspaces stays with the app in an alternate-screen program too, so a full-screen
+// editor never traps the keyboard in its pane.
+export const ALTERNATE_SCREEN_KEPT_ACTIONS: ReadonlySet<KeybindingActionId> = new Set<KeybindingActionId>([
+  "focusPaneLeft",
+  "focusPaneRight",
+  "focusPaneUp",
+  "focusPaneDown",
+  "nextTab",
+  "previousTab",
+  "switchTab",
+  "nextWorkspace",
+  "previousWorkspace",
+]);
+
+// commandShortcutActive reports whether a withheld shortcut acts now. When it does not, the terminal releases the
+// chord: a chord the terminal encodes reaches the program, and one it sends nothing for still reaches the app.
+// An alternate-screen program gets every chord but navigation; command block shortcuts also need command blocks.
 export function commandShortcutActive(action: KeybindingActionId, state: CommandShortcutState): boolean {
-  if (BLOCK_ACTIONS.has(action)) return state.normalBuffer && state.blocks;
-  if (action === "generateCommand") return state.normalBuffer;
+  if (!state.normalBuffer) return ALTERNATE_SCREEN_KEPT_ACTIONS.has(action);
+  if (BLOCK_ACTIONS.has(action)) return state.blocks;
   return true;
 }

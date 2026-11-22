@@ -81,7 +81,7 @@ describe("kitty keyboard protocol switch", () => {
     view.press(CTRL_SHIFT_W);
     expect(view.sent).toEqual(["\x1b\r", "\x1b[13;2u"]);
 
-    setKeybinding("closePane", null);
+    setKeybinding("closeTab", null);
     view.press(CTRL_SHIFT_W);
     expect(view.sent).toEqual(["\x1b\r", "\x1b[13;2u", "\x1b[119;6u"]);
   });

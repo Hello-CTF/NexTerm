@@ -89,30 +89,37 @@ describe("resolveKey precedence (desktop)", () => {
     ["IME beats an app shortcut", ev("P", "KeyP", { ctrlKey: true, shiftKey: true, isComposing: true }), { kind: "ime", toXterm: false }],
   ];
 
+  // macOS desktop keeps the Cmd chords; the Ctrl keyboards (Linux, Windows) take Ctrl+Shift / Ctrl+Alt chords so the
+  // bare Ctrl chords stay terminal keys. `x` adds the Ctrl-keyboard extra modifier off macOS.
   const modRows = (mac: boolean): Array<[string, TerminalKeyEvent, KeyResolution]> => {
     const mod: Mods = mac ? { metaKey: true } : { ctrlKey: true };
+    const x = (extra: Mods): Mods => (mac ? mod : { ...mod, ...extra });
+    const shift = { shiftKey: true };
+    const alt = { altKey: true };
     return [
       ["Mod+Shift+P is the command palette", ev("P", "KeyP", { ...mod, shiftKey: true }), app("commandPalette")],
       ["a held palette shortcut is dropped", ev("P", "KeyP", { ...mod, shiftKey: true, repeat: true }), app("commandPalette", true)],
-      ["a held split shortcut is dropped", ev("\\", "Backslash", { ...mod, repeat: true }), app("splitDown", true)],
-      ["a held close-pane shortcut is dropped", ev("W", "KeyW", { ...mod, shiftKey: true, repeat: true }), app("closePane", true)],
-      ["a held tab switch is dropped", ev("2", "Digit2", { ...mod, repeat: true }), app("switchTab", true, 2)],
+      ["a held split shortcut is dropped", mac ? ev("\\", "Backslash", { ...mod, repeat: true }) : ev("D", "KeyD", { ...mod, shiftKey: true, repeat: true }), app("splitDown", true)],
+      ["a held close-pane shortcut is dropped", ev("W", "KeyW", { ...x(alt), shiftKey: true, repeat: true }), app("closePane", true)],
+      ["a held tab switch is dropped", ev("2", "Digit2", { ...x(alt), repeat: true }), app("switchTab", true, 2)],
       ["a held lock shortcut is dropped", ev("L", "KeyL", { ...mod, shiftKey: true, repeat: true }), app("lockVault", true)],
-      ["a held sidebar toggle is dropped", ev("b", "KeyB", { ...mod, repeat: true }), app("toggleSidebar", true)],
+      ["a held sidebar toggle is dropped", ev("b", "KeyB", { ...x(shift), repeat: true }), app("toggleSidebar", true)],
       ["workspace navigation repeats", ev("ArrowRight", "ArrowRight", { ...mod, altKey: true, repeat: true }), app("nextWorkspace")],
       ["pane focus repeats", ev("ArrowUp", "ArrowUp", { ...mod, altKey: true, repeat: true }), app("focusPaneUp")],
-      ["Mod+Shift+T restores a closed tab", ev("T", "KeyT", { ...mod, shiftKey: true }), app("restoreClosedTab")],
-      ["Mod+Shift+W closes the pane", ev("W", "KeyW", { ...mod, shiftKey: true }), app("closePane")],
+      ["the new-tab chord opens a terminal", ev("t", "KeyT", x(shift)), app("newTerminal")],
+      ["the close-tab chord closes the tab", ev("w", "KeyW", x(shift)), app("closeTab")],
+      ["the restore chord restores a closed tab", ev("T", "KeyT", { ...x(alt), shiftKey: true }), app("restoreClosedTab")],
+      ["the close-pane chord closes the pane", ev("W", "KeyW", { ...x(alt), shiftKey: true }), app("closePane")],
       ["Mod+Shift+\\ splits right", ev("|", "Backslash", { ...mod, shiftKey: true }), app("splitRight")],
-      ["Mod+\\ splits down", ev("\\", "Backslash", mod), app("splitDown")],
-      ["Mod+3 switches tab", ev("3", "Digit3", mod), app("switchTab", false, 3)],
-      ["Mod+= enlarges the terminal font", ev("=", "Equal", mod), app("terminalFontIncrease")],
-      ["Mod+- shrinks the terminal font", ev("-", "Minus", mod), app("terminalFontDecrease")],
-      ["Mod+0 resets the terminal font", ev("0", "Digit0", mod), app("terminalFontReset")],
+      ["the split-down chord splits down", mac ? ev("\\", "Backslash", mod) : ev("D", "KeyD", { ...mod, shiftKey: true }), app("splitDown")],
+      ["the tab-switch chord switches tab", ev("3", "Digit3", x(alt)), app("switchTab", false, 3)],
+      ["the font chord enlarges the terminal font", ev("=", "Equal", x(alt)), app("terminalFontIncrease")],
+      ["the font chord shrinks the terminal font", ev("-", "Minus", x(alt)), app("terminalFontDecrease")],
+      ["the font chord resets the terminal font", ev("0", "Digit0", x(alt)), app("terminalFontReset")],
       ["Mod+Plus (Mod+Shift+=) enlarges the terminal font", ev("+", "Equal", { ...mod, shiftKey: true }), app("terminalFontIncrease")],
-      ["Mod+keypad plus enlarges the terminal font", ev("+", "NumpadAdd", mod), app("terminalFontIncrease")],
-      ["Mod+keypad minus shrinks the terminal font", ev("-", "NumpadSubtract", mod), app("terminalFontDecrease")],
-      ["Mod+keypad 0 resets the terminal font", ev("0", "Numpad0", mod), app("terminalFontReset")],
+      ["keypad plus enlarges the terminal font", ev("+", "NumpadAdd", x(alt)), app("terminalFontIncrease")],
+      ["keypad minus shrinks the terminal font", ev("-", "NumpadSubtract", x(alt)), app("terminalFontDecrease")],
+      ["keypad 0 resets the terminal font", ev("0", "Numpad0", x(alt)), app("terminalFontReset")],
       ["Mod+Shift+Enter zooms the pane", ev("Enter", "Enter", { ...mod, shiftKey: true }), app("toggleZoomPane")],
       ["Mod+/ (cheat sheet) is not withheld", ev("/", "Slash", mod), PASS],
     ];
@@ -127,8 +134,8 @@ describe("resolveKey precedence (desktop)", () => {
     }
   }
 
-  // Mod used to match Ctrl on macOS as well, which took the tmux prefix (Ctrl+B), readline keys and SIGQUIT from
-  // the terminal. On macOS desktop Mod is Cmd only, so these Ctrl chords reach the program.
+  // The default keymap never takes a terminal control key: on macOS desktop Mod is Cmd only, and the Ctrl keyboards
+  // use Ctrl+Shift / Ctrl+Alt chords, so the tmux prefix, readline keys, SIGQUIT and undo reach the program.
   it.each<[string, TerminalKeyEvent]>([
     ["Ctrl+B (tmux prefix)", ev("b", "KeyB", { ctrlKey: true })],
     ["Ctrl+W (delete word)", ev("w", "KeyW", { ctrlKey: true })],
@@ -136,12 +143,23 @@ describe("resolveKey precedence (desktop)", () => {
     ["Ctrl+J (newline)", ev("j", "KeyJ", { ctrlKey: true })],
     ["Ctrl+\\ (SIGQUIT)", ev("\\", "Backslash", { ctrlKey: true })],
     ["Ctrl+3", ev("3", "Digit3", { ctrlKey: true })],
-    ["Ctrl+Shift+P", ev("P", "KeyP", { ctrlKey: true, shiftKey: true })],
-  ])("macOS desktop leaves %s to the terminal", (_name, event) => {
+    ["Ctrl+- (undo)", ev("-", "Minus", { ctrlKey: true })],
+    ["Ctrl+Shift+- (undo as Ctrl+_)", ev("_", "Minus", { ctrlKey: true, shiftKey: true })],
+    ["Ctrl+Shift+2 (Ctrl+@)", ev("@", "Digit2", { ctrlKey: true, shiftKey: true })],
+    ["Ctrl+Shift+6 (Ctrl+^)", ev("^", "Digit6", { ctrlKey: true, shiftKey: true })],
+  ])("leaves %s to the terminal on every desktop", (_name, event) => {
     setMac(true);
     expect(resolveKey(event, ctx())).toEqual(PASS);
     setMac(false);
-    expect(resolveKey(event, ctx())).toMatchObject({ kind: "app-shortcut" });
+    expect(resolveKey(event, ctx())).toEqual(PASS);
+  });
+
+  it("macOS desktop leaves Ctrl+Shift+P to the terminal; elsewhere it is the command palette", () => {
+    const event = ev("P", "KeyP", { ctrlKey: true, shiftKey: true });
+    setMac(true);
+    expect(resolveKey(event, ctx())).toEqual(PASS);
+    setMac(false);
+    expect(resolveKey(event, ctx())).toEqual(app("commandPalette"));
   });
 
   it.each<[string, TerminalKeyEvent, KeyResolution, KeyResolution]>([
@@ -177,14 +195,23 @@ describe("resolveKey precedence (desktop)", () => {
   });
 
   it("follows user rebinding: a freed chord reaches the terminal, a newly bound one is withheld", () => {
-    const closePane = ev("W", "KeyW", { ctrlKey: true, shiftKey: true });
+    const closePane = ev("W", "KeyW", { ctrlKey: true, shiftKey: true, altKey: true });
     const shiftEnter = ev("Enter", "Enter", { shiftKey: true });
     setKeybinding("closePane", null);
     expect(resolveKey(closePane, ctx())).toEqual(PASS);
     setKeybinding("closePane", "Shift+Enter");
     expect(resolveKey(shiftEnter, ctx())).toEqual(app("closePane"));
     setKeybinding("splitDown", null);
-    expect(resolveKey(ev("\\", "Backslash", { ctrlKey: true }), ctx())).toEqual(PASS);
+    expect(resolveKey(ev("D", "KeyD", { ctrlKey: true, shiftKey: true }), ctx())).toEqual(PASS);
+  });
+
+  it("keeps a saved custom binding working exactly as stored, also on a chord that is now another default", () => {
+    // Saved before the Ctrl keyboards moved to Ctrl+Shift chords: the old chord keeps working for this user.
+    setKeybinding("closeTab", "Mod+w");
+    expect(resolveKey(ev("w", "KeyW", { ctrlKey: true }), ctx())).toEqual(app("closeTab"));
+    // A chord the user gave to lockApp wins over the built-in split-down default that now shares it.
+    setKeybinding("lockApp", "Mod+Shift+d");
+    expect(resolveKey(ev("D", "KeyD", { ctrlKey: true, shiftKey: true }), ctx())).toEqual(app("lockApp"));
   });
 
   it("withholds only an Enter while a WebKit commit Enter is pending", () => {
@@ -203,7 +230,7 @@ describe("resolveKey precedence (desktop)", () => {
   });
 
   it("resolves keyup and keypress of an app shortcut the same way, so they never reach the terminal either", () => {
-    const up = ev("W", "KeyW", { ctrlKey: true, shiftKey: true }, { type: "keyup" });
+    const up = ev("W", "KeyW", { ctrlKey: true, shiftKey: true, altKey: true }, { type: "keyup" });
     expect(resolveKey(up, ctx())).toEqual(app("closePane"));
   });
 });

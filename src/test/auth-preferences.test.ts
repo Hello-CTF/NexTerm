@@ -132,7 +132,7 @@ describe("mergeWithDefaults", () => {
 describe("account-level keybinding overrides (M140 flat allowlisted keys)", () => {
   it("uses only device-local values without a registered backend and does not invent account overrides", () => {
     expect(getAccountPreferenceStore()).toBeNull();
-    expect(getKeybinding("newTerminal")).toBe("Mod+t");
+    expect(getKeybinding("newTerminal")).toBe("Ctrl+Alt+n");
   });
 
   it("applies flat account overrides after registration and persists writes as individual flat keys", async () => {
@@ -172,8 +172,8 @@ describe("account-level keybinding overrides (M140 flat allowlisted keys)", () =
     registerAccountPreferenceStore(store);
     await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
 
-    setKeybinding("newTerminal", "Mod+t");
-    expect(getKeybinding("newTerminal")).toBe("Mod+t");
+    setKeybinding("newTerminal", "Ctrl+Alt+n");
+    expect(getKeybinding("newTerminal")).toBe("Ctrl+Alt+n");
     expect(store.data["keybinding.newTerminal"]).toBeUndefined();
     expect(store.clears).toContainEqual(["keybinding.newTerminal"]);
   });
@@ -184,7 +184,7 @@ describe("account-level keybinding overrides (M140 flat allowlisted keys)", () =
     await vi.waitFor(() => expect(getKeybinding("closeTab")).toBe("Mod+Shift+w"));
 
     resetKeybinding("closeTab");
-    expect(getKeybinding("closeTab")).toBe("Mod+w");
+    expect(getKeybinding("closeTab")).toBe("Ctrl+Alt+w");
     expect(store.data["keybinding.closeTab"]).toBeUndefined();
     expect(store.clears).toContainEqual(["keybinding.closeTab"]);
   });
@@ -199,8 +199,8 @@ describe("account-level keybinding overrides (M140 flat allowlisted keys)", () =
     setKeybinding("quickConnect", "Mod+Shift+g");
 
     resetAllKeybindings();
-    expect(getKeybinding("closeTab")).toBe("Mod+w");
-    expect(getKeybinding("newTerminal")).toBe("Mod+t");
+    expect(getKeybinding("closeTab")).toBe("Ctrl+Alt+w");
+    expect(getKeybinding("newTerminal")).toBe("Ctrl+Alt+n");
     expect(getKeybinding("quickConnect")).toBe("Mod+Shift+k");
     expect(store.data).toEqual({});
     expect(store.clears.flat().sort()).toEqual([
@@ -534,7 +534,7 @@ describe("server global defaults in the keybinding snapshot (built-in < server <
     const store = memoryStore({}, { "keybinding.newTerminal": "Mod+Shift+t" });
     registerAccountPreferenceStore(store);
     await vi.waitFor(() => expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t"));
-    expect(getKeybinding("closeTab")).toBe("Mod+w");
+    expect(getKeybinding("closeTab")).toBe("Ctrl+Alt+w");
   });
 
   it("prioritizes server defaults, device-local values, and account overrides in ascending order", async () => {
@@ -553,7 +553,7 @@ describe("server global defaults in the keybinding snapshot (built-in < server <
     // Device-local beats the server default
     await vi.waitFor(() => expect(getKeybinding("quickConnect")).toBe("Mod+Shift+j"));
     // Undeclared keys fall back to built-in defaults
-    expect(getKeybinding("splitDown")).toBe("Mod+\\");
+    expect(getKeybinding("splitDown")).toBe("Ctrl+Shift+d");
   });
 
   it("falls back to the server default rather than the built-in default after resetKeybinding", async () => {

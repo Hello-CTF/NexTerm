@@ -138,19 +138,19 @@ afterEach(() => {
   resetAllKeybindings();
 });
 
-describe("Ctrl+1-9 tab navigation", () => {
+describe("Ctrl+Alt+1-9 tab navigation", () => {
   it("switches to the nth tab of the active pane", async () => {
     mounted = mountApp();
     await flush();
 
-    const second = keyDown(window, "2", { ctrlKey: true });
+    const second = keyDown(window, "2", { ctrlKey: true, altKey: true });
     expect(second.defaultPrevented).toBe(true);
     expect(activePaneTabId()).toBe("t2");
 
-    keyDown(window, "3", { ctrlKey: true });
+    keyDown(window, "3", { ctrlKey: true, altKey: true });
     expect(activePaneTabId()).toBe("t3");
 
-    const first = keyDown(window, "1", { ctrlKey: true });
+    const first = keyDown(window, "1", { ctrlKey: true, altKey: true });
     expect(first.defaultPrevented).toBe(true);
     expect(activePaneTabId()).toBe("t1");
   });
@@ -158,7 +158,7 @@ describe("Ctrl+1-9 tab navigation", () => {
   it("keeps renamed tabs addressable by position", async () => {
     mounted = mountApp();
     await flush();
-    keyDown(window, "3", { ctrlKey: true });
+    keyDown(window, "3", { ctrlKey: true, altKey: true });
     expect(activePaneTabId()).toBe("t3");
     const titles = useUi.getState().workspaces[0]?.panes[0]?.tabs.map((t) => t.title);
     expect(titles?.[2]).toBe("重命名过的标签");
@@ -167,7 +167,7 @@ describe("Ctrl+1-9 tab navigation", () => {
   it("does not swallow digits beyond the tab count", async () => {
     mounted = mountApp();
     await flush();
-    const event = keyDown(window, "9", { ctrlKey: true });
+    const event = keyDown(window, "9", { ctrlKey: true, altKey: true });
     expect(event.defaultPrevented).toBe(false);
     expect(activePaneTabId()).toBe("t1");
   });
@@ -204,11 +204,11 @@ describe("Ctrl+1-9 tab navigation", () => {
   it("switches tabs for non-US layout digit forms with the default binding", async () => {
     mounted = mountApp();
     await flush();
-    keyDown(window, "&", { code: "Digit1", ctrlKey: true });
+    keyDown(window, "&", { code: "Digit1", ctrlKey: true, altKey: true });
     expect(activePaneTabId()).toBe("t1");
-    keyDown(window, "é", { code: "Digit2", ctrlKey: true });
+    keyDown(window, "é", { code: "Digit2", ctrlKey: true, altKey: true });
     expect(activePaneTabId()).toBe("t2");
-    keyDown(window, "à", { code: "Digit9", ctrlKey: true });
+    keyDown(window, "à", { code: "Digit9", ctrlKey: true, altKey: true });
     expect(activePaneTabId()).toBe("t2");
   });
 });
@@ -273,9 +273,9 @@ describe("rebound app shortcuts", () => {
     mounted = mountApp();
     await flush();
 
-    // jsdom runs as the web build, whose default is Ctrl+Alt+W (browsers keep Ctrl+Shift+W).
-    expect(getKeybinding("closePane")).toBe("Ctrl+Alt+w");
-    const event = keyDown(window, "w", { code: "KeyW", ctrlKey: true, altKey: true });
+    // jsdom runs as the web build, whose default is Ctrl+Shift+Alt+W (browsers keep Ctrl+Shift+W; Ctrl+Alt+W closes the tab).
+    expect(getKeybinding("closePane")).toBe("Ctrl+Shift+Alt+w");
+    const event = keyDown(window, "W", { code: "KeyW", ctrlKey: true, shiftKey: true, altKey: true });
     expect(event.defaultPrevented).toBe(true);
     const panes = useUi.getState().workspaces[0].panes;
     expect(panes.map((pane) => pane.id)).toEqual(["p1"]);
@@ -284,7 +284,7 @@ describe("rebound app shortcuts", () => {
 
     // With a single pane there is nothing to close, so the window-level handler does not consume the
     // key; a focused terminal still never receives it while the binding is set (as with every app binding).
-    expect(keyDown(window, "w", { code: "KeyW", ctrlKey: true, altKey: true }).defaultPrevented).toBe(false);
+    expect(keyDown(window, "W", { code: "KeyW", ctrlKey: true, shiftKey: true, altKey: true }).defaultPrevented).toBe(false);
   });
 
   it("persists reboundings across remounts through localStorage", async () => {
@@ -350,10 +350,10 @@ describe("held app shortcuts outside the terminal", () => {
   it("runs a one-shot shortcut once per press and swallows its repeats", async () => {
     mounted = mountApp();
     await flush();
-    const repeat = keyDown(window, "2", { code: "Digit2", ctrlKey: true, repeat: true });
+    const repeat = keyDown(window, "2", { code: "Digit2", ctrlKey: true, altKey: true, repeat: true });
     expect(repeat.defaultPrevented).toBe(true);
     expect(activePaneTabId()).toBe("t1");
-    keyDown(window, "b", { code: "KeyB", ctrlKey: true, repeat: true });
+    keyDown(window, "B", { code: "KeyB", ctrlKey: true, shiftKey: true, repeat: true });
     expect(useUi.getState().leftOpen).toBe(false);
   });
 

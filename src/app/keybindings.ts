@@ -54,14 +54,24 @@ export interface KeybindingAction {
   macDefaultBinding?: string;
   /** The default on macOS (desktop and web) in place of defaultBinding. */
   macBinding?: string;
+  /**
+   * The default wherever Mod includes Ctrl (every build but macOS desktop), in place of defaultBinding: there a bare
+   * Ctrl chord is a terminal control key (Ctrl+W deletes a word, Ctrl+B is the tmux prefix), so the app takes a
+   * Ctrl+Shift or Ctrl+Alt chord the terminal does not use.
+   */
+  ctrlBinding?: string;
   /** Extra desktop chords that also trigger the action while the default binding is in effect. */
   desktopExtraBindings?: string[];
 }
 
+// The Ctrl-keyboard defaults (ctrlBinding) are Ctrl+Shift chords on the desktop, the Windows Terminal and GNOME
+// Terminal convention. Browsers keep Ctrl+T/W/N, Ctrl+Shift+T/W/N, Ctrl+1-9, Ctrl+Shift+J and Ctrl+=/-/0 for
+// themselves, so the web build takes Ctrl+Alt there. A second action on the same key adds Alt (Ctrl+Shift+T opens a
+// tab, Ctrl+Shift+Alt+T restores one).
 export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "commandPalette", label: t("跳转面板"), defaultBinding: "Mod+Shift+p" },
   { id: "quickConnect", label: t("快速连接"), defaultBinding: "Mod+Shift+k" },
-  { id: "newTerminal", label: t("新建终端标签页"), defaultBinding: "Mod+t" },
+  { id: "newTerminal", label: t("新建终端标签页"), defaultBinding: "Mod+t", ctrlBinding: WEB ? "Ctrl+Alt+n" : "Mod+Shift+t" },
   { id: "nextWorkspace", label: t("下一个工作区"), defaultBinding: WEB ? "Ctrl+Alt+ArrowRight" : "Mod+Alt+ArrowRight" },
   { id: "previousWorkspace", label: t("上一个工作区"), defaultBinding: WEB ? "Ctrl+Alt+ArrowLeft" : "Mod+Alt+ArrowLeft" },
   { id: "nextTab", label: t("下一个标签页"), defaultBinding: WEB ? "Ctrl+Alt+]" : "Ctrl+Tab", macDefaultBinding: "Mod+Shift+]" },
@@ -70,22 +80,23 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "focusPaneRight", label: t("聚焦右侧窗格"), defaultBinding: WEB ? "Ctrl+Shift+Alt+ArrowRight" : "Mod+Shift+Alt+ArrowRight" },
   { id: "focusPaneUp", label: t("聚焦上方窗格"), defaultBinding: WEB ? "Ctrl+Alt+ArrowUp" : "Mod+Alt+ArrowUp" },
   { id: "focusPaneDown", label: t("聚焦下方窗格"), defaultBinding: WEB ? "Ctrl+Alt+ArrowDown" : "Mod+Alt+ArrowDown" },
-  { id: "toggleSidebar", label: t("收起 / 展开左侧栏"), defaultBinding: "Mod+b" },
-  { id: "toggleAiSidebar", label: t("收起 / 展开 AI 侧栏"), defaultBinding: "Mod+j" },
-  { id: "closeTab", label: t("关闭当前标签页"), defaultBinding: "Mod+w" },
-  { id: "splitDown", label: t("向下分屏"), defaultBinding: "Mod+\\" },
+  { id: "toggleSidebar", label: t("收起 / 展开左侧栏"), defaultBinding: "Mod+b", ctrlBinding: WEB ? "Ctrl+Shift+b" : "Mod+Shift+b" },
+  { id: "toggleAiSidebar", label: t("收起 / 展开 AI 侧栏"), defaultBinding: "Mod+j", ctrlBinding: WEB ? "Ctrl+Alt+j" : "Mod+Shift+j" },
+  { id: "closeTab", label: t("关闭当前标签页"), defaultBinding: "Mod+w", ctrlBinding: WEB ? "Ctrl+Alt+w" : "Mod+Shift+w" },
+  // Ctrl+\ is SIGQUIT, so the Ctrl keyboards split down with Ctrl+Shift+D (iTerm2 splits down with Cmd+Shift+D).
+  { id: "splitDown", label: t("向下分屏"), defaultBinding: "Mod+\\", ctrlBinding: WEB ? "Ctrl+Shift+d" : "Mod+Shift+d" },
   { id: "splitRight", label: t("向右分屏"), defaultBinding: "Mod+Shift+\\" },
-  // Browsers reserve Ctrl+Shift+W for closing the window, so the web build uses Ctrl+Alt+W.
-  { id: "closePane", label: t("关闭当前窗格（保留标签页）"), defaultBinding: WEB ? "Ctrl+Alt+w" : "Mod+Shift+w" },
-  { id: "switchTab", label: t("跳转到第 1-9 个标签页"), defaultBinding: "Mod+1-9" },
-  { id: "restoreClosedTab", label: t("恢复关闭的标签页"), defaultBinding: "Mod+Shift+t" },
+  { id: "closePane", label: t("关闭当前窗格（保留标签页）"), defaultBinding: "Mod+Shift+w", ctrlBinding: WEB ? "Ctrl+Shift+Alt+w" : "Mod+Shift+Alt+w" },
+  // Ctrl+3…8 are control characters (as are Ctrl+Shift+2 and Ctrl+Shift+6); Ctrl+Alt+1…9 is Windows Terminal's chord.
+  { id: "switchTab", label: t("跳转到第 1-9 个标签页"), defaultBinding: "Mod+1-9", ctrlBinding: WEB ? "Ctrl+Alt+1-9" : "Mod+Alt+1-9" },
+  { id: "restoreClosedTab", label: t("恢复关闭的标签页"), defaultBinding: "Mod+Shift+t", ctrlBinding: WEB ? "Ctrl+Shift+Alt+t" : "Mod+Shift+Alt+t" },
   // Ctrl+F is readline's forward-char, so off macOS the search takes Ctrl+Shift+F and leaves Ctrl+F to the shell.
   { id: "terminalSearch", label: t("终端内搜索"), defaultBinding: "Ctrl+Shift+f", macBinding: "Primary+f" },
   { id: "terminalLinks", label: t("终端链接面板"), defaultBinding: "Mod+Shift+u" },
   // WezTerm's copy mode chord; Ctrl+Shift+X sends nothing to the program in the terminal.
   { id: "terminalCopyMode", label: t("终端复制模式"), defaultBinding: "Mod+Shift+x" },
   { id: "terminalQuickSelect", label: t("终端快速选择（复制或插入屏幕上的路径、链接、哈希）"), defaultBinding: "Mod+Shift+y" },
-  { id: "sessionSidebar", label: t("收起 / 展开会话侧栏"), defaultBinding: "Mod+Shift+b" },
+  { id: "sessionSidebar", label: t("收起 / 展开会话侧栏"), defaultBinding: "Mod+Shift+b", ctrlBinding: WEB ? "Ctrl+Shift+Alt+b" : "Mod+Shift+Alt+b" },
   { id: "previousPrompt", label: t("跳到上一条命令"), defaultBinding: "Mod+Shift+ArrowUp" },
   { id: "nextPrompt", label: t("跳到下一条命令"), defaultBinding: "Mod+Shift+ArrowDown" },
   { id: "copyLastOutput", label: t("选中并复制上一条命令的输出"), defaultBinding: "Mod+Shift+o" },
@@ -98,18 +109,19 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "lockVault", label: t("锁定凭据库"), defaultBinding: "Mod+Shift+l" },
   // Mod+Shift+L already locks the vault, so locking the whole app has no default chord.
   { id: "lockApp", label: t("锁定 NexTerm"), defaultBinding: null },
-  // Browsers keep Ctrl+= / Ctrl+- / Ctrl+0 for page zoom, so the web build adds Alt.
-  // Mod+Shift+= is Ctrl/Cmd+Plus on most layouts. The web build adds none: there Ctrl+Shift+Alt+= equalizes the splits.
+  // Ctrl+- is readline's undo (^_) and browsers keep Ctrl+= / Ctrl+- / Ctrl+0 for page zoom, so the Ctrl keyboards
+  // add Alt. Mod+Shift+= is Ctrl/Cmd+Plus on most layouts and sends nothing to the terminal; the web build adds none.
   {
     id: "terminalFontIncrease",
     label: t("增大终端字号"),
-    defaultBinding: WEB ? "Ctrl+Alt+=" : "Mod+=",
+    defaultBinding: "Mod+=",
+    ctrlBinding: WEB ? "Ctrl+Alt+=" : "Mod+Alt+=",
     desktopExtraBindings: ["Mod+Shift+="],
   },
-  { id: "terminalFontDecrease", label: t("减小终端字号"), defaultBinding: WEB ? "Ctrl+Alt+-" : "Mod+-" },
-  { id: "terminalFontReset", label: t("重置终端字号"), defaultBinding: WEB ? "Ctrl+Alt+0" : "Mod+0" },
+  { id: "terminalFontDecrease", label: t("减小终端字号"), defaultBinding: "Mod+-", ctrlBinding: WEB ? "Ctrl+Alt+-" : "Mod+Alt+-" },
+  { id: "terminalFontReset", label: t("重置终端字号"), defaultBinding: "Mod+0", ctrlBinding: WEB ? "Ctrl+Alt+0" : "Mod+Alt+0" },
   { id: "toggleZoomPane", label: t("最大化 / 还原当前窗格"), defaultBinding: "Mod+Shift+Enter" },
-  { id: "equalizeSplits", label: t("均分所有窗格"), defaultBinding: WEB ? "Ctrl+Shift+Alt+=" : "Mod+Alt+=" },
+  { id: "equalizeSplits", label: t("均分所有窗格"), defaultBinding: "Mod+Alt+=", ctrlBinding: WEB ? "Ctrl+Shift+Alt+=" : "Mod+Shift+Alt+=" },
   // Not withheld from a focused terminal: Ctrl+/ is readline's undo, so the terminal keeps any chord it encodes and
   // the cheat sheet opens only where the chord reaches the app (elsewhere, or as Cmd+/ on macOS).
   { id: "showShortcuts", label: t("快捷键速查"), defaultBinding: "Mod+/" },
@@ -166,8 +178,10 @@ export function keybindingRepeats(id: KeybindingActionId): boolean {
 }
 
 /** The built-in default binding of an action on the current (or given) platform. */
-export function defaultBindingFor(action: KeybindingAction, mac = isMac()): string | null {
-  return mac && action.macBinding ? action.macBinding : action.defaultBinding;
+export function defaultBindingFor(action: KeybindingAction, mac = isMac(), web = WEB): string | null {
+  if (mac && action.macBinding) return action.macBinding;
+  if (action.ctrlBinding !== undefined && !modIsMetaOnly(mac, web)) return action.ctrlBinding;
+  return action.defaultBinding;
 }
 
 export interface KeyEventLike {
@@ -598,7 +612,7 @@ export function useKeybindings(): KeybindingSnapshot {
  * while the default binding is in effect.
  */
 export function defaultExtraBindings(action: KeybindingAction, binding: string | null, mac = isMac(), web = WEB): string[] {
-  if (web || binding === null || binding !== action.defaultBinding) return [];
+  if (web || binding === null || binding !== defaultBindingFor(action, mac, web)) return [];
   return [...(mac && action.macDefaultBinding ? [action.macDefaultBinding] : []), ...(action.desktopExtraBindings ?? [])];
 }
 
@@ -623,9 +637,16 @@ function isAltGraph(event: KeyEventLike): boolean {
   return event.getModifierState?.("AltGraph") === true;
 }
 
+// A chord someone chose (an account or device override, or a server default) wins over a built-in default that
+// happens to share it, so a saved binding keeps working when a later release gives another action that default.
+function appActionsByPrecedence(): KeybindingActionId[] {
+  const chosen = (id: KeybindingActionId) => id in defaultsLayer || id in localOverrides || id in accountLayer;
+  return [...APP_ACTION_ORDER.filter(chosen), ...APP_ACTION_ORDER.filter((id) => !chosen(id))];
+}
+
 export function matchAppKeybinding(event: KeyEventLike): AppKeybindingHit | null {
   if (isAltGraph(event)) return null;
-  for (const id of APP_ACTION_ORDER) {
+  for (const id of appActionsByPrecedence()) {
     if (!matchActionBinding(event, id)) continue;
     const binding = currentSnapshot()[id];
     const parsed = binding === null ? null : parseBinding(binding);
@@ -658,6 +679,11 @@ const TERMINAL_PANE_ACTIONS: readonly KeybindingActionId[] = [
 ];
 
 export const TERMINAL_WITHHELD_ACTIONS: readonly KeybindingActionId[] = [...APP_ACTION_ORDER, ...TERMINAL_PANE_ACTIONS];
+
+/** TERMINAL_WITHHELD_ACTIONS in the order a chord shared by two of them is matched at runtime. */
+export function terminalWithheldActionsByPrecedence(): KeybindingActionId[] {
+  return [...appActionsByPrecedence(), ...TERMINAL_PANE_ACTIONS];
+}
 
 /** matchAppKeybinding widened to every chord a focused terminal withholds from the program running in it. */
 export function matchTerminalWithheldKeybinding(event: KeyEventLike): AppKeybindingHit | null {

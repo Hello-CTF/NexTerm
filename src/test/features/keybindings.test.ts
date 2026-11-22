@@ -8,6 +8,7 @@ import {
   bindingsConflict,
   captureBinding,
   captureBindingForAction,
+  defaultBindingFor,
   formatBinding,
   formatBindingAria,
   getKeybinding,
@@ -22,7 +23,9 @@ import {
   resetKeybinding,
   setKeybinding,
   type KeyEventLike,
+  type KeybindingSnapshot,
 } from "../../app/keybindings";
+import { terminalShortcutConflicts } from "../../features/terminal/terminalInput/shortcutConflicts";
 
 const STORAGE_KEY = "nexterm.keybindings.v1";
 
@@ -208,7 +211,7 @@ describe("persistence", () => {
     expect(getKeybinding("newTerminal")).toBe("Mod+Shift+t");
     expect(storedOverrides()).toEqual({ newTerminal: "Mod+Shift+t" });
     resetKeybinding("newTerminal");
-    expect(getKeybinding("newTerminal")).toBe("Mod+t");
+    expect(getKeybinding("newTerminal")).toBe("Ctrl+Alt+n");
     expect(storedOverrides()).toEqual({});
   });
 
@@ -235,7 +238,7 @@ describe("persistence", () => {
       }),
     );
     loadKeybindings();
-    expect(getKeybinding("newTerminal")).toBe("Mod+t");
+    expect(getKeybinding("newTerminal")).toBe("Ctrl+Alt+n");
     expect(getKeybinding("commandPalette")).toBeNull();
     expect(getKeybinding("toggleSidebar")).toBe("Mod+Shift+b");
     expect(storedOverrides()).toEqual({
@@ -297,7 +300,7 @@ describe("bindingConflicts", () => {
   });
 
   it("detects a single digit overlapping the switchTab 1-9 range", () => {
-    setKeybinding("newTerminal", "Mod+1");
+    setKeybinding("newTerminal", "Ctrl+Alt+1");
     const conflicts = bindingConflicts();
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0].actions.map((a) => a.id)).toEqual(["newTerminal", "switchTab"]);
@@ -325,16 +328,20 @@ describe("matchAppKeybinding", () => {
   it("maps keys to app actions in catalog order", () => {
     expect(matchAppKeybinding(keyEvent({ key: "k", ctrlKey: true, shiftKey: true })))
       .toEqual({ action: "quickConnect", digit: null });
-    expect(matchAppKeybinding(keyEvent({ key: "2", ctrlKey: true })))
+    expect(matchAppKeybinding(keyEvent({ key: "2", ctrlKey: true, altKey: true })))
       .toEqual({ action: "switchTab", digit: 2 });
-    expect(matchAppKeybinding(keyEvent({ key: "b", ctrlKey: true })))
+    expect(matchAppKeybinding(keyEvent({ key: "B", ctrlKey: true, shiftKey: true })))
       .toEqual({ action: "toggleSidebar", digit: null });
     expect(matchAppKeybinding(keyEvent({ key: "q", ctrlKey: true }))).toBeNull();
+    // The bare Ctrl chords stay terminal keys under the default keymap.
+    expect(matchAppKeybinding(keyEvent({ key: "2", ctrlKey: true }))).toBeNull();
+    expect(matchAppKeybinding(keyEvent({ key: "b", ctrlKey: true }))).toBeNull();
+    expect(matchAppKeybinding(keyEvent({ key: "w", ctrlKey: true }))).toBeNull();
   });
 
   it("skips unbound actions", () => {
     setKeybinding("switchTab", null);
-    expect(matchAppKeybinding(keyEvent({ key: "2", ctrlKey: true }))).toBeNull();
+    expect(matchAppKeybinding(keyEvent({ key: "2", ctrlKey: true, altKey: true }))).toBeNull();
   });
 
   it("extracts digits through the shared logical key for shifted and non-US forms", () => {
@@ -344,11 +351,11 @@ describe("matchAppKeybinding", () => {
     expect(matchAppKeybinding(keyEvent({ key: "@", code: "Digit2", ctrlKey: true, shiftKey: true })))
       .toEqual({ action: "switchTab", digit: 2 });
     resetAllKeybindings();
-    expect(matchAppKeybinding(keyEvent({ key: "&", code: "Digit1", ctrlKey: true })))
+    expect(matchAppKeybinding(keyEvent({ key: "&", code: "Digit1", ctrlKey: true, altKey: true })))
       .toEqual({ action: "switchTab", digit: 1 });
-    expect(matchAppKeybinding(keyEvent({ key: "é", code: "Digit2", ctrlKey: true })))
+    expect(matchAppKeybinding(keyEvent({ key: "é", code: "Digit2", ctrlKey: true, altKey: true })))
       .toEqual({ action: "switchTab", digit: 2 });
-    expect(matchAppKeybinding(keyEvent({ key: "9", code: "Digit9", ctrlKey: true })))
+    expect(matchAppKeybinding(keyEvent({ key: "9", code: "Digit9", ctrlKey: true, altKey: true })))
       .toEqual({ action: "switchTab", digit: 9 });
   });
 });
@@ -361,13 +368,18 @@ describe("browser navigation keybindings", () => {
     { action: "previousTab", binding: "Ctrl+Alt+[", key: "[", code: "BracketLeft" },
     { action: "focusPaneUp", binding: "Ctrl+Alt+ArrowUp", key: "ArrowUp", code: "ArrowUp" },
     { action: "focusPaneDown", binding: "Ctrl+Alt+ArrowDown", key: "ArrowDown", code: "ArrowDown" },
-    // Ctrl+Shift+W closes the browser window, so the web build closes panes with Ctrl+Alt+W.
-    { action: "closePane", binding: "Ctrl+Alt+w", key: "w", code: "KeyW" },
+    // Browsers keep Ctrl+T/W/N and Ctrl+Shift+T/W/N, so the web build opens and closes tabs with Ctrl+Alt.
+    { action: "newTerminal", binding: "Ctrl+Alt+n", key: "n", code: "KeyN" },
+    { action: "closeTab", binding: "Ctrl+Alt+w", key: "w", code: "KeyW" },
+    { action: "toggleAiSidebar", binding: "Ctrl+Alt+j", key: "j", code: "KeyJ" },
+    { action: "closePane", binding: "Ctrl+Shift+Alt+w", key: "W", code: "KeyW", shiftKey: true },
+    { action: "restoreClosedTab", binding: "Ctrl+Shift+Alt+t", key: "T", code: "KeyT", shiftKey: true },
   ] as const;
 
-  it.each(cases)("maps $action from a real KeyboardEvent", ({ action, binding, key, code }) => {
+  it.each(cases)("maps $action from a real KeyboardEvent", ({ action, binding, key, code, ...rest }) => {
     expect(getKeybinding(action)).toBe(binding);
-    const event = new KeyboardEvent("keydown", { key, code, ctrlKey: true, altKey: true });
+    const shiftKey = "shiftKey" in rest ? rest.shiftKey : false;
+    const event = new KeyboardEvent("keydown", { key, code, ctrlKey: true, altKey: true, shiftKey });
     expect(matchAppKeybinding(event)).toEqual({ action, digit: null });
   });
 
@@ -387,10 +399,12 @@ describe("browser navigation keybindings", () => {
 describe("catalog sanity", () => {
   it("every action default parses", () => {
     for (const action of KEYBINDING_ACTIONS) {
-      // An action without a default stays unbound until the user assigns a chord.
-      if (action.defaultBinding === null) continue;
-      expect(parseBinding(action.defaultBinding), action.id).not.toBeNull();
-      expect(normalizeBinding(action.defaultBinding), action.id).toBe(action.defaultBinding);
+      for (const binding of [action.defaultBinding, action.ctrlBinding, action.macBinding]) {
+        // An action without a default stays unbound until the user assigns a chord.
+        if (binding === null || binding === undefined) continue;
+        expect(parseBinding(binding), action.id).not.toBeNull();
+        expect(normalizeBinding(binding), action.id).toBe(binding);
+      }
     }
   });
 });
@@ -433,9 +447,13 @@ describe("terminal link panel shortcut", () => {
 });
 
 describe("session sidebar shortcut", () => {
-  it("is withheld from a focused terminal as Ctrl+Shift+B off macOS", () => {
-    expect(matchTerminalWithheldKeybinding(keyEvent({ key: "B", code: "KeyB", ctrlKey: true, shiftKey: true }))).toEqual({
+  it("is withheld from a focused terminal as Ctrl+Shift+Alt+B off macOS, next to Ctrl+Shift+B for the left sidebar", () => {
+    expect(matchTerminalWithheldKeybinding(keyEvent({ key: "B", code: "KeyB", ctrlKey: true, shiftKey: true, altKey: true }))).toEqual({
       action: "sessionSidebar",
+      digit: null,
+    });
+    expect(matchTerminalWithheldKeybinding(keyEvent({ key: "B", code: "KeyB", ctrlKey: true, shiftKey: true }))).toEqual({
+      action: "toggleSidebar",
       digit: null,
     });
   });
@@ -463,5 +481,46 @@ describe("command block and AI command shortcuts", () => {
   it("do not conflict with another default action", () => {
     const ids = ["previousPrompt", "nextPrompt", "copyLastOutput", "generateCommand"];
     expect(bindingConflicts().filter((c) => c.actions.some((a) => ids.includes(a.id)))).toEqual([]);
+  });
+});
+
+describe("web default keymap", () => {
+  const defaults = (mac: boolean): KeybindingSnapshot =>
+    Object.fromEntries(KEYBINDING_ACTIONS.map((action) => [action.id, defaultBindingFor(action, mac, true)])) as KeybindingSnapshot;
+
+  it.each([false, true])("has no conflicting defaults (mac=%s)", (mac) => {
+    expect(bindingConflicts(defaults(mac), mac)).toEqual([]);
+  });
+
+  it.each([false, true])("withholds no bare Ctrl chord the terminal encodes (mac=%s)", (mac) => {
+    for (const conflict of terminalShortcutConflicts(defaults(mac), mac, true)) {
+      const { ctrl, shift, alt, key } = conflict.keys;
+      const bareCtrl = ctrl && !shift && !alt;
+      expect(bareCtrl && (key === "1-9" || (key.length === 1 && conflict.bytes !== null)), conflict.chord).toBe(false);
+    }
+  });
+
+  it.each([false, true])("uses Ctrl chords the terminal does not encode, also in a Mac browser (mac=%s)", (mac) => {
+    const snapshot = defaults(mac);
+    expect(snapshot.newTerminal).toBe("Ctrl+Alt+n");
+    expect(snapshot.closeTab).toBe("Ctrl+Alt+w");
+    expect(snapshot.toggleSidebar).toBe("Ctrl+Shift+b");
+    expect(snapshot.splitDown).toBe("Ctrl+Shift+d");
+    expect(snapshot.switchTab).toBe("Ctrl+Alt+1-9");
+  });
+
+  it("keeps a binding stored before the default change exactly as stored", () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ closeTab: "Mod+w", toggleSidebar: "Mod+b" }));
+    loadKeybindings();
+    expect(getKeybinding("closeTab")).toBe("Mod+w");
+    expect(matchAppKeybinding(keyEvent({ key: "w", code: "KeyW", ctrlKey: true }))).toEqual({ action: "closeTab", digit: null });
+    expect(matchAppKeybinding(keyEvent({ key: "b", code: "KeyB", ctrlKey: true }))).toEqual({ action: "toggleSidebar", digit: null });
+  });
+
+  it("lets a chosen binding win over a built-in default that shares its chord", () => {
+    setKeybinding("lockApp", "Ctrl+Shift+d");
+    expect(matchAppKeybinding(keyEvent({ key: "D", code: "KeyD", ctrlKey: true, shiftKey: true }))).toEqual({ action: "lockApp", digit: null });
+    resetKeybinding("lockApp");
+    expect(matchAppKeybinding(keyEvent({ key: "D", code: "KeyD", ctrlKey: true, shiftKey: true }))).toEqual({ action: "splitDown", digit: null });
   });
 });

@@ -370,13 +370,13 @@ describe("closed-tab restore UX", () => {
     expect(item?.disabled).toBe(true);
   });
 
-  it("restores the most recently closed tab with Ctrl+Shift+T", async () => {
+  it("restores the most recently closed tab with Ctrl+Shift+Alt+T", async () => {
     seedClosedTabStack(terminalTab("t1"), "ws-1", { detached: true });
     mounted = mountApp();
     await flush();
 
     act(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "T", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "T", code: "KeyT", ctrlKey: true, shiftKey: true, altKey: true, bubbles: true, cancelable: true }));
     });
     await flush();
 
@@ -413,8 +413,14 @@ describe("closed-tab restore UX", () => {
     const item = restoreMenuItem();
     expect(item?.disabled).toBe(true);
 
-    await expect(restoreClosedTab()).resolves.toBe(false);
+    let restored: boolean | undefined;
+    await act(async () => {
+      restored = await restoreClosedTab();
+    });
+    expect(restored).toBe(false);
     expect(findTab("t1")).toBeUndefined();
+    // The shortcut path says there is nothing to restore instead of doing nothing.
+    expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("没有可恢复的已关闭标签页");
   });
 });
 

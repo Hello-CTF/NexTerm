@@ -17,7 +17,9 @@ vi.mock("../../app/platform", () => ({
 vi.mock("../../ipc/env", () => ({ WEB: false }));
 
 import {
+  KEYBINDING_ACTIONS,
   bindingConflicts,
+  defaultBindingFor,
   formatBinding,
   formatBindingAria,
   getKeybinding,
@@ -26,6 +28,7 @@ import {
   resetAllKeybindings,
   setKeybinding,
   type KeyEventLike,
+  type KeybindingSnapshot,
 } from "../../app/keybindings";
 
 function keyEvent(init: Partial<KeyEventLike> & { key: string }): KeyEventLike {
@@ -88,9 +91,15 @@ describe("platform-specific keybinding behaviour", () => {
       { action: "focusPaneDown", binding: "Mod+Alt+ArrowDown", key: "ArrowDown", code: "ArrowDown", ctrlKey: true, altKey: true },
       { action: "focusPaneLeft", binding: "Mod+Shift+Alt+ArrowLeft", key: "ArrowLeft", code: "ArrowLeft", ctrlKey: true, shiftKey: true, altKey: true },
       { action: "focusPaneRight", binding: "Mod+Shift+Alt+ArrowRight", key: "ArrowRight", code: "ArrowRight", ctrlKey: true, shiftKey: true, altKey: true },
-      { action: "splitDown", binding: "Mod+\\", key: "\\", code: "Backslash", ctrlKey: true },
+      { action: "splitDown", binding: "Mod+Shift+d", key: "D", code: "KeyD", ctrlKey: true, shiftKey: true },
       { action: "splitRight", binding: "Mod+Shift+\\", key: "|", code: "Backslash", ctrlKey: true, shiftKey: true },
-      { action: "closePane", binding: "Mod+Shift+w", key: "W", code: "KeyW", ctrlKey: true, shiftKey: true },
+      { action: "newTerminal", binding: "Mod+Shift+t", key: "T", code: "KeyT", ctrlKey: true, shiftKey: true },
+      { action: "closeTab", binding: "Mod+Shift+w", key: "W", code: "KeyW", ctrlKey: true, shiftKey: true },
+      { action: "closePane", binding: "Mod+Shift+Alt+w", key: "W", code: "KeyW", ctrlKey: true, shiftKey: true, altKey: true },
+      { action: "restoreClosedTab", binding: "Mod+Shift+Alt+t", key: "T", code: "KeyT", ctrlKey: true, shiftKey: true, altKey: true },
+      { action: "toggleSidebar", binding: "Mod+Shift+b", key: "B", code: "KeyB", ctrlKey: true, shiftKey: true },
+      { action: "toggleAiSidebar", binding: "Mod+Shift+j", key: "J", code: "KeyJ", ctrlKey: true, shiftKey: true },
+      { action: "terminalFontDecrease", binding: "Mod+Alt+-", key: "-", code: "Minus", ctrlKey: true, altKey: true },
     ] as const;
     for (const { action, binding, ...init } of cases) {
       expect(getKeybinding(action)).toBe(binding);
@@ -119,5 +128,67 @@ describe("platform-specific keybinding behaviour", () => {
     setKeybinding("commandPalette", "Mod+f");
     expect(bindingConflicts(undefined, false)).toHaveLength(1);
     expect(bindingConflicts(undefined, true)).toHaveLength(1);
+  });
+});
+
+describe("desktop default keymap", () => {
+  const defaults = (mac: boolean): KeybindingSnapshot =>
+    Object.fromEntries(KEYBINDING_ACTIONS.map((action) => [action.id, defaultBindingFor(action, mac, false)])) as KeybindingSnapshot;
+
+  it.each([false, true])("has no conflicting defaults (mac=%s)", (mac) => {
+    expect(bindingConflicts(defaults(mac), mac)).toEqual([]);
+  });
+
+  it("keeps the macOS desktop defaults, where Mod is Cmd and never a terminal key", () => {
+    expect(defaults(true)).toEqual({
+      commandPalette: "Mod+Shift+p",
+      quickConnect: "Mod+Shift+k",
+      newTerminal: "Mod+t",
+      nextWorkspace: "Mod+Alt+ArrowRight",
+      previousWorkspace: "Mod+Alt+ArrowLeft",
+      nextTab: "Ctrl+Tab",
+      previousTab: "Ctrl+Shift+Tab",
+      focusPaneLeft: "Mod+Shift+Alt+ArrowLeft",
+      focusPaneRight: "Mod+Shift+Alt+ArrowRight",
+      focusPaneUp: "Mod+Alt+ArrowUp",
+      focusPaneDown: "Mod+Alt+ArrowDown",
+      toggleSidebar: "Mod+b",
+      toggleAiSidebar: "Mod+j",
+      closeTab: "Mod+w",
+      splitDown: "Mod+\\",
+      splitRight: "Mod+Shift+\\",
+      closePane: "Mod+Shift+w",
+      switchTab: "Mod+1-9",
+      restoreClosedTab: "Mod+Shift+t",
+      terminalSearch: "Primary+f",
+      terminalLinks: "Mod+Shift+u",
+      terminalCopyMode: "Mod+Shift+x",
+      terminalQuickSelect: "Mod+Shift+y",
+      sessionSidebar: "Mod+Shift+b",
+      previousPrompt: "Mod+Shift+ArrowUp",
+      nextPrompt: "Mod+Shift+ArrowDown",
+      copyLastOutput: "Mod+Shift+o",
+      generateCommand: "Primary+i",
+      reclaimTakeover: "Mod+Shift+e",
+      openSettings: "Mod+,",
+      focusAiInput: "Mod+Shift+a",
+      lockVault: "Mod+Shift+l",
+      lockApp: null,
+      terminalFontIncrease: "Mod+=",
+      terminalFontDecrease: "Mod+-",
+      terminalFontReset: "Mod+0",
+      toggleZoomPane: "Mod+Shift+Enter",
+      equalizeSplits: "Mod+Alt+=",
+      showShortcuts: "Mod+/",
+    });
+  });
+
+  it("matches the macOS extras only while the macOS default is in effect", () => {
+    harness.mac = true;
+    expect(matchAppKeybinding(new KeyboardEvent("keydown", { key: "+", code: "Equal", metaKey: true, shiftKey: true })))
+      .toEqual({ action: "terminalFontIncrease", digit: null });
+    harness.mac = false;
+    expect(matchAppKeybinding(new KeyboardEvent("keydown", { key: "+", code: "Equal", ctrlKey: true, shiftKey: true })))
+      .toEqual({ action: "terminalFontIncrease", digit: null });
   });
 });
