@@ -56,6 +56,8 @@ export function useAppKeybindings({
     const onKey = (e: KeyboardEvent) => {
       // A focused remote desktop owns every key; its release chord is handled by the pane, not here.
       if (isKeyboardCaptured()) return;
+      // A terminal that released the chord to its program (alternate screen) and sent bytes for it has consumed it.
+      if (e.defaultPrevented && e.target instanceof Element && e.target.closest(".xterm")) return;
       const hit = matchAppKeybinding(e);
       if (!hit) {
         // The cheat sheet is not withheld from terminals or editors: a chord they already handled stays theirs.

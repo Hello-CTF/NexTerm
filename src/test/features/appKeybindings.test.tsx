@@ -334,6 +334,28 @@ describe("rebound app shortcuts", () => {
   });
 });
 
+describe("chords a terminal already consumed", () => {
+  it("does not run the app action for a chord the terminal sent to its program", async () => {
+    setKeybinding("nextTab", "Shift+Enter");
+    mounted = mountApp();
+    await flush();
+    const xterm = document.body.appendChild(document.createElement("div"));
+    xterm.className = "xterm";
+    const textarea = xterm.appendChild(document.createElement("textarea"));
+    try {
+      // An alternate-screen program got Shift+Enter as bytes: the terminal prevented the default and let it bubble.
+      textarea.addEventListener("keydown", (event) => event.preventDefault(), { once: true });
+      keyDown(textarea, "Enter", { code: "Enter", shiftKey: true });
+      expect(activePaneTabId()).toBe("t1");
+      // A chord the terminal left alone still reaches the app.
+      keyDown(textarea, "Enter", { code: "Enter", shiftKey: true });
+      expect(activePaneTabId()).toBe("t2");
+    } finally {
+      xterm.remove();
+    }
+  });
+});
+
 describe("held app shortcuts outside the terminal", () => {
   it("keeps cycling tabs while the navigation chord auto-repeats", async () => {
     useUi.setState({ activeProject: ALL_PROJECTS });

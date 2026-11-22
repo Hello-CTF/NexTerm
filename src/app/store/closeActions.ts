@@ -255,6 +255,9 @@ export async function confirmWorkspaceClose(
   if (action === "kill") applyCloseDecision(summary, "kill");
   const choose = action === "ask" && summary.detachable.length > 0;
   const lines = workspaceCloseLines(summary, !choose);
+  const confirmBlocked = summary.blocked.length > 0 && summary.confirmBlocked;
+  const unconfirmed = summary.unconfirmed.length;
+  const destructive = summary.dirty.length > 0 || confirmBlocked || summary.hasSqlDraft || summary.runningAiTabs.length > 0 || summary.liveRemote.length > 0;
   if (choose) {
     const { askChoiceRemember } = await import("../../ui/dialogs");
     const question = tr("{length} 个终端的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。", { length: summary.detachable.length });
@@ -262,6 +265,8 @@ export async function confirmWorkspaceClose(
       title: dialogTitle,
       choices: CLOSE_CHOICE_OPTIONS,
       rememberLabel: tr("以后都按此选择"),
+      // Either choice also discards what the lines name, so the dialog warns and Enter does not pick a choice.
+      ...(destructive ? { level: "warning" as const, focusCancel: true } : {}),
     });
     if (!result) return false;
     const decided = result.key === "kill" ? "kill" : "detach";
@@ -269,9 +274,6 @@ export async function confirmWorkspaceClose(
     if (result.remember) setTerminalCloseAction(decided);
     return true;
   }
-  const confirmBlocked = summary.blocked.length > 0 && summary.confirmBlocked;
-  const unconfirmed = summary.unconfirmed.length;
-  const destructive = summary.dirty.length > 0 || confirmBlocked || summary.hasSqlDraft || summary.runningAiTabs.length > 0 || summary.liveRemote.length > 0;
   if (!destructive && unconfirmed === 0) return true;
   const { ask } = await import("../../ui/dialogs");
   return ask(tr("{join}\n仍要继续？", { join: lines.join("\n") }), {
