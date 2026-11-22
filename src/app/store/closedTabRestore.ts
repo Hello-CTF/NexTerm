@@ -17,7 +17,11 @@ export async function restoreClosedTab(key?: string): Promise<boolean> {
   const entry = key === undefined
     ? closedTabs.stack.entries[0]
     : closedTabs.stack.entries.find((candidate) => candidate.key === key);
-  if (!entry) return false;
+  if (!entry) {
+    // The shortcut (no key) must not fail silently when there is nothing to bring back.
+    if (key === undefined) useUi.getState().pushToast("info", tr("没有可恢复的已关闭标签页"));
+    return false;
+  }
   const reattach = entry.kind === "detached-terminal" && entry.tabKind === "terminal";
   if (reattach) {
     const session = useUi.getState().sessions.find((s) => s.id === entry.sessionId);

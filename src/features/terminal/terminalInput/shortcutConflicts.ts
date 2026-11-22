@@ -1,7 +1,7 @@
 import {
   KEYBINDING_ACTIONS,
   defaultExtraBindings,
-  TERMINAL_WITHHELD_ACTIONS,
+  terminalWithheldActionsByPrecedence,
   modIsMetaOnly,
   parseBinding,
   type KeybindingAction,
@@ -54,6 +54,11 @@ const CONTROL_MEANINGS: Record<string, string> = {
   "\x7f": t("退格"),
 };
 
+const US_SHIFTED: Record<string, string> = {
+  "1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&", "8": "*", "9": "(", "0": ")",
+  "-": "_", "=": "+", "[": "{", "]": "}", "\\": "|", ";": ":", "'": "\"", ",": "<", ".": ">", "/": "?", "`": "~",
+};
+
 const ARROW_FINAL: Record<string, string> = { ArrowUp: "A", ArrowDown: "B", ArrowRight: "C", ArrowLeft: "D" };
 
 const DISPLAY: Record<string, string> = {
@@ -99,10 +104,14 @@ export function xtermChordBytes(chord: TerminalChord, mac: boolean): string | nu
       const base = ctrl ? ctrlByte(key) : shift ? key.toUpperCase() : key;
       return `${ESC}${base}`;
     }
-    return shift ? null : `${ESC}${key}`;
+    // xterm sends the US-layout shifted character after ESC (Alt+Shift+= is ESC +).
+    if (!shift) return `${ESC}${key}`;
+    const shifted = US_SHIFTED[key];
+    return shifted ? `${ESC}${shifted}` : null;
   }
   if (ctrl) {
-    if (shift) return null;
+    // xterm sends ^_, ^@ and ^^ for the shifted keys that type _, @ and ^ on a US layout.
+    if (shift) return key === "-" ? "\x1f" : key === "2" ? "\x00" : key === "6" ? "\x1e" : null;
     if (key === "2" || key === "@") return null;
     return ctrlByte(key);
   }
@@ -146,7 +155,7 @@ export function terminalShortcutConflicts(
 ): TerminalShortcutConflict[] {
   const seen = new Set<string>();
   const out: TerminalShortcutConflict[] = [];
-  for (const id of TERMINAL_WITHHELD_ACTIONS) {
+  for (const id of terminalWithheldActionsByPrecedence()) {
     const action = KEYBINDING_ACTIONS.find((candidate) => candidate.id === id);
     const binding = bindings[id];
     if (!action || binding === null) continue;

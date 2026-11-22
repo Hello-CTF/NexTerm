@@ -170,7 +170,7 @@ vi.mock("../app/DekUnlockBanner", () => ({
 }));
 
 import App from "../app/App";
-import { resetAllKeybindings, setKeybinding } from "../app/keybindings";
+import { getKeybinding, parseBinding, resetAllKeybindings, setKeybinding } from "../app/keybindings";
 import { setMacPlatform } from "../app/platform";
 import { useUi, type AppTab, type Workspace } from "../app/store";
 import { resetUnreadTabs, setTabUnread } from "../app/unreadStore";
@@ -998,15 +998,19 @@ describe("App empty states", () => {
   });
 });
 
+// Presses the default new-terminal chord of this build (Ctrl+Shift+T on the desktop, Ctrl+Alt+N on the web).
 function pressCtrlT(): void {
+  const parsed = parseBinding(getKeybinding("newTerminal") ?? "");
+  if (!parsed) throw new Error("newTerminal is unbound");
+  const key = parsed.shift ? parsed.key.toUpperCase() : parsed.key;
   act(() => {
     window.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "t", code: "KeyT", ctrlKey: true, cancelable: true }),
+      new KeyboardEvent("keydown", { key, code: `Key${parsed.key.toUpperCase()}`, ctrlKey: true, shiftKey: parsed.shift, altKey: parsed.alt, cancelable: true }),
     );
   });
 }
 
-describe("App Ctrl+T new terminal", () => {
+describe("App new-terminal shortcut", () => {
   it("creates a terminal tab in the current workspace when its session is connected", async () => {
     mocks.sessionList.mockResolvedValue([sessionOf("s1")]);
     useUi.setState({

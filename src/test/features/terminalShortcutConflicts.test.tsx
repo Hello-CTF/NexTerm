@@ -13,7 +13,7 @@ vi.mock("../../app/platform", async (importOriginal) => ({
 }));
 vi.mock("../../ipc/env", () => ({ WEB: false }));
 
-import { getKeybindings, resetAllKeybindings, setKeybinding } from "../../app/keybindings";
+import { getKeybindings, loadKeybindings, resetAllKeybindings, setKeybinding } from "../../app/keybindings";
 import {
   terminalShortcutConflicts,
   type TerminalChord,
@@ -27,6 +27,7 @@ beforeEach(() => {
   harness.mac = false;
   localStorage.clear();
   resetAllKeybindings();
+  loadKeybindings();
 });
 
 afterEach(() => {
@@ -67,16 +68,35 @@ function domKey(chord: TerminalChord): KeyboardEventInit & { keyCode: number } {
 describe("terminal shortcut conflict table", () => {
   it("lists the chords a focused terminal withholds under the default desktop keymap", () => {
     const conflicts = terminalShortcutConflicts(getKeybindings(), false, false);
-    expect(byChord(conflicts, "Ctrl+\\")).toMatchObject({ bytes: "\x1c", meaning: "退出并转储 SIGQUIT", action: { id: "splitDown" } });
-    expect(byChord(conflicts, "Ctrl+Shift+W")).toMatchObject({ bytes: null, action: { id: "closePane" } });
-    expect(byChord(conflicts, "Ctrl+W")).toMatchObject({ bytes: "\x17", meaning: "删除前一个词", action: { id: "closeTab" } });
-    expect(byChord(conflicts, "Ctrl+B")).toMatchObject({ bytes: "\x02", action: { id: "toggleSidebar" } });
+    expect(byChord(conflicts, "Ctrl+Shift+D")).toMatchObject({ bytes: null, action: { id: "splitDown" } });
+    expect(byChord(conflicts, "Ctrl+Shift+W")).toMatchObject({ bytes: null, action: { id: "closeTab" } });
+    expect(byChord(conflicts, "Ctrl+Shift+Alt+W")).toMatchObject({ action: { id: "closePane" } });
+    expect(byChord(conflicts, "Ctrl+Shift+T")).toMatchObject({ bytes: null, action: { id: "newTerminal" } });
+    expect(byChord(conflicts, "Ctrl+Shift+Alt+T")).toMatchObject({ action: { id: "restoreClosedTab" } });
+    expect(byChord(conflicts, "Ctrl+Shift+B")).toMatchObject({ bytes: null, action: { id: "toggleSidebar" } });
     expect(byChord(conflicts, "Ctrl+Shift+F")).toMatchObject({ bytes: null, action: { id: "terminalSearch" } });
-    expect(byChord(conflicts, "Ctrl+F")).toBeUndefined();
-    expect(byChord(conflicts, "Ctrl+Shift+T")).toMatchObject({ bytes: null, action: { id: "restoreClosedTab" } });
     expect(byChord(conflicts, "Ctrl+Tab")).toMatchObject({ bytes: "\t", action: { id: "nextTab" } });
-    expect(byChord(conflicts, "Ctrl+1…9")?.meaning).toContain("SIGQUIT");
-    expect(byChord(conflicts, "Esc")).toBeUndefined();
+    expect(byChord(conflicts, "Ctrl+Alt+1…9")).toMatchObject({ action: { id: "switchTab" } });
+    for (const chord of ["Ctrl+\\", "Ctrl+W", "Ctrl+B", "Ctrl+T", "Ctrl+J", "Ctrl+F", "Ctrl+1…9", "Ctrl+-", "Ctrl+=", "Ctrl+0", "Esc"]) {
+      expect(byChord(conflicts, chord), chord).toBeUndefined();
+    }
+  });
+
+  // The default keymap off macOS desktop never takes a key the shell or tmux uses: no bare Ctrl+character chord and
+  // none of the shifted chords xterm encodes as control characters (Ctrl+_, Ctrl+@, Ctrl+^).
+  it.each([
+    ["Linux/Windows desktop", false, false],
+    ["web", false, true],
+    ["macOS web", true, true],
+  ])("takes no terminal control key under the default keymap (%s)", (_name, mac, web) => {
+    const conflicts = terminalShortcutConflicts(getKeybindings(), mac, web);
+    for (const conflict of conflicts) {
+      const { ctrl, shift, alt, key } = conflict.keys;
+      const bareCtrl = ctrl && !shift && !alt;
+      // Ctrl+, sends nothing, so the settings chord takes nothing from the program.
+      expect(bareCtrl && (key === "1-9" || (key.length === 1 && conflict.bytes !== null)), conflict.chord).toBe(false);
+      expect(["\x1f", "\x00", "\x1e"], conflict.chord).not.toContain(conflict.bytes);
+    }
   });
 
   it("matches what xterm itself sends for every listed chord", () => {
@@ -102,15 +122,25 @@ describe("terminal shortcut conflict table", () => {
     }
   });
 
+  it("reports what xterm sends for the shifted control chords a user may bind", () => {
+    setKeybinding("terminalFontDecrease", "Mod+Shift+-");
+    setKeybinding("lockApp", "Ctrl+Shift+6");
+    const conflicts = terminalShortcutConflicts(getKeybindings(), false, false);
+    expect(byChord(conflicts, "Ctrl+Shift+-")).toMatchObject({ bytes: "\x1f" });
+    expect(byChord(conflicts, "Ctrl+Shift+6")).toMatchObject({ bytes: "\x1e" });
+  });
+
   it("follows rebinding and drops chords that no longer reach the app", () => {
     setKeybinding("splitDown", null);
     setKeybinding("lockVault", "Ctrl+Alt+l");
     const conflicts = terminalShortcutConflicts(getKeybindings(), false, false);
-    expect(byChord(conflicts, "Ctrl+\\")).toBeUndefined();
+    expect(byChord(conflicts, "Ctrl+Shift+D")).toBeUndefined();
     expect(byChord(conflicts, "Ctrl+Alt+L")).toMatchObject({ bytes: "\x1b\x0c", action: { id: "lockVault" } });
   });
 
   it("leaves Mod chords to the terminal on macOS desktop, where Mod is Cmd only", () => {
+    harness.mac = true;
+    loadKeybindings();
     const conflicts = terminalShortcutConflicts(getKeybindings(), true, false);
     for (const chord of ["Ctrl+W", "Ctrl+B", "Ctrl+T", "Ctrl+J", "Ctrl+\\", "Ctrl+1…9", "Ctrl+Shift+]", "Ctrl+Alt+→", "Ctrl+="]) {
       expect(byChord(conflicts, chord)).toBeUndefined();
@@ -123,24 +153,25 @@ describe("terminal shortcut conflict table", () => {
 
   it("lists Mod chords as Ctrl on the macOS web build, which keeps the Ctrl fallback", () => {
     const conflicts = terminalShortcutConflicts(getKeybindings(), true, true);
-    expect(byChord(conflicts, "Ctrl+W")).toMatchObject({ action: { id: "closeTab" } });
-    expect(byChord(conflicts, "Ctrl+B")).toMatchObject({ action: { id: "toggleSidebar" } });
+    expect(byChord(conflicts, "Ctrl+Shift+W")).toMatchObject({ action: { id: "closeTab" } });
+    expect(byChord(conflicts, "Ctrl+Shift+B")).toMatchObject({ action: { id: "toggleSidebar" } });
   });
 
   it("lists the terminal font size chords and leaves the cheat sheet chord to the terminal", () => {
     const conflicts = terminalShortcutConflicts(getKeybindings(), false, false);
-    expect(byChord(conflicts, "Ctrl+=")).toMatchObject({ action: { id: "terminalFontIncrease" } });
-    expect(byChord(conflicts, "Ctrl+-")).toMatchObject({ action: { id: "terminalFontDecrease" } });
-    expect(byChord(conflicts, "Ctrl+0")).toMatchObject({ action: { id: "terminalFontReset" } });
+    expect(byChord(conflicts, "Ctrl+Alt+=")).toMatchObject({ action: { id: "terminalFontIncrease" } });
+    expect(byChord(conflicts, "Ctrl+Shift+=")).toMatchObject({ bytes: null, action: { id: "terminalFontIncrease" } });
+    expect(byChord(conflicts, "Ctrl+Alt+-")).toMatchObject({ action: { id: "terminalFontDecrease" } });
+    expect(byChord(conflicts, "Ctrl+Alt+0")).toMatchObject({ action: { id: "terminalFontReset" } });
     expect(byChord(conflicts, "Ctrl+Shift+Enter")).toMatchObject({ action: { id: "toggleZoomPane" } });
     // Ctrl+/ is readline's undo: the cheat sheet does not take it from a focused terminal.
     expect(byChord(conflicts, "Ctrl+/")).toBeUndefined();
   });
 
-  it("keeps the first action when two share a chord, as the runtime match does", () => {
+  it("gives a shared chord to the binding the user chose, as the runtime match does", () => {
     setKeybinding("lockVault", "Mod+Shift+p");
     const owners = terminalShortcutConflicts(getKeybindings(), false, false).filter((conflict) => conflict.chord === "Ctrl+Shift+P");
-    expect(owners.map((conflict) => conflict.action.id)).toEqual(["commandPalette"]);
+    expect(owners.map((conflict) => conflict.action.id)).toEqual(["lockVault"]);
   });
 
   it("shows the table in the shortcuts settings card", () => {
@@ -148,8 +179,8 @@ describe("terminal shortcut conflict table", () => {
     const table = mounted.container.querySelector<HTMLTableElement>('table[aria-label="与终端按键的冲突"]');
     expect(table).not.toBeNull();
     const row = table!.querySelector<HTMLTableRowElement>('tr[data-terminal-conflict="splitDown"]');
-    expect([...row!.cells].map((cell) => cell.textContent)).toEqual(["Ctrl+\\", "向下分屏", "^\\（退出并转储 SIGQUIT）"]);
-    const closePane = table!.querySelector<HTMLTableRowElement>('tr[data-terminal-conflict="closePane"]');
-    expect(closePane!.cells[2].textContent).toBe("无（终端默认不发送）");
+    expect([...row!.cells].map((cell) => cell.textContent)).toEqual(["Ctrl+Shift+D", "向下分屏", "无（终端默认不发送）"]);
+    const nextTab = table!.querySelector<HTMLTableRowElement>('tr[data-terminal-conflict="nextTab"]');
+    expect(nextTab!.cells[0].textContent).toBe("Ctrl+Tab");
   });
 });

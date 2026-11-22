@@ -187,6 +187,7 @@ export function ShortcutsCard() {
                 t("{label}（{value}）与 {label2}（{value2}）重叠", { label: conflict.actions[0].label, value: formatBinding(conflict.bindings[0]), label2: conflict.actions[1].label, value2: formatBinding(conflict.bindings[1]) }),
             )
             .join("；") })}
+          {t("你自己设置的快捷键优先于内置默认快捷键。")}
         </p>
       )}
       {terminalConflicts.length > 0 && (

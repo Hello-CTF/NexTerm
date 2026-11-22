@@ -211,7 +211,7 @@ afterEach(() => {
   mounted = undefined;
 });
 
-const SIDEBAR: KeyboardEventInit = { code: "KeyB", ctrlKey: true, shiftKey: true };
+const SIDEBAR: KeyboardEventInit = { code: "KeyB", ctrlKey: true, shiftKey: true, altKey: true };
 const sidebar = () => mounted?.container.querySelector('[data-testid="session-sidebar"]') ?? null;
 const toggleButton = () => mounted?.container.querySelector<HTMLButtonElement>("button[aria-pressed][title*='侧栏']") ?? null;
 
@@ -222,7 +222,7 @@ describe("session sidebar in the terminal pane", () => {
     expect(toggleButton()?.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("toggles with Ctrl+Shift+B inside the pane", async () => {
+  it("toggles with Ctrl+Shift+Alt+B inside the pane", async () => {
     await mountPane();
     const first = await pressFromTerminal("B", SIDEBAR);
     expect(first.event.defaultPrevented).toBe(true);

@@ -42,11 +42,24 @@ beforeEach(() => {
 describe("resolveKey with the web keymap", () => {
   it.each([false, true])("leaves browser-reserved chords to the terminal and uses the web replacements (mac=%s)", (mac) => {
     harness.mac = mac;
-    // Ctrl+Shift+W is the browser's close-window chord, so the web build binds closePane to Ctrl+Alt+W instead.
+    // Ctrl+W, Ctrl+Shift+W and Ctrl+T belong to the browser (and Ctrl+W deletes a word), so the web build closes tabs
+    // with Ctrl+Alt+W and panes with Ctrl+Shift+Alt+W.
     expect(resolve(ev("W", "KeyW", { ctrlKey: true, shiftKey: true }))).toEqual({ kind: "pass" });
+    expect(resolve(ev("w", "KeyW", { ctrlKey: true }))).toEqual({ kind: "pass" });
+    expect(resolve(ev("t", "KeyT", { ctrlKey: true }))).toEqual({ kind: "pass" });
     expect(resolve(ev("w", "KeyW", { ctrlKey: true, altKey: true }))).toEqual({
       kind: "app-shortcut",
+      hit: { action: "closeTab", digit: null },
+      dropRepeat: false,
+    });
+    expect(resolve(ev("W", "KeyW", { ctrlKey: true, shiftKey: true, altKey: true }))).toEqual({
+      kind: "app-shortcut",
       hit: { action: "closePane", digit: null },
+      dropRepeat: false,
+    });
+    expect(resolve(ev("n", "KeyN", { ctrlKey: true, altKey: true }))).toEqual({
+      kind: "app-shortcut",
+      hit: { action: "newTerminal", digit: null },
       dropRepeat: false,
     });
     expect(resolve(ev("]", "BracketRight", { ctrlKey: true, altKey: true }))).toEqual({
