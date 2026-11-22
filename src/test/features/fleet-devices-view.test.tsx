@@ -1469,10 +1469,12 @@ describe("Device management view - remote terminal switch and version note", () 
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("both-01") ?? false);
 
-    expect(cardWith("up-01")?.textContent).toContain("自动升级失败：" + upgrade);
+    expect(cardWith("up-01")?.textContent).toContain(upgrade);
+    expect(cardWith("up-01")?.textContent).not.toContain("自动升级失败：");
     expect(cardWith("up-01")?.textContent).not.toContain("后台服务出错");
     expect(cardWith("both-01")?.textContent).toContain("后台服务出错：unit failed");
-    expect(cardWith("both-01")?.textContent).toContain("自动升级失败：" + upgrade);
+    expect(cardWith("both-01")?.textContent).not.toContain("后台服务出错：unit failed; ");
+    expect(cardWith("both-01")?.textContent).toContain(upgrade);
   });
 
   it("hints an outdated agent only when it is older than the server, both are release versions and the device is online", async () => {

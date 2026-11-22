@@ -618,6 +618,18 @@ func (r *Runtime) loadUpgradeFailure() {
 	}
 }
 
+// addUpgradeFailure records the failure of an upgrade to version without dropping a failure of another version,
+// such as a rollback loaded at start: a recorded failure of the same version is replaced, others are kept.
+func (r *Runtime) addUpgradeFailure(version, text string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.upgradeFailure == "" || strings.HasPrefix(r.upgradeFailure, "自动升级到 "+version+" ") {
+		r.upgradeFailure = text
+		return
+	}
+	r.upgradeFailure += "; " + text
+}
+
 func (r *Runtime) setUpgradeFailure(text string) {
 	r.mu.Lock()
 	r.upgradeFailure = text
@@ -1091,7 +1103,7 @@ func (r *Runtime) followServerVersion(ctx context.Context, serverVersion string)
 			if ctx.Err() == nil {
 				r.logger.Warn("upgrade to the server's release failed; staying on the current version", "target_version", serverVersion, "error", err)
 				// The next sync carries the failure, as it does for a rolled-back upgrade.
-				r.setUpgradeFailure(upgradeAttemptFailure(serverVersion, err) + "；设备代理下次启动时会重试")
+				r.addUpgradeFailure(serverVersion, fmt.Sprintf("自动升级到 %s 失败：%v；设备代理下次启动时会重试", serverVersion, err))
 			}
 			return
 		}
