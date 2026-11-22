@@ -926,6 +926,23 @@ describe("App workspace scope", () => {
 });
 
 describe("App empty states", () => {
+  it("keeps the welcome actions on a first desktop launch instead of opening the local host", async () => {
+    envState.transport = "desktop";
+    mocks.assetList.mockResolvedValue([assetOf({ id: "local", name: "本机", kind: "local", builtin: true })]);
+    try {
+      mounted = mountApp();
+      await flush();
+      await flush();
+      expect(mocks.connectAsset).not.toHaveBeenCalled();
+      expect(useUi.getState().workspaces).toEqual([]);
+      const main = mounted.container.querySelector("main");
+      expect(main?.querySelector("[data-testid='welcome-page']")).not.toBeNull();
+      expect([...(main?.querySelectorAll("button") ?? [])].some((button) => button.textContent?.trim() === "打开本地终端")).toBe(true);
+    } finally {
+      envState.transport = "web";
+    }
+  });
+
   it("points the top guidance to assets when no workspace exists", async () => {
     mounted = mountApp();
     await flush();

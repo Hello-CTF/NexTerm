@@ -1,14 +1,13 @@
 import { useEffect } from "react";
 import { type QueryClient } from "@tanstack/react-query";
-import { useUi, connectAsset } from "../store";
-import { layoutBootstrapped, layoutRestoreStatus, startLayoutSync } from "../layout";
+import { useUi } from "../store";
+import { startLayoutSync } from "../layout";
 import { wireAccountSwitchCleanup } from "../accountSwitch";
 import { startUnreadTracking } from "../unread";
 import { startAwarenessTracking } from "../sessionAwareness";
 import { startInboxNotifications } from "../../features/inbox/inboxNotifications";
 import { getUpdateState } from "../useUpdate";
 import { promptUpdateIfNeeded } from "../updatePrompt";
-import { assetApi } from "../../ipc/commands";
 import { listenEvent } from "../../ipc/events";
 import { onAssetDataChanged } from "../../ipc/assetEvents";
 import { TRANSPORT, WEB } from "../../ipc/env";
@@ -82,10 +81,9 @@ export function useAppDialogHandlers(): void {
   }, []);
 }
 
-let bootLocalTried = false;
-
 // useAppBootEffects starts the app-lifetime background work: layout sync, unread and attention tracking, update checks,
-// session list refreshes, account-switch cleanup and the first-run local terminal.
+// session list refreshes and account-switch cleanup. A first launch shows the welcome page rather than an empty
+// local workspace, so its actions (local terminal, quick connect, new asset, SSH config import) stay in view.
 export function useAppBootEffects(queryClient: QueryClient): void {
   useEffect(() => {
     startLayoutSync();
@@ -163,22 +161,4 @@ export function useAppBootEffects(queryClient: QueryClient): void {
   // the 8s/3.5s auto-dismiss already bounds their lifetime, and terminal/file/AI and non-401 errors remain valid feedback after login.
   // Account-level auth-transition cleanup lives in ../accountSwitch so it can be exercised without mounting the shell.
   useEffect(() => wireAccountSwitchCleanup(queryClient), [queryClient]);
-
-  useEffect(() => {
-    if (bootLocalTried) return;
-    bootLocalTried = true;
-    void (async () => {
-      try {
-        await layoutBootstrapped;
-        if (layoutRestoreStatus().pending || layoutRestoreStatus().preview) return;
-        const list = await assetApi.list();
-        if (list.some((a) => !a.builtin)) return;
-        const builtin = list.find((a) => a.builtin && a.kind === "local");
-        if (!builtin) return;
-        if (useUi.getState().workspaces.length > 0) return;
-        await connectAsset(builtin, { preserveUserFocus: true });
-      } catch {
-      }
-    })();
-  }, []);
 }
