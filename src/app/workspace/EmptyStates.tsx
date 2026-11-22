@@ -1,6 +1,19 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { connectAsset, reopenRemoteDesktopTab, useUi, openTerminalTab } from "../store";
+import { connectAsset, reopenRemoteDesktopTab, sanitizeRemoteTabTitle, useUi, openTerminalTab } from "../store";
+import {
+  backgroundTabKey,
+  backgroundTargets,
+  listBackgroundTabs,
+  openTerminalTabIds,
+  resolveHostGate,
+  takeOverBackgroundTab,
+  useBackgroundSessionsAccess,
+  visibleBackgroundTabs,
+  type BackgroundScope,
+  type BackgroundTab,
+} from "../../features/terminal/backgroundSessionsAccess";
+import { getLocalHelperStatus, localDurableEnabled } from "../../features/terminal/localHelperStatus";
 import { formatBinding, useKeybindings } from "../keybindings";
 import { useShell } from "../shell";
 import { sessionApi } from "../../ipc/commands";
@@ -80,7 +93,127 @@ export function WorkspaceEmpty({ onNew, workspaceId, paneId }: { onNew: () => vo
         <IconPlus size={14} />
         {t("新建终端")}
       </button>
+      {workspaceId && kind === "session" && <HostBackgroundTerminals workspaceId={workspaceId} paneId={paneId} />}
     </EmptyCard>
+  );
+}
+
+const BACKGROUND_LIST_LIMIT = 5;
+
+function backgroundName(tab: BackgroundTab): string {
+  const compact = tab.tabId.replace(/[^0-9a-z]/gi, "");
+  return (
+    sanitizeRemoteTabTitle(tab.title ?? "") ||
+    sanitizeRemoteTabTitle(tab.windowTitle ?? "") ||
+    t("终端 {value}", { value: (compact || tab.tabId).slice(-6) })
+  );
+}
+
+// HostBackgroundTerminals lists the host's 持久终端 that run without a tab here, so opening a saved host (which opens
+// no terminal by itself) offers taking one over next to starting a new one. It reads the same listing as the
+// 后台会话 page, refreshed on the activity-bar count's interval: right after connecting, the host's durable helper may
+// still be starting and list nothing yet.
+const BACKGROUND_LIST_REFRESH_MS = 10_000;
+
+function HostBackgroundTerminals({ workspaceId, paneId }: { workspaceId: string; paneId?: string }) {
+  const workspace = useUi((s) => s.workspaces.find((item) => item.id === workspaceId));
+  const sessionId = workspace?.sessionId;
+  const status = useUi((s) => s.sessions.find((session) => session.id === sessionId)?.status);
+  const access = useBackgroundSessionsAccess(workspace);
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
+  const [tabs, setTabs] = useState<BackgroundTab[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [generation, setGeneration] = useState(0);
+
+  useEffect(() => {
+    setTabs([]);
+    if (!access || !sessionId || status !== "connected") return;
+    let cancelled = false;
+    let inFlight = false;
+    const refresh = () => {
+      if (inFlight) return;
+      const st = useUi.getState();
+      const owner = workspaceRef.current ?? undefined;
+      const scope: BackgroundScope = {
+        sessions: st.sessions,
+        workspaces: st.workspaces,
+        verified: {},
+        localDurable: localDurableEnabled(getLocalHelperStatus()),
+      };
+      const gate = resolveHostGate(owner, st.sessions.find((session) => session.id === sessionId), scope.verified);
+      if (gate.needsReconnect) return;
+      const targets = backgroundTargets(scope, { showAll: false, hostSessionId: sessionId, owner, remoteOwner: gate.remoteOwner });
+      inFlight = true;
+      void listBackgroundTabs(scope, targets, openTerminalTabIds(st.workspaces))
+        .then(({ collected, liveFailed }) => {
+          if (cancelled) return;
+          // Nothing answered: keep what is shown rather than clearing it.
+          if (liveFailed && collected.failedRemote.length === targets.length) return;
+          setTabs(visibleBackgroundTabs(collected.list, scope, { hostSessionId: sessionId, showAll: false, blocked: false }));
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, BACKGROUND_LIST_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [access, sessionId, status, generation]);
+
+  if (tabs.length === 0) return null;
+  const takeOver = async (tab: BackgroundTab) => {
+    const key = backgroundTabKey(tab);
+    setBusy(key);
+    // The terminal opens in the pane whose empty state was used.
+    if (paneId) useUi.getState().setActivePane(paneId, workspaceId);
+    try {
+      const result = await takeOverBackgroundTab(tab);
+      if (!result.ok && "error" in result) {
+        useUi.getState().pushToast("error", t("接管失败：{error}", { error: result.error }));
+        setGeneration((value) => value + 1);
+      }
+    } finally {
+      setBusy((current) => (current === key ? null : current));
+    }
+  };
+  const shown = tabs.slice(0, BACKGROUND_LIST_LIMIT);
+  return (
+    <section aria-label={t("后台运行的持久终端")} className="w-full border-t border-neutral-800/70 pt-3 text-left">
+      <div className="mb-1 text-[11.5px] font-medium text-neutral-500">{t("后台运行的持久终端")}</div>
+      <ul className="flex flex-col gap-1">
+        {shown.map((tab) => {
+          const key = backgroundTabKey(tab);
+          const name = backgroundName(tab);
+          return (
+            <li key={key} className="flex items-center gap-2">
+              <IconTerminal size={13} className="shrink-0 text-neutral-500" />
+              <span className="min-w-0 flex-1 truncate text-[12px] text-neutral-200" title={name}>
+                {name}
+              </span>
+              <button
+                type="button"
+                className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
+                aria-label={t("接管 {name}", { name })}
+                disabled={busy !== null}
+                onClick={() => void takeOver(tab)}
+              >
+                {t("接管")}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {tabs.length > shown.length && (
+        <div className="mt-1 text-[11px] text-neutral-500">
+          {t("另有 {count} 个，可在「后台会话」查看", { count: tabs.length - shown.length })}
+        </div>
+      )}
+    </section>
   );
 }
 
