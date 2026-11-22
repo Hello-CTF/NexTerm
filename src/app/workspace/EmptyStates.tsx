@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { connectAsset, reopenRemoteDesktopTab, sanitizeRemoteTabTitle, useUi, openTerminalTab } from "../store";
+import { connectAsset, reopenRemoteDesktopTab, useUi, openTerminalTab } from "../store";
 import {
   backgroundTabKey,
+  backgroundTabName,
   backgroundTargets,
   listBackgroundTabs,
   openTerminalTabIds,
@@ -101,15 +102,6 @@ export function WorkspaceEmpty({ onNew, workspaceId, paneId }: { onNew: () => vo
 
 const BACKGROUND_LIST_LIMIT = 5;
 
-function backgroundName(tab: BackgroundTab): string {
-  const compact = tab.tabId.replace(/[^0-9a-z]/gi, "");
-  return (
-    sanitizeRemoteTabTitle(tab.title ?? "") ||
-    sanitizeRemoteTabTitle(tab.windowTitle ?? "") ||
-    t("终端 {value}", { value: (compact || tab.tabId).slice(-6) })
-  );
-}
-
 // HostBackgroundTerminals lists the host's 持久终端 that run without a tab here, so opening a saved host (which opens
 // no terminal by itself) offers taking one over next to starting a new one. It reads the same listing as the
 // 后台会话 page, refreshed on the activity-bar count's interval: right after connecting, the host's durable helper may
@@ -200,7 +192,7 @@ function HostBackgroundTerminals({ workspaceId, paneId }: { workspaceId: string;
       <ul className="flex flex-col gap-1">
         {shown.map((tab) => {
           const key = backgroundTabKey(tab);
-          const name = backgroundName(tab);
+          const name = backgroundTabName(tab);
           return (
             <li key={key} className="flex items-center gap-2">
               <IconTerminal size={13} className="shrink-0 text-neutral-500" />
