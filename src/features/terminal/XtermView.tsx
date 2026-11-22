@@ -474,11 +474,11 @@ export function XtermView(props: XtermViewProps) {
     // Keyboard, IME and app shortcuts share one precedence order (terminalInput/resolveKey).
     const detachTerminalInput = attachTerminalInput(term, hostRef.current, {
       kittyKeyboard,
-      withholds: (action) =>
+      withholds: (action, event) =>
         commandShortcutActive(action, {
           normalBuffer: term.buffer.active.type === "normal",
           blocks: onBlocksRef.current !== undefined,
-        }),
+        }, event),
     });
 
     // Path links register before the URL provider so they take precedence over its host:port targets.

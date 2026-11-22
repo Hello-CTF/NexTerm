@@ -257,7 +257,7 @@ describe("XtermView app-level shortcut passthrough", () => {
     expect(handledByXterm({ key: "W", code: "KeyW", ctrlKey: true, shiftKey: true, altKey: true })).toBe(true);
   });
 
-  it("releases every chord but navigation to an alternate-screen program", async () => {
+  it("releases only bare Ctrl chords to an alternate-screen program", async () => {
     await show({ sessionId: "session", tabId: "pending" });
     // A binding saved before the default change: Ctrl+W closes the tab at the shell prompt.
     setKeybinding("closeTab", "Mod+w");
@@ -268,9 +268,11 @@ describe("XtermView app-level shortcut passthrough", () => {
 
     const term = harness.terminals[0] as unknown as { buffer: { active: { type: string } } };
     term.buffer.active.type = "alternate";
-    // vim gets Ctrl+W (its window commands); a chord xterm sends nothing for still bubbles to the app.
+    // vim gets Ctrl+W (its window commands). Chords xterm sends nothing for, or sends as Meta, stay app shortcuts.
     expect(handledByXterm(ctrlW)).toBe(true);
-    expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true })).toBe(true);
+    expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true })).toBe(false);
+    expect(handledByXterm({ key: "=", code: "Equal", ctrlKey: true, altKey: true })).toBe(false);
+    expect(handledByXterm({ key: "T", code: "KeyT", ctrlKey: true, shiftKey: true, altKey: true })).toBe(false);
     // Moving between panes and tabs stays with the app, so a full-screen program never traps the keyboard.
     expect(handledByXterm(focusPane)).toBe(false);
     expect(handledByXterm(nextTab)).toBe(false);

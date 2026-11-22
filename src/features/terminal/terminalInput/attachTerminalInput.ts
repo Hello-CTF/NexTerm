@@ -19,7 +19,7 @@ export interface TerminalInputOptions {
    * Whether a withheld action acts right now; when it returns false the chord goes to the program instead (for
    * example command block navigation while an alternate-screen editor runs). All withheld actions act when omitted.
    */
-  withholds?: (action: KeybindingActionId) => boolean;
+  withholds?: (action: KeybindingActionId, event: KeyEventLike) => boolean;
 }
 
 /**
@@ -47,7 +47,7 @@ export function attachTerminalInput(
   const withholds = options.withholds;
   const matchAppShortcut = (event: KeyEventLike): AppKeybindingHit | null => {
     const hit = matchTerminalWithheldKeybinding(event);
-    return hit && withholds && !withholds(hit.action) ? null : hit;
+    return hit && withholds && !withholds(hit.action, event) ? null : hit;
   };
   const webkitCommitEnter = options.webkitCommitEnter ?? isWebKitEngine(navigator.userAgent);
   // WebKit's committing Enter: "pending" from compositionend until the next keydown (at most one Enter is taken),

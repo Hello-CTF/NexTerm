@@ -181,14 +181,22 @@ describe("command shortcut availability", () => {
     expect(commandShortcutActive("commandPalette", { normalBuffer: true, blocks: false })).toBe(true);
   });
 
-  it("releases every chord but navigation to an alternate-screen program", () => {
+  it("releases to an alternate-screen program only the chords it reads as a bare control key", () => {
     const altScreen = { normalBuffer: false, blocks: true };
-    for (const action of ["commandPalette", "closeTab", "newTerminal", "splitDown", "toggleSidebar", "terminalFontDecrease", "terminalSearch"] as const) {
-      expect(commandShortcutActive(action, altScreen), action).toBe(false);
+    const ev = (code: string, mods: { shiftKey?: boolean; altKey?: boolean } = {}) =>
+      ({ key: "", code, ctrlKey: true, metaKey: false, shiftKey: false, altKey: false, ...mods });
+    for (const event of [ev("KeyW"), ev("KeyB"), ev("Backslash"), ev("Digit3"), ev("Minus", { shiftKey: true })]) {
+      expect(commandShortcutActive("closeTab", altScreen, event), event.code).toBe(false);
     }
-    for (const action of ["focusPaneLeft", "focusPaneRight", "focusPaneUp", "focusPaneDown", "nextTab", "previousTab", "switchTab", "nextWorkspace", "previousWorkspace"] as const) {
-      expect(commandShortcutActive(action, altScreen), action).toBe(true);
+    for (const event of [ev("KeyW", { altKey: true }), ev("Equal", { altKey: true }), ev("KeyT", { shiftKey: true }), ev("KeyT", { shiftKey: true, altKey: true })]) {
+      expect(commandShortcutActive("closeTab", altScreen, event), event.code).toBe(true);
     }
+    // Navigation stays with the app even on a bare Ctrl chord.
+    for (const action of ["focusPaneLeft", "nextTab", "switchTab", "nextWorkspace"] as const) {
+      expect(commandShortcutActive(action, altScreen, ev("KeyN")), action).toBe(true);
+    }
+    // At the shell prompt every chord acts.
+    expect(commandShortcutActive("closeTab", { normalBuffer: true, blocks: true }, ev("KeyW"))).toBe(true);
   });
 });
 
