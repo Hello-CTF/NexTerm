@@ -1,4 +1,4 @@
-import { assetApi, dbApi, sessionApi, vaultApi, type SessionInfo, type VaultStatus } from "../../ipc/commands";
+import { assetApi, dbApi, sessionApi, vaultApi, type Asset, type SessionInfo, type VaultStatus } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { useConnectHistory } from "../../features/explorer/connectHistory";
 import { connectWithHostKeyConfirm } from "../hostKeys";
@@ -28,6 +28,7 @@ import type {
 } from "./types";
 import { useUi } from "./useUi";
 import { reconnectRestoredWorkspace } from "./workspaceRestore";
+import { confirmSuspectReconnect, reconnectWorkspaceConnection } from "./workspaceReconnect";
 import { t } from "../../i18n";
 
 export async function ensureVaultUnlocked(reason: string, epoch?: number): Promise<boolean> {
@@ -336,6 +337,52 @@ export async function connectAsset(
 }
 
 const LIVE_SESSION_STATUSES = new Set(["connecting", "connected", "reconnecting"]);
+
+// The asset fields a connected session took when it connected; the name, tags, note and icon only change the display.
+const CONNECTION_FIELDS = ["kind", "host", "port", "username", "authKind", "keyPath", "credId", "groupId"] as const;
+const DISPLAY_OPTIONS = new Set(["icon"]);
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+type EditedAsset = Pick<Asset, "id" | "options" | (typeof CONNECTION_FIELDS)[number]>;
+
+export function assetConnectionChanged(before: EditedAsset, after: EditedAsset): boolean {
+  if (CONNECTION_FIELDS.some((field) => (before[field] ?? null) !== (after[field] ?? null))) return true;
+  const connectionOptions = (options: Record<string, unknown> | undefined) =>
+    Object.fromEntries(Object.entries(options ?? {}).filter(([key]) => !DISPLAY_OPTIONS.has(key)));
+  return stableJson(connectionOptions(before.options)) !== stableJson(connectionOptions(after.options));
+}
+
+// noticeLiveAssetEdit tells the user that a saved connection change does not reach a host already connected with the
+// asset: the session keeps the settings it connected with until it reconnects, which reloads the stored asset.
+export function noticeLiveAssetEdit(before: EditedAsset, after: EditedAsset | undefined): void {
+  if (!after || !assetConnectionChanged(before, after)) return;
+  const st = useUi.getState();
+  const live = st.workspaces.find(
+    (workspace) =>
+      workspace.kind === "session" &&
+      workspace.assetId === after.id &&
+      st.sessions.some((session) => session.id === workspace.sessionId && LIVE_SESSION_STATUSES.has(session.status)),
+  );
+  if (!live) return;
+  st.pushToast("info", t("已保存，当前连接仍使用旧设置"), {
+    label: t("重新连接"),
+    onSelect: () => {
+      void (async () => {
+        if (await confirmSuspectReconnect(live.id)) await reconnectWorkspaceConnection(live.id);
+      })();
+    },
+  });
+}
 
 async function runConnectAsset(
   asset: ConnectAssetInput,
