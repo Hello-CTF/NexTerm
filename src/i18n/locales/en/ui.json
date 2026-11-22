@@ -6906,7 +6906,6 @@
   "重做 ({value}+Shift+Z)": "Redo ({value}+Shift+Z)",
   "重启": "Restart",
   "重启失败": "Restart failed",
-  "重启失败：{restartError}": "Restart failed: {restartError}",
   "重启失败：{restartError}。请手动退出并重新打开应用。": "Restart failed: {restartError}. Quit and reopen the app manually.",
   "重启容器 {name}？\n\n容器会先停止再启动，期间它对外提供的服务会中断；正在运行的进程会退出，容器数据保留。": "Restart container {name}?\n\nThe container is stopped and then started, so the services it provides are interrupted in between. Running processes exit; container data is kept.",
   "重启持久终端组件（结束 {value}）": "Restart persistent terminal component (ends {value})",

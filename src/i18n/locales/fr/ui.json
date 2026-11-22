@@ -6903,7 +6903,6 @@
   "重做 ({value}+Shift+Z)": "Rétablir ({value}+Maj+Z)",
   "重启": "Redémarrer",
   "重启失败": "Échec du redémarrage",
-  "重启失败：{restartError}": "Échec du redémarrage : {restartError}",
   "重启失败：{restartError}。请手动退出并重新打开应用。": "Échec du redémarrage : {restartError}. Quittez puis rouvrez l'application manuellement.",
   "重启容器 {name}？\n\n容器会先停止再启动，期间它对外提供的服务会中断；正在运行的进程会退出，容器数据保留。": "Redémarrer le conteneur {name} ?\n\nLe conteneur sera d'abord arrêté puis relancé ; les services qu'il expose seront interrompus entre-temps et les processus en cours se termineront. Les données du conteneur sont conservées.",
   "重启持久终端组件（结束 {value}）": "Redémarrer le composant de terminal persistant (arrêt de {value})",

@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/ulikunitz/xz"
 )
 
@@ -67,9 +66,10 @@ func (m *Manager) applyInstall(ctx context.Context, archive string) (string, err
 }
 
 // checkPackage extracts the deb into a scratch directory exactly as applyInstall would, so a package that cannot
-// be installed is reported when it is staged rather than when the user restarts.
+// be installed is reported when it is staged rather than when the user restarts. The scratch directory sits next
+// to the download in the stage directory, not in a temp directory that may be a small tmpfs.
 func (m *Manager) checkPackage(ctx context.Context, archive string) error {
-	scratch, err := os.MkdirTemp(platform.TempDir(), "nexterm-update-check-")
+	scratch, err := os.MkdirTemp(filepath.Dir(archive), "check-")
 	if err != nil {
 		return err
 	}

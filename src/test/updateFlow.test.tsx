@@ -74,6 +74,8 @@ function resetUpdateStore(): void {
     readyVersion: null,
     restarting: false,
     restartError: null,
+    restartFailure: null,
+    readyApplied: false,
     skippedVersion: null,
     dismissedVersion: null,
     restartDeferred: false,
@@ -552,6 +554,46 @@ describe("install only at restart", () => {
     await flushUntil(() => (mounted?.container.textContent ?? "").includes("校验失败"));
     await flushUntil(() => useUpdateStore.getState().readyVersion === null);
     expect([...mounted.container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "下载更新")).toBe(true);
+  });
+
+  it("says nothing was installed when applying the package fails, and reports it once", async () => {
+    const toast = vi.fn();
+    useUi.setState({ pushToast: toast });
+    const pending = deferred<UpdateResultDto>();
+    mocks.restart.mockReturnValue(pending.promise);
+    mocks.state
+      .mockResolvedValueOnce({ phase: "install", version: "0.3.0", taskId: "a1", transferred: 0, total: 0, error: "", readyVersion: "0.3.0" })
+      .mockResolvedValue({ phase: "failed", version: "0.3.0", taskId: "a1", transferred: 0, total: 0, error: "disk full", readyVersion: "0.3.0" });
+    useUpdateStore.setState({ status: makeStatus(), readyVersion: "0.3.0" });
+    mounted = mount(createElement("div", null, createElement(UpdateCard), createElement(UpdateBanner, { onOpenSettings: vi.fn() })));
+    const release = acquireProgressListener();
+    await flushUntil(() => mocks.progressHandlers.length > 0);
+    clickButton(mounted.container.querySelector("section")!, "立即重启并安装");
+    act(() => {
+      emitProgress({ taskId: "a1", phase: "install", transferred: 0, total: 0, done: false });
+    });
+    await flushUntil(() => useUpdateStore.getState().install.active);
+    act(() => {
+      emitProgress({ taskId: "a1", phase: "install", transferred: 0, total: 0, done: true, error: "disk full" });
+    });
+    pending.resolve({ failure: "apply", installed: false, restarted: false, version: "", unavailableReason: "disk full" });
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("更新未安装：disk full"));
+    await flush();
+    expect(mounted.container.textContent).not.toContain("重启失败");
+    expect(toast).not.toHaveBeenCalled();
+    release();
+  });
+
+  it("offers only a relaunch once the restart installed the update but could not reopen the app", async () => {
+    mocks.restart.mockResolvedValue({ failure: "relaunch", installed: true, restarted: false, version: "0.3.0", unavailableReason: "重启失败: spawn" });
+    mocks.state.mockResolvedValue({ phase: "installed", version: "0.3.0", taskId: "", transferred: 0, total: 0, error: "", readyVersion: "" });
+    useUpdateStore.setState({ status: makeStatus(), readyVersion: "0.3.0" });
+    mounted = mount(createElement(UpdateCard));
+    clickButton(mounted.container, "立即重启并安装");
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("v0.3.0 已安装，重启应用后生效"));
+    expect(mounted.container.textContent).toContain("请手动退出并重新打开应用");
+    expect(mounted.container.textContent).not.toContain("下载完成，重启时安装");
+    expect([...mounted.container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "立即重启")).toBe(true);
   });
 
   it("names an old release without this platform's package neutrally", async () => {
