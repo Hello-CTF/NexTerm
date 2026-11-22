@@ -32,6 +32,7 @@ import {
   type Workspace,
 } from "../../app/store";
 import type { LiveTabInfo, SessionInfo } from "../../ipc/commands";
+import { ALL_PROJECTS, projectFocusForGroup, type ProjectInventory } from "../../app/projectFocus";
 
 function terminal(id: string, extra: Partial<AppTab> = {}): AppTab {
   return { id, kind: "terminal", title: id, sessionId: "s", tabId: `kernel-${id}`, closable: true, retainable: true, ...extra };
@@ -166,6 +167,8 @@ describe("closing a workspace", () => {
     const [message, options] = mocks.askChoiceRemember.mock.calls[0];
     expect(message).toContain("容器 exec");
     expect(options.rememberLabel).toBe("以后都按此选择");
+    // Either choice ends the exec terminal too, so the dialog warns and focuses 取消.
+    expect(options).toMatchObject({ level: "warning", focusCancel: true });
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-e1", "kill");
@@ -181,6 +184,35 @@ describe("closing a workspace", () => {
     expect(useUi.getState().activeWorkspaceId).toBe("w3");
     useUi.setState({ activeWorkspaceId: "w4" });
     expect(await useUi.getState().closeWorkspace("w4")).toBe(true);
+    expect(useUi.getState().activeWorkspaceId).toBe("w3");
+  });
+});
+
+describe("closing a workspace in a focused project", () => {
+  afterEach(() => {
+    useUi.setState({ activeProject: ALL_PROJECTS, projectInventory: null });
+  });
+
+  it("activates the next workspace the strip shows, not one of another project", async () => {
+    const asset = (id: string, groupId: string) => ({
+      id, groupId, kind: "ssh", name: id, host: null, port: null, username: null, authKind: null, keyPath: null, credId: null,
+      options: {}, tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 1, deletedAt: null, builtin: false,
+    });
+    const inventory = {
+      groups: [
+        { id: "p1", parentId: null, name: "P1", sort: 0, createdAt: 1, updatedAt: 1 },
+        { id: "p2", parentId: null, name: "P2", sort: 1, createdAt: 1, updatedAt: 1 },
+      ],
+      assets: [asset("x1", "p1"), asset("y", "p2"), asset("x2", "p1")],
+    } as unknown as ProjectInventory;
+    const inProject = (id: string, assetId: string) => ({ ...workspace(id, [audit(`${id}-a`)]), assetId });
+    useUi.setState({
+      workspaces: [inProject("w1", "x1"), inProject("w2", "y"), inProject("w3", "x2")],
+      projectInventory: inventory,
+      activeProject: projectFocusForGroup("p1"),
+      activeWorkspaceId: "w1",
+    });
+    expect(await useUi.getState().closeWorkspace("w1")).toBe(true);
     expect(useUi.getState().activeWorkspaceId).toBe("w3");
   });
 });
@@ -202,6 +234,8 @@ describe("closing all workspaces", () => {
     expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
     expect(mocks.askChoiceRemember.mock.calls[0][0]).toContain("2 个终端");
     expect(mocks.askChoiceRemember.mock.calls[0][1]).toMatchObject({ title: "关闭 2 个工作区" });
+    // Only terminals that can go to the background: no other loss, so the background choice stays the default.
+    expect(mocks.askChoiceRemember.mock.calls[0][1].focusCancel).toBeUndefined();
     expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(workspaceIds()).toEqual(["w1", "w2"]);
   });

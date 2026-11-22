@@ -9,7 +9,7 @@ import {
 } from "../../features/terminal/workspaceLayout";
 import { closedTabEntryFromTab, useClosedTabs } from "../closedTabs";
 import { reorderWorkspaces } from "../workspaceOrdering";
-import { ALL_PROJECTS, reconcileActiveWorkspaceForFocus } from "../projectFocus";
+import { ALL_PROJECTS, focusedWorkspaces, reconcileActiveWorkspaceForFocus } from "../projectFocus";
 import {
   applyPreconfirmedClose,
   collectWorkspaceClose,
@@ -143,6 +143,18 @@ function releaseDeadSession(
     .disconnect(sessionId)
     .then(() => get().resyncSessions({ silent: true }))
     .catch(() => undefined);
+}
+
+// workspaceAfterClose picks the workspace that takes over from a closed active one: its right neighbour in the order
+// the workspace strip shows (the focused project's workspaces), else the left one; the whole list when the focused
+// project shows no other workspace.
+function workspaceAfterClose(state: UiState, remaining: Workspace[], closedId: string): Workspace | undefined {
+  const pick = (order: Workspace[]) =>
+    neighbourAfterRemoval(
+      order.filter((w) => w.id !== closedId && remaining.some((r) => r.id === w.id)),
+      order.findIndex((w) => w.id === closedId),
+    );
+  return pick(focusedWorkspaces(state)) ?? pick(state.workspaces);
 }
 
 export function createWorkspaceSlice(set: UiSet, get: UiGet) {
@@ -375,7 +387,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
         // open stays active.
         activeWorkspaceId:
           latest.activeWorkspaceId === id && deleteWorkspace
-            ? (neighbourAfterRemoval(nextWorkspaces, latest.workspaces.findIndex((w) => w.id === id))?.id ?? null)
+            ? (workspaceAfterClose(latest, nextWorkspaces, id)?.id ?? null)
             : latest.activeWorkspaceId,
         ...(latest.broadcast ? { broadcast } : {}),
         ...(deleteWorkspace && latest.aiBoards[id]
