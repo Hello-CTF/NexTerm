@@ -406,7 +406,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
       )}
       {!revoked && upgradeError && (
         <div className="mt-1 min-w-0 break-all text-[12px] text-amber-300" title={upgradeError}>
-          {t("自动升级失败：{value}", { value: translateMessage(upgradeError) })}
+          {translateMessage(upgradeError)}
         </div>
       )}
 

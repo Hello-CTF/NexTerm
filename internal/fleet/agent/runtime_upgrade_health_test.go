@@ -237,10 +237,13 @@ func TestRuntimeFollowServerVersionReportsFailure(t *testing.T) {
 		MaxAttempts: 1, sleep: instantSleep, verifyStaged: skipStagedCheck, scheduleReplace: func(string, string) error { return nil },
 	}
 	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
+	rollback := "自动升级到 1.2.5 失败（新版本启动后 120 秒内未连上服务端），已于 2026-11-20 10:00:00 回滚到之前的版本"
+	agentRuntime.setUpgradeFailure(rollback)
 	agentRuntime.followServerVersion(context.Background(), "1.3.0")
 	agentRuntime.loopWg.Wait()
 	state := agentRuntime.serviceStateSnapshot()
-	if !strings.HasPrefix(state.LastError, "自动升级到 1.3.0 失败") {
-		t.Fatalf("last error = %q, want the failed upgrade", state.LastError)
+	if !strings.HasPrefix(state.LastError, rollback+"; ") || !strings.Contains(state.LastError, "自动升级到 1.3.0 失败：") ||
+		!strings.HasSuffix(state.LastError, "；设备代理下次启动时会重试") {
+		t.Fatalf("last error = %q, want the rollback kept and the failed upgrade added", state.LastError)
 	}
 }
