@@ -202,21 +202,21 @@ export function mergeWorkspaceCloseSummaries(summaries: WorkspaceCloseSummary[])
   };
 }
 
-// The tabs whose consequences a confirmation names; a later plan is covered only when it names nothing new.
-function confirmedTabIds(summary: WorkspaceCloseSummary): Set<string> {
-  return new Set(
-    [...summary.dirty, ...summary.blocked, ...summary.liveRemote, ...summary.detachable, ...summary.preferredKills, ...summary.unconfirmed]
-      .map((tab) => tab.id),
-  );
-}
+const idsOf = (...lists: AppTab[][]): Set<string> => new Set(lists.flat().map((tab) => tab.id));
+const within = (tabs: AppTab[], allowed: Set<string>): boolean => tabs.every((tab) => allowed.has(tab.id));
 
-// closeCoveredBy reports whether a confirmation already given (for a batch) covers this plan: no unsaved content,
-// terminal or AI task it would end was added since.
+// closeCoveredBy reports whether a confirmation already given (for a batch) covers this plan, category by category:
+// a terminal it now ends was confirmed as ending (not as one to keep running), and no unsaved content, remote desktop
+// or AI task was added since. Moving a terminal to the background is covered by any confirmation of it.
 export function closeCoveredBy(plan: WorkspaceCloseSummary, confirmed: WorkspaceCloseSummary): boolean {
-  const ids = confirmedTabIds(confirmed);
+  const ending = idsOf(confirmed.blocked, confirmed.preferredKills);
+  const terminals = idsOf(confirmed.blocked, confirmed.preferredKills, confirmed.detachable, confirmed.unconfirmed);
   const aiIds = new Set(confirmed.runningAiTabs.map((tab) => tab.id));
   return (
-    [...confirmedTabIds(plan)].every((id) => ids.has(id)) &&
+    within([...plan.blocked, ...plan.preferredKills], ending) &&
+    within([...plan.detachable, ...plan.unconfirmed], terminals) &&
+    within(plan.dirty, idsOf(confirmed.dirty)) &&
+    within(plan.liveRemote, idsOf(confirmed.liveRemote)) &&
     (!plan.hasSqlDraft || confirmed.hasSqlDraft) &&
     plan.runningAiTabs.every((tab) => aiIds.has(tab.id))
   );
@@ -608,10 +608,12 @@ export async function requestCloseTabs(ids: string[]): Promise<void> {
     if (!handled.has(tab.id)) await useUi.getState().closeTab(tab.id);
   }
   const first = [...groups.values()][0].ws;
-  pushWorkspaceCloseToast(groups.size === 1 ? first.title : tr("多个工作区"), outcome, false);
+  // One notice per batch: the summary when every terminal closed, otherwise the failure count with the first reason.
+  if (outcome.failed === 0) pushWorkspaceCloseToast(groups.size === 1 ? first.title : tr("多个工作区"), outcome, false);
   const failed = ids.filter((id) => findTab(id)?.tab.closeError).length;
   if (failed > 0) {
-    useUi.getState().pushToast("error", tr("{failed} 个标签页未能关闭，已保留并在标签页上标出原因", { failed }));
+    const text = tr("{failed} 个标签页未能关闭，已保留并在标签页上标出原因", { failed });
+    useUi.getState().pushToast("error", outcome.failureText ? `${text}：${outcome.failureText}` : text);
   }
 }
 
