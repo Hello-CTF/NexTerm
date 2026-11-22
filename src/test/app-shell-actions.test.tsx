@@ -425,43 +425,37 @@ describe("App workspace actions", () => {
       expect(active("凭据")).toBe(false);
     });
 
-    it("reverts when the active workspace changes", async () => {
+    it("keeps the asset tree when the active workspace changes", async () => {
       await mountHost();
       await clickRail("资产");
       act(() => useUi.getState().setActiveWorkspace("ws-b"));
       await flush();
-      expect(tree("file-tree")?.getAttribute("data-session")).toBe("s2");
-      expect(active("资产")).toBe(false);
+      expect(tree("asset-tree")).not.toBeNull();
+      expect(active("资产")).toBe(true);
     });
 
-    it("reverts when something is connected or opened (connect focus)", async () => {
+    it("keeps the asset tree when something is connected or opened from it (connect focus)", async () => {
       await mountHost();
       await clickRail("资产");
       act(() => useUi.getState().bumpConnectFocusRevision());
       await flush();
-      expect(tree("file-tree")).not.toBeNull();
-      expect(useUi.getState().leftOverride).toBeNull();
+      expect(tree("asset-tree")).not.toBeNull();
+      expect(useUi.getState().leftOverride).toBe("assets");
     });
 
-    it("reverts when the user moves into the work area, but not on sidebar-only interaction", async () => {
+    it("keeps the asset tree while the user works in the main area", async () => {
       await mountHost();
       await clickRail("资产");
-      const dock = mounted!.container.querySelector<HTMLElement>(".nx-left-dock")!;
+      const main = mounted!.container.querySelector<HTMLElement>("#nx-main")!;
       act(() => {
-        dock.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-        dock.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
-        dock.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-        dock.dispatchEvent(new Event("scroll"));
+        main.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+        main.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
       });
       await flush();
       expect(tree("asset-tree")).not.toBeNull();
       expect(active("资产")).toBe(true);
 
-      const main = mounted!.container.querySelector<HTMLElement>("#nx-main")!;
-      act(() => {
-        main.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-      });
-      await flush();
+      await clickRail("资产");
       expect(tree("file-tree")).not.toBeNull();
       expect(active("资产")).toBe(false);
     });

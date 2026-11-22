@@ -3,8 +3,8 @@ import { hostToolsSupported } from "../../features/explorer/assetKindFields";
 
 export type LeftView = LeftMode | "files";
 
-// resolveLeftView is what the left sidebar shows: in a host workspace the file tree unless a temporary override is
-// set; in the tools area (no host workspace) the user's asset/credentials choice. A host without a file service
+// resolveLeftView is what the left sidebar shows: in a host workspace the file tree unless the user picked the asset
+// tree or credentials from the rail (kept until they pick the file tree again); in the tools area (no host workspace) the user's asset/credentials choice. A host without a file service
 // (Telnet) has no file tree, so it shows the override or the user's choice.
 export function resolveLeftView(ws: Workspace | null | undefined, leftMode: LeftMode, override: LeftMode | null): LeftView {
   if (!isHostWorkspace(ws)) return leftMode;
