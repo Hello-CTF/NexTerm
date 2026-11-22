@@ -243,8 +243,9 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
     }
   };
 
-  // An agent follows the server's later stable release on its own once it connects (and upgrades whenever the control
-  // protocol is incompatible); the hint covers an RC server and a failed automatic upgrade. A newer agent needs no action.
+  // Agents from v1.4.6 follow the server's later stable release once they connect (and every agent upgrades when the
+  // control protocol is incompatible); the hint covers older agents, an RC server and a failed automatic upgrade.
+  // A newer agent needs no action.
   const agentRelease = releaseVersion(agent?.app_version);
   const serverRelease = releaseVersion(listServerVersion);
   const versionBehind = Boolean(!revoked && agent && online && agentRelease && serverRelease && olderRelease(agentRelease, serverRelease));
@@ -366,7 +367,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
 
       {versionBehind && (
         <div className="nx-hint mt-1 text-[11px]" role="note">
-          {t("设备代理版本过旧（设备 {agentRelease}，服务端 {serverRelease}）。设备代理连上服务端后会自动升级到服务端的正式版本；服务端为 RC 版本或自动升级失败时，可在设备上运行 nexterm-agent update --version {serverRelease}（1.2.x 需使用安装脚本重新安装一次）。", { agentRelease, serverRelease })}
+          {t("设备代理版本过旧（设备 {agentRelease}，服务端 {serverRelease}）。v1.4.6 起的设备代理连上服务端后会自动升级到服务端的正式版本；若一直停留在旧版本（更早的设备代理、服务端为 RC 版本或自动升级失败），可在设备上运行 nexterm-agent update --version {serverRelease}（1.2.x 需使用安装脚本重新安装一次）。", { agentRelease, serverRelease })}
         </div>
       )}
 
@@ -848,7 +849,7 @@ export function DevicesView() {
     const agentRelease = releaseVersion(d.agent?.app_version);
     const serverRelease = releaseVersion(listServerVersion ?? serverVersion);
     if (!agentRelease || !serverRelease || !olderRelease(agentRelease, serverRelease)) return null;
-    return t("设备代理版本较旧（v{agentRelease}，服务端为 v{serverRelease}）。设备代理连上服务端后会自动升级到服务端的正式版本；服务端为 RC 版本或自动升级失败时，可在设备上运行 nexterm-agent update --version {serverRelease}；1.2.x 版本需重新运行一次安装命令。", { agentRelease, serverRelease });
+    return t("设备代理版本较旧（v{agentRelease}，服务端为 v{serverRelease}）。v1.4.6 起的设备代理连上服务端后会自动升级到服务端的正式版本；若一直停留在旧版本（更早的设备代理、服务端为 RC 版本或自动升级失败），可在设备上运行 nexterm-agent update --version {serverRelease}；1.2.x 版本需重新运行一次安装命令。", { agentRelease, serverRelease });
   };
   const closeEnroll = () => {
     setEnrollOpen(false);

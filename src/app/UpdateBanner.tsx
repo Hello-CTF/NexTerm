@@ -3,21 +3,12 @@ import { DESKTOP } from "../ipc/env";
 import { ProgressBar } from "../ui/DownloadProgress";
 import { IconClose, IconDownload, IconLoader } from "../ui/icons";
 import { useUi } from "./store";
-import { useUpdate, type UpdateInstallPhase } from "./useUpdate";
+import { useUpdate } from "./useUpdate";
+import { installPhaseLabel, RESTART_NOTE } from "./updateText";
 import { t } from "../i18n";
 
 const BANNER_CLASS =
   "nx-banner flex min-h-[30px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-900 px-3 text-xs text-neutral-300";
-
-// A restart quits and relaunches the app: temporary terminals live in the app process and end, while durable
-// terminals run in the detached terminal component and are resumed after the restart.
-export const RESTART_NOTE = t("重启会关闭并重新打开 NexTerm：临时终端会结束，持久终端继续运行，重启后自动恢复。");
-
-export function installPhaseLabel(phase: UpdateInstallPhase | null): string {
-  if (phase === "verify") return t("正在校验");
-  if (phase === "install") return t("正在安装");
-  return t("正在下载");
-}
 
 export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void }) {
   const {

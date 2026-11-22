@@ -56,7 +56,7 @@ interface UpdateActions {
   unskipVersion: () => void;
   dismissVersion: (version: string) => void;
   deferRestart: () => void;
-  syncInstallState: () => Promise<void>;
+  syncInstallState: (options?: { reportFailure?: boolean }) => Promise<void>;
   onProgress: (event: UpdateProgressEvent) => void;
 }
 
@@ -215,8 +215,9 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
   deferRestart: () => set({ restartDeferred: true }),
 
   // syncInstallState adopts the backend's install state: at startup after a webview reload, and when an install
-  // this interface did not start (or no longer awaits) completes.
-  syncInstallState: async () => {
+  // this interface did not start (or no longer awaits) completes. Only the latter reports a failure: the backend
+  // keeps the last failure until the next attempt, and a reload must not report it again.
+  syncInstallState: async ({ reportFailure = false } = {}) => {
     if (!DESKTOP || installCallPending) return;
     let state: UpdateInstallStateDto;
     try {
@@ -245,7 +246,7 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
     releaseRecovery();
     set({
       installedVersion,
-      install: { ...idleInstall, error: state.phase === "failed" && state.error ? translateMessage(state.error) : null },
+      install: { ...idleInstall, error: reportFailure && state.phase === "failed" && state.error ? translateMessage(state.error) : null },
     });
   },
 
@@ -256,7 +257,7 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
     // The end of an install, failed or completed, is settled by the install() result while this interface awaits
     // it, and by the backend state otherwise; an error here would only race that result into a second report.
     if (event.error || (event.done && event.phase === "install")) {
-      if (!installCallPending) void get().syncInstallState();
+      if (!installCallPending) void get().syncInstallState({ reportFailure: true });
       return;
     }
     set({

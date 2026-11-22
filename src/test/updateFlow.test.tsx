@@ -329,6 +329,7 @@ describe("UpdateCard installation flow", () => {
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("临时终端会结束");
     expect(text).toContain("持久终端继续运行");
+    expect(text).not.toContain("自动恢复");
     expect(mocks.restart).not.toHaveBeenCalled();
   });
 
@@ -546,5 +547,31 @@ describe("install state recovery after a reload", () => {
     expect(useUpdateStore.getState().installedVersion).toBe("0.3.0");
     expect(useUpdateStore.getState().install.active).toBe(false);
     expect(mocks.progressHandlers.length).toBe(0);
+  });
+
+  it("reports a recovered install that fails, but not an old failure on the next reload", async () => {
+    const toast = vi.fn();
+    useUi.setState({ pushToast: toast });
+    const failed = { phase: "failed", version: "0.3.0", taskId: "t9", transferred: 0, total: 0, error: "磁盘已满", installedVersion: "" };
+    mocks.state.mockResolvedValueOnce(failed);
+    useUpdateStore.setState({ status: makeStatus() });
+    mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
+    await act(async () => {
+      await useUpdateStore.getState().syncInstallState();
+    });
+    await flush();
+    expect(toast).not.toHaveBeenCalled();
+    expect(useUpdateStore.getState().install.error).toBeNull();
+
+    mocks.state.mockResolvedValueOnce({ ...failed, phase: "download", error: "", transferred: 1, total: 8 });
+    await act(async () => {
+      await useUpdateStore.getState().syncInstallState();
+    });
+    mocks.state.mockResolvedValueOnce(failed);
+    act(() => {
+      emitProgress({ taskId: "t9", phase: "download", transferred: 1, total: 8, done: true, error: "disk full" });
+    });
+    await flushUntil(() => toast.mock.calls.length === 1);
+    expect(toast).toHaveBeenCalledWith("error", "更新安装失败：磁盘已满");
   });
 });
