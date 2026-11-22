@@ -81,7 +81,7 @@ describe("ShareCard host share recipient entry", () => {
     expect(buttons).toHaveLength(1);
     const row = buttons[0].closest("div.border-b");
     expect(row?.textContent).toContain("来自 owner");
-    expect(row?.textContent).not.toContain("已吊销");
+    expect(row?.textContent).not.toContain("已撤销");
     expect(row?.textContent).not.toContain("已过期");
   });
 

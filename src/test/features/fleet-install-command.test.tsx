@@ -273,7 +273,7 @@ describe("Device management - guided enrollment", () => {
     expect(mainCommand()).not.toContain("install-device.ps1");
     expect([...document.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "复制命令")).toHaveLength(1);
     expect(document.body.textContent).toContain("在目标设备上用普通用户运行，无需管理员权限");
-    expect(document.body.textContent).toContain("接入码仅可使用一次，设备凭证只保存在设备上。");
+    expect(document.body.textContent).toContain("接入码仅可使用一次，设备凭据只保存在设备上。");
     expect(document.body.textContent).not.toContain("本页面不会执行安装");
 
     // The raw code is not displayed on its own until the manual disclosure is opened.

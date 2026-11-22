@@ -210,7 +210,7 @@ describe("Share card - desktop logged in", () => {
 
     const card = shareCard() as HTMLElement;
     const row = [...card.querySelectorAll("div.border-b")].find((d) => d.textContent?.includes("分享给 alice")) as HTMLElement;
-    click([...row.querySelectorAll("button")].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
+    click([...row.querySelectorAll("button")].find((b) => b.textContent?.trim() === "撤销") as HTMLButtonElement);
     await flushUntil(() => mocks.revokeHostShare.mock.calls.length === 1);
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
@@ -231,7 +231,7 @@ describe("Share card - desktop logged in", () => {
     const card = shareCard() as HTMLElement;
     // hs-1 granted by me + hs-2 received by me: both can be revoked (owner_id === userId or device holder)
     const grantedRow = [...card.querySelectorAll("div.border-b")].find((d) => d.textContent?.includes("分享给 alice")) as HTMLElement;
-    click([...grantedRow.querySelectorAll("button")].find((b) => b.textContent?.trim() === "吊销") as HTMLButtonElement);
+    click([...grantedRow.querySelectorAll("button")].find((b) => b.textContent?.trim() === "撤销") as HTMLButtonElement);
     await flushUntil(() => mocks.revokeHostShare.mock.calls.length === 1);
     expect(mocks.revokeHostShare).toHaveBeenCalledWith("hs-1");
   });

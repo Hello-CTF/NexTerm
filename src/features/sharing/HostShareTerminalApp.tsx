@@ -24,7 +24,7 @@ interface ErrorCopy {
 
 const CONNECT_FAILED: ErrorCopy = {
   title: t("无法连接共享终端"),
-  detail: t("分享可能已过期或已吊销，也可能是设备离线或登录状态已失效。请稍后重试。"),
+  detail: t("分享可能已过期或已撤销，也可能是设备离线或登录状态已失效。请稍后重试。"),
   retryable: true,
 };
 
@@ -34,7 +34,7 @@ function errorCopy(failure: HostShareFailure): ErrorCopy {
       return { title: t("主机分享已过期"), detail: t("请让分享者重新发起分享。"), retryable: false };
     case "forbidden":
     case "not_found":
-      return { title: t("主机分享不可用"), detail: failure.message || t("分享已吊销，或当前账号没有访问权限。"), retryable: false };
+      return { title: t("主机分享不可用"), detail: failure.message || t("分享已撤销，或当前账号没有访问权限。"), retryable: false };
     case "disconnected":
       return { title: t("共享终端连接已断开"), detail: failure.message || t("设备可能离线，请恢复连接后重试。"), retryable: true };
     case "read_only":
@@ -122,9 +122,9 @@ export function HostShareTerminalApp({ deviceId, deviceName, ownerUsername, onCl
   const writable = phase.kind === "live" && phase.ready.permission === "read_write";
 
   return (
-    <div className="nx-fullscreen-safe-bottom fixed inset-0 z-50 flex flex-col bg-[#101217] text-neutral-200" role="dialog" aria-modal="true" aria-label={t("共享主机终端")}>
+    <div className="nx-fullscreen-safe-bottom fixed inset-0 z-50 flex flex-col bg-[#101217] text-neutral-200" role="dialog" aria-modal="true" aria-label={t("主机分享")}>
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-800 px-3 py-2">
-        <span className="min-w-0 truncate text-sm font-medium text-neutral-100">{t("共享终端 · {deviceName}", { deviceName })}</span>
+        <span className="min-w-0 truncate text-sm font-medium text-neutral-100">{t("主机分享 · {deviceName}", { deviceName })}</span>
         <span className="nx-hint text-xs">{t("来自 {ownerUsername}", { ownerUsername })}</span>
         {phase.kind === "live" && (
           <span className={`nx-badge shrink-0 ${writable ? "nx-badge-green" : ""}`}>{writable ? t("可读写") : t("只读")}</span>
@@ -147,7 +147,7 @@ export function HostShareTerminalApp({ deviceId, deviceName, ownerUsername, onCl
               )}
               {phase.kind === "ended" && (
                 <>
-                  <p className="text-base font-medium text-neutral-100">{t("共享终端已结束")}</p>
+                  <p className="text-base font-medium text-neutral-100">{t("分享的终端已结束")}</p>
                   <p className="mt-2 text-sm text-neutral-400">{t("终端已关闭。需要继续使用时，可以重新打开。")}</p>
                 </>
               )}

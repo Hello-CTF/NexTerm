@@ -83,7 +83,7 @@ const RULE_EXPIRY_OPTIONS: { value: string; label: string; millis: number }[] = 
 const ASSET_KIND_LABEL: Record<string, string> = {
   ssh: "SSH",
   winrm: "WinRM",
-  local: tr("本地终端"),
+  local: tr("本机终端"),
   docker: "Docker",
   mysql: "MySQL",
   postgres: "PostgreSQL",

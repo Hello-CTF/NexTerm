@@ -191,7 +191,7 @@ export function DockerDiskPanel({ sessionId, visible }: { sessionId: string; vis
       )}
 
       <section className="mt-4 border-t border-neutral-800/70 pt-3">
-        <h3 className="mb-2 text-xs font-medium text-neutral-300">{t("Prune 预览与确认")}</h3>
+        <h3 className="mb-2 text-xs font-medium text-neutral-300">{t("清理预览与确认")}</h3>
         <div className="flex flex-wrap gap-x-4 gap-y-2">
           {(Object.keys(PRUNE_LABELS) as DockerPruneKind[]).map((kind) => (
             <label key={kind} className="flex items-center gap-1.5 text-xs text-neutral-300">

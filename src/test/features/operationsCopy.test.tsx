@@ -286,7 +286,7 @@ describe("ForwardPanel copy", () => {
   it("uses matching forward type badges and form button labels", async () => {
     mounted = withClient(createElement(ForwardPanel, { sessionId: "s" }));
     await flushUntil(() => text().includes("10.0.0.8"));
-    expect(text()).toContain("静态转发");
+    expect(text()).toContain("本地转发");
     expect(text()).toContain("SOCKS5 代理");
     expect(text()).not.toContain("本地静态");
   });

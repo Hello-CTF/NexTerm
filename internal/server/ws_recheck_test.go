@@ -85,7 +85,7 @@ func TestSessionRecheckerCachesInvalidButNotTransientErrors(t *testing.T) {
 	}); !errors.Is(err, transient) {
 		t.Fatalf("err=%v", err)
 	}
-	invalid := ipc.NewError(ipc.CodeForbidden, "会话已吊销，请重新登录")
+	invalid := ipc.NewError(ipc.CodeForbidden, "会话已撤销，请重新登录")
 	for i := 0; i < 3; i++ {
 		_, err := c.check(context.Background(), "s1", time.Minute, func(context.Context) (*account.Identity, error) {
 			lookups.Add(1)

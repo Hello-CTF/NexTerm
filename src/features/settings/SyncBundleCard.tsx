@@ -302,7 +302,7 @@ export function SyncBundleCard() {
         <span className="nx-card-title">{t("资产包（文件导入与导出）")}</span>
       </div>
       <p className="nx-hint mb-3.5">
-        {t("将资产导出为 .nxbm 文件，或从文件导入本机；此功能与上方「账号同步」的推送和拉取互不影响。")}
+        {t("将资产导出为 .nxbm 文件，或从文件导入本机；此功能与上方「账号与同步」的推送和拉取互不影响。")}
       </p>
 
       {digestError && (

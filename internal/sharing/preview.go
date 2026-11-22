@@ -25,7 +25,7 @@ const (
 // without matching message text.
 var (
 	ErrPreviewInvalid = ipc.NewError(ipc.CodeForbidden, "分享链接无效")
-	ErrPreviewRevoked = ipc.NewError(ipc.CodeForbidden, "分享链接已吊销")
+	ErrPreviewRevoked = ipc.NewError(ipc.CodeForbidden, "分享链接已撤销")
 	ErrPreviewExpired = ipc.NewError(ipc.CodeForbidden, "分享链接已过期")
 )
 

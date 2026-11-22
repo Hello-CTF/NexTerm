@@ -463,7 +463,7 @@ describe("AiSidebar board lifecycle", () => {
       .mockReturnValueOnce(pendingEvents.promise);
     mountSidebar();
     await flush();
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     clickButton(view!.container, "Open");
     await flushUntil(() => mocks.runEvents.mock.calls.length === 2);

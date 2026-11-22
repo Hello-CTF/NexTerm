@@ -280,7 +280,7 @@ describe("desktop account card regular user", () => {
     mountCards("auth");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("MacBook"));
 
-    clickButton(mounted!.container, "吊销");
+    clickButton(mounted!.container, "撤销");
     await flushUntil(() => mocks.deviceRevoke.mock.calls.length === 1);
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("MacBook");
     expect(mocks.deviceRevoke).toHaveBeenCalledWith("d-1");
@@ -293,7 +293,7 @@ describe("desktop account card regular user", () => {
     mountCards("auth");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("MacBook"));
 
-    clickButton(mounted!.container, "吊销");
+    clickButton(mounted!.container, "撤销");
     await flush();
     expect(mocks.deviceRevoke).not.toHaveBeenCalled();
   });

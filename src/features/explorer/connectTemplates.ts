@@ -110,7 +110,7 @@ export function restrictTemplateForServer(t: ConnectTemplate): { template: Conne
   const next = { ...t };
   if (next.kind === "local") {
     next.kind = "ssh";
-    dropped.push(tr("本地终端类型"));
+    dropped.push(tr("本机终端类型"));
   }
   if (next.authKind === "agent") {
     next.authKind = "password";

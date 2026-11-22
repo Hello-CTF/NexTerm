@@ -106,7 +106,7 @@ func (a *Accounts) IssueSessionWithMetadata(ctx context.Context, userID, deviceI
 					return ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
 				}
 				if device.RevokedAt != nil {
-					return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+					return ipc.NewError(ipc.CodeForbidden, "设备已撤销")
 				}
 			}
 			row := store.UserSession{
@@ -244,9 +244,9 @@ func (a *Accounts) checkSessionState(ctx context.Context, token string) (Session
 	now := a.now()
 	switch {
 	case session.RevokedAt != 0:
-		return Session{}, nil, 0, ipc.NewError(ipc.CodeForbidden, "会话已吊销，请重新登录")
+		return Session{}, nil, 0, ipc.NewError(ipc.CodeForbidden, "会话已撤销，请重新登录")
 	case deviceRevoked:
-		return Session{}, nil, 0, ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+		return Session{}, nil, 0, ipc.NewError(ipc.CodeForbidden, "设备已撤销")
 	case now >= session.ExpiresAt:
 		return Session{}, nil, 0, ipc.NewError(ipc.CodeForbidden, "会话已过期，请重新登录")
 	case now >= session.CreatedAt+SessionAbsoluteTTL.Milliseconds():

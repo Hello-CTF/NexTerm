@@ -239,7 +239,7 @@ func TestCLIRunRevokedExitCode(t *testing.T) {
 	if code != ExitRevoked {
 		t.Fatalf("run revoked = %d, stderr %q", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "吊销") {
+	if !strings.Contains(stderr.String(), "撤销") {
 		t.Fatalf("run stderr = %q", stderr.String())
 	}
 	if strings.Contains(stderr.String(), "synthetic-secret") || !strings.Contains(stderr.String(), "token=***") {

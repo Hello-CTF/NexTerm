@@ -164,7 +164,7 @@ function watchAssetIdentityWidth(nodes: Element[], measure: () => void): () => v
 const KIND_LABEL: Record<string, string> = {
   ssh: "SSH",
   telnet: "Telnet",
-  local: tr("本地终端"),
+  local: tr("本机终端"),
   winrm: "WinRM",
   rdp: "RDP",
   vnc: "VNC",
@@ -1061,7 +1061,7 @@ export function AssetTree() {
             kind: "item" as const,
             label: tr("唤醒"),
             icon: <IconPlug size={13} />,
-            hint: tr("发出不代表已开机"),
+            hint: tr("仅发送唤醒包，不保证主机开机"),
             onSelect: () => void wakeAsset(asset.id, asset.name),
           }]
         : []),
@@ -3269,7 +3269,7 @@ export function AssetEditor({
 
           {kind === "asset" && inventoryOnly && (
             <div className="nx-form-row">
-              <span className="nx-label">{tr("来源目标")}</span>
+              <span className="nx-label">{tr("同步来源")}</span>
               <div className="rounded-md border border-neutral-800/70 bg-neutral-950/40 px-3 py-2 text-[12px] text-neutral-400">
                 <div className="break-all">{initial?.host || inventoryTargetText(initial?.options) || tr("仅清单记录")}</div>
                 <div className="nx-hint mt-1">{tr("此类型仅作清单展示，暂不能打开终端；连接信息随同步来源更新。")}</div>
@@ -3395,7 +3395,7 @@ export function AssetEditor({
                     value={telnetEcho}
                     onChange={(value) => setTelnetEcho(value as TelnetLocalEcho)}
                     options={[
-                      { value: "auto", label: tr("自动（服务器不回显时本地显示）") },
+                      { value: "auto", label: tr("自动（主机不回显时本地显示）") },
                       { value: "on", label: tr("始终本地显示") },
                       { value: "off", label: tr("不本地显示") },
                     ]}
@@ -3463,9 +3463,9 @@ export function AssetEditor({
 
               {kindFields.via && (
                 <div className="nx-form-row">
-                  <label className="nx-label">{kindFields.via === "ssh" ? tr("通过 SSH 资产连接") : tr("通过跳板连接")}</label>
+                  <label className="nx-label">{kindFields.via === "ssh" ? tr("通过 SSH 资产连接") : tr("通过跳板机连接")}</label>
                   <Select
-                    ariaLabel={kindFields.via === "ssh" ? tr("通过 SSH 资产连接") : tr("通过跳板连接")}
+                    ariaLabel={kindFields.via === "ssh" ? tr("通过 SSH 资产连接") : tr("通过跳板机连接")}
                     value={viaAssetId}
                     onChange={setViaAssetId}
                     options={[

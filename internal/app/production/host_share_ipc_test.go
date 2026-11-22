@@ -253,12 +253,12 @@ func TestHostShareIPCReadOnlyOutputAndReadWriteInput(t *testing.T) {
 func TestHostShareIPCRevocationAndNormalClose(t *testing.T) {
 	t.Run("revocation preserves server error", func(t *testing.T) {
 		_, _, conn, stream := newHostShareTestProxy(t)
-		conn.reads <- hostShareTestRead{kind: websocket.MessageText, payload: []byte(`{"type":"error","code":"forbidden","message":"主机分享已吊销"}`)}
+		conn.reads <- hostShareTestRead{kind: websocket.MessageText, payload: []byte(`{"type":"error","code":"forbidden","message":"主机分享已撤销"}`)}
 		var failure hostShareErrorFrame
 		if err := json.Unmarshal(nextHostShareFrame(t, stream), &failure); err != nil {
 			t.Fatal(err)
 		}
-		if failure.Code != "forbidden" || failure.Message != "主机分享已吊销" {
+		if failure.Code != "forbidden" || failure.Message != "主机分享已撤销" {
 			t.Fatalf("error frame = %+v", failure)
 		}
 		conn.reads <- hostShareTestRead{err: websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: "share terminated"}}

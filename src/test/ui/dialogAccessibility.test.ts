@@ -174,7 +174,7 @@ describe("shared dialog accessibility", () => {
           level: "info",
           focusCancel: true,
           options: [
-            { key: "detach", label: "转到后台运行", primary: true },
+            { key: "detach", label: "转入后台", primary: true },
             { key: "kill", label: "直接关闭", danger: true },
           ],
           resolve: vi.fn(),

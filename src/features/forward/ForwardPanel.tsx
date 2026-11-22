@@ -396,7 +396,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
         ) : (
           <>
             <IconPlug size={11} />
-            {tr("静态转发")}
+            {tr("本地转发")}
           </>
         )}
       </span>
@@ -474,7 +474,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
         <span className="nx-toolbar-title">{tr("端口转发")}</span>
         <span className="nx-hint hidden min-[560px]:inline">
           {forwards.data
-            ? tr("{localCount} 条静态转发 · {remoteCount} 条远程转发 · {socksCount} 条 SOCKS5 代理 · 5s 自动刷新", { localCount, remoteCount, socksCount })
+            ? tr("{localCount} 条本地转发 · {remoteCount} 条远程转发 · {socksCount} 条 SOCKS5 代理 · 每 5 秒自动刷新", { localCount, remoteCount, socksCount })
             : forwardsFailed
               ? tr("未能加载转发列表")
               : tr("转发列表加载中")}
@@ -585,7 +585,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                       ) : (
                         <>
                           <IconPlug size={11} />
-                          {tr("静态转发")}
+                          {tr("本地转发")}
                         </>
                       )}
                     </span>
@@ -685,7 +685,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             onClick={() => switchKind("local")}
           >
             <IconPlug size={13} />
-            {tr("静态转发")}
+            {tr("本地转发")}
           </button>
           <button
             className={`nx-btn nx-btn-sm ${kind === "remote" ? "nx-btn-primary" : "nx-btn-ghost"}`}

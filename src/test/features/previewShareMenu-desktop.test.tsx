@@ -106,7 +106,7 @@ describe("PreviewShareMenu desktop dispatch", () => {
     expect(checkbox).toBeDefined();
     expect(checkbox!.disabled).toBe(true);
     expect(checkbox!.checked).toBe(false);
-    expect(container.textContent).toContain("桌面中继创建的预览暂不支持控制");
+    expect(container.textContent).toContain("通过桌面版创建的预览暂不支持远程控制");
   });
 
   it("filters the list by the active relay shell ID for the current tab and revokes through remoteSharingApi", async () => {
@@ -120,11 +120,11 @@ describe("PreviewShareMenu desktop dispatch", () => {
     });
     const container = mountMenu();
     await flushUntil(() => container.textContent?.includes("进行中的预览") === true);
-    const revokes = [...container.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "吊销");
+    const revokes = [...container.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "撤销");
     expect(revokes).toHaveLength(1);
     expect(mocks.active).toHaveBeenCalledWith("tab-1");
 
-    clickButton(container, "吊销");
+    clickButton(container, "撤销");
     await flushUntil(() => mocks.revokePreviewLink.mock.calls.length === 1);
     expect(mocks.revokePreviewLink).toHaveBeenCalledWith("l-1");
     await flushUntil(() => mocks.previewLinks.mock.calls.length >= 2);

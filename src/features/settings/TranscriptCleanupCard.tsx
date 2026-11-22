@@ -100,7 +100,7 @@ export function TranscriptCleanupCard() {
           count: preview.purgeable,
           size: formatTranscriptBytes(preview.purgeableBytes),
         }),
-        { title: t("清理历史会话"), kind: "warning" },
+        { title: t("清理终端历史"), kind: "warning" },
       );
       if (!ok) return;
       const result = await transcriptApi.purge(cutoff);
@@ -132,7 +132,7 @@ export function TranscriptCleanupCard() {
     <section className="nx-card" data-testid="transcript-cleanup">
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconHistory size={15} className="text-neutral-400" />
-        <span className="nx-card-title">{t("历史会话")}</span>
+        <span className="nx-card-title">{t("终端历史")}</span>
         {usage && (
           <span className="nx-badge" data-testid="transcript-usage">
             {t("{total} 条 · {size} · {starred} 条星标", {

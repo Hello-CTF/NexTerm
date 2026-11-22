@@ -174,7 +174,7 @@ describe("WelcomePage", () => {
     useConnectHistory.setState({ entries: { l: { count: 1, at: 2 }, a: { count: 1, at: 1 } } });
     mountWelcome({ onQuickConnect: vi.fn() });
     await waitForRendered(() => expect(document.body.textContent).toContain("web-1"));
-    expect(buttons().some((b) => b.textContent === "打开本地终端")).toBe(false);
+    expect(buttons().some((b) => b.textContent === "打开本机终端")).toBe(false);
     expect(document.querySelector('[aria-label="最近连接"]')!.textContent).not.toContain("本机");
     expect(document.querySelector(".nx-kbd")).toBeNull();
     expect(buttons().some((b) => b.textContent === "新建资产")).toBe(true);

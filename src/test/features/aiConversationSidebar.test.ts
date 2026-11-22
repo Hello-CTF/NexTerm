@@ -415,7 +415,7 @@ describe("AiSidebar conversation stream UX", () => {
       { role: "user", content: { role: "user", content: "旧问题" } },
       { role: "assistant", content: { role: "assistant", content: "旧回答" } },
     ]);
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     clickButton(view!.container, "旧会话");
     await flush();
@@ -439,7 +439,7 @@ describe("AiSidebar conversation stream UX", () => {
       { id: "c-1", title: "会话一", updatedAt: 0 },
       { id: "c-2", title: "会话二", updatedAt: 0 },
     ]);
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
 
     mocks.ask.mockResolvedValueOnce(false);
@@ -462,13 +462,13 @@ describe("AiSidebar conversation stream UX", () => {
     await flush();
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
     mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "旧问题" } }]);
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     clickButton(view!.container, "旧会话");
     await flush();
     expect(textOf(view!)).toContain("旧问题");
 
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     click(view!.container.querySelector('button[title="删除「旧会话」"]')!);
     await flush();
@@ -487,7 +487,7 @@ describe("AiSidebar conversation stream UX", () => {
     await send("Running question");
     await flush();
     mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "当前会话", updatedAt: 0 }]);
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
 
     click(view!.container.querySelector('button[title="删除「当前会话」"]')!);
@@ -508,7 +508,7 @@ describe("AiSidebar conversation stream UX", () => {
     emit({ type: "done", answer: "第一轮回答" });
     await flush();
     mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "当前会话", updatedAt: 0 }]);
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
 
     let resolveAsk: ((ok: boolean) => void) | undefined;
@@ -533,7 +533,7 @@ describe("AiSidebar conversation stream UX", () => {
     emit({ type: "done", answer: "第一轮回答" });
     await flush();
     mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "当前会话", updatedAt: 0 }]);
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
 
     let resolveDelete: (() => void) | undefined;
@@ -569,7 +569,7 @@ describe("AiSidebar conversation stream UX", () => {
     emit({ type: "done", answer: "第一轮回答" });
     await flush();
     mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "当前会话", updatedAt: 0 }]);
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
 
     let resolveDelete: (() => void) | undefined;
@@ -1003,7 +1003,7 @@ describe("AiSidebar conversation stream UX", () => {
       { type: "usage", seq: 1, channel: "main", promptTokens: 4000, completionTokens: 300, cachedTokens: 1000, contextWindow: 8000 },
       { type: "done", seq: 2, answer: "旧回答" },
     ]);
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     clickButton(view!.container, "旧会话");
     await flush();
@@ -1029,7 +1029,7 @@ describe("AiSidebar conversation stream UX", () => {
       { type: "delta", seq: 1, text: "半截回答" },
       { type: "error", seq: 2, message: "AI 任务因应用重启而中断", retryable: true },
     ]);
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     clickButton(view!.container, "旧会话");
     await flush();
@@ -1064,7 +1064,7 @@ describe("AiSidebar conversation stream UX", () => {
           ], { runId: "job-old", checkpointId: "job-old" })
         : hitlSnapshotOf("interrupted", [], { runId: "job-new", checkpointId: "job-new" }),
     );
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     clickButton(view!.container, "旧会话");
     await flush();
@@ -1099,7 +1099,7 @@ describe("AiSidebar conversation stream UX", () => {
         hitlInterruptOf({ id: "req-old", runId: "job-old", checkpointId: "job-old", callId: "ask-1", tool: "ask_user", kind: "question", parameters: {}, nonce: "nonce-old", question: { id: "req-old", text: "继续吗？", options: ["继续"] } }),
       ], { runId: "job-old", checkpointId: "job-old" }),
     );
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     clickButton(view!.container, "旧会话");
     await flush();
@@ -1160,7 +1160,7 @@ describe("AiSidebar conversation stream UX", () => {
         }),
       );
     mocks.answer.mockRejectedValue(new Error("AI 任务不存在或已结束"));
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     clickButton(view!.container, "旧会话");
     await flush();
@@ -1215,7 +1215,7 @@ describe("AiSidebar conversation stream UX", () => {
         }),
       ], { runId: "job-old", checkpointId: "job-old" }),
     );
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     clickButton(view!.container, "旧会话");
     await flush();

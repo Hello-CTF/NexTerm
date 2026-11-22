@@ -741,7 +741,7 @@ describe("ForwardPanel env status, polling, and browser wording", () => {
     expect(mounted!.container.textContent).not.toContain("本地服务");
     expect(inputBy('input[aria-label="目标主机"]').placeholder).toContain("NexTerm 所在主机");
 
-    clickButton(mounted!.container, "静态转发");
+    clickButton(mounted!.container, "本地转发");
     clickButton(mounted!.container, "创建");
     await flush();
     expect(mocks.toast).toHaveBeenCalledWith(

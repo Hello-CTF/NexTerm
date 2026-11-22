@@ -317,7 +317,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
             choices: [
               {
                 key: "view",
-                label: t("只读分块查看"),
+                label: t("用日志查看器打开（只读）"),
                 hint: t("使用日志查看器按需读取，不加载整个文件"),
                 primary: true,
               },
@@ -354,7 +354,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
                 : [
                     {
                       key: "view",
-                      label: t("只读分块查看"),
+                      label: t("用日志查看器打开（只读）"),
                       hint: t("使用日志查看器按需读取，不加载整个文件"),
                       primary: true,
                     },

@@ -564,7 +564,7 @@ describe("broadcast enable flow", () => {
     await flush();
     expect(harness.ask).toHaveBeenCalledTimes(1);
     expect(harness.ask.mock.calls[0]?.[0]).toContain("3 个终端");
-    expect(harness.ask.mock.calls[0]?.[0]).toContain("本地终端（1 个）与远程终端（2 个）");
+    expect(harness.ask.mock.calls[0]?.[0]).toContain("本机终端（1 个）与远程终端（2 个）");
     expect(useUi.getState().broadcast).toBeNull();
   });
 

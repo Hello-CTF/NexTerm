@@ -937,7 +937,7 @@ describe("App empty states", () => {
       expect(useUi.getState().workspaces).toEqual([]);
       const main = mounted.container.querySelector("main");
       expect(main?.querySelector("[data-testid='welcome-page']")).not.toBeNull();
-      expect([...(main?.querySelectorAll("button") ?? [])].some((button) => button.textContent?.trim() === "打开本地终端")).toBe(true);
+      expect([...(main?.querySelectorAll("button") ?? [])].some((button) => button.textContent?.trim() === "打开本机终端")).toBe(true);
     } finally {
       envState.transport = "web";
     }

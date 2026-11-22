@@ -38,7 +38,7 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
         )}
         <button
           className={`nx-btn nx-btn-ghost nx-btn-xs ${historyOpen ? "is-active" : ""}`}
-          title={t("历史会话")}
+          title={t("终端历史")}
           aria-expanded={historyOpen}
           onClick={toggleHistory}
         >
@@ -116,10 +116,10 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
             </button>
           </div>
           {historyStatus === "loading" ? (
-            <div className="nx-hint px-2 py-3 text-center text-[11.5px]">{t("正在加载历史会话…")}</div>
+            <div className="nx-hint px-2 py-3 text-center text-[11.5px]">{t("正在加载终端历史…")}</div>
           ) : historyStatus === "error" ? (
             <div className="px-2 py-3 text-center">
-              <div className="nx-hint text-red-300">{t("未能加载历史会话：")}{historyError}</div>
+              <div className="nx-hint text-red-300">{t("未能加载终端历史：")}{historyError}</div>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
                 onClick={() => void loadConversations()}
@@ -129,7 +129,7 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
               </button>
             </div>
           ) : conversations.length === 0 ? (
-            <div className="nx-hint px-2 py-3 text-center text-[11.5px]">{t("尚无历史会话")}</div>
+            <div className="nx-hint px-2 py-3 text-center text-[11.5px]">{t("尚无终端历史")}</div>
           ) : (
             conversations.map((c) => (
               <div key={c.id} className="flex items-center gap-0.5">

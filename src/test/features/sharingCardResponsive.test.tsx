@@ -161,7 +161,7 @@ describe("ShareCard narrow-screen row layout (M233)", () => {
     const rowButtons = rows.flatMap((r) => [...r.querySelectorAll("button")]);
     expect(rowButtons.length).toBe(3);
     expect(rowButtons.filter((button) => button.textContent?.trim() === "打开终端")).toHaveLength(1);
-    expect(rowButtons.filter((button) => button.textContent?.trim() === "吊销")).toHaveLength(2);
+    expect(rowButtons.filter((button) => button.textContent?.trim() === "撤销")).toHaveLength(2);
     for (const button of rowButtons) {
       expect(button.className).toContain("shrink-0");
     }

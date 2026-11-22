@@ -94,7 +94,7 @@ function collectTargets(
           : session.kind === "device"
             ? t("受管设备 · 执行前需确认")
             : session.kind === "local"
-              ? t("本地会话")
+              ? t("本机会话")
               : null,
         tags: assetTagValues(asset?.tags ?? ""),
         workspaceNames: [...new Set(sources.map((workspace) => workspace.title || workspace.id))],
@@ -530,7 +530,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
       <div className="nx-toolbar nx-wrap-toolbar flex-wrap">
         <IconServer size={14} className="text-neutral-500" />
         <h2 className="nx-toolbar-title">{t("多主机工具")}</h2>
-        <span className="nx-hint">{t("只能对当前已连接的会话执行；批量执行也支持 WinRM 与本地会话。受管设备无环境标记，执行前需要确认。")}</span>
+        <span className="nx-hint">{t("只能对当前已连接的会话执行；批量执行也支持 WinRM 与本机会话。受管设备无环境标记，执行前需要确认。")}</span>
         <span className="nx-spacer" />
         <div className="nx-toolbar-views contents">
         <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "execute"} disabled={running || prompting} onClick={() => setView("execute")}>{t("批量执行")}</button>
@@ -575,7 +575,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
         />
         <TargetSetPicker
           targets={execTargets}
-          emptyMessage={t("没有已连接的 SSH、受管设备、WinRM 或本地会话。请先手动连接目标，批量执行不会自动连接。")}
+          emptyMessage={t("没有已连接的 SSH、受管设备、WinRM 或本机会话。请先手动连接目标，批量执行不会自动连接。")}
           selectedIds={selectedIds}
           onChange={setSelected}
           disabled={running}

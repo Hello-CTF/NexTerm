@@ -18,7 +18,7 @@ export const SERVER_RESTRICTION_TEXT = {
   importTermius: t("多用户服务端不支持从服务器路径导入：它会读取服务器上的 Termius 数据"),
   importDockerContext: t("多用户服务端不支持从服务器路径导入：它会读取服务器上的 Docker 上下文"),
   importKubeconfig: t("多用户服务端不支持从 kubeconfig 导入：它会读取服务器上的 kubeconfig，属于跨账号共享凭据"),
-  local: t("多用户服务端不支持本地终端资产（会在服务器上启动 shell），请改用 SSH 资产或设备"),
+  local: t("多用户服务端不支持本机终端资产（会在服务器上启动 shell），请改用 SSH 资产或设备"),
 } as const;
 
 export interface ServerAccountRestrictions {

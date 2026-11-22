@@ -524,8 +524,8 @@ function VersionComparison({
     <div className="flex flex-col gap-2">
       {anyKnown ? (
         <div className="grid gap-2 md:grid-cols-2">
-          <VersionSection label={deviceAgent ? t("本机 NexTerm 版本") : t("本地携带版本")} version={local} other={running} />
-          <VersionSection label={deviceAgent ? t("设备代理版本") : t("远端运行版本")} version={running} other={local} />
+          <VersionSection label={deviceAgent ? t("本机 NexTerm 版本") : t("本机内置版本")} version={local} other={running} />
+          <VersionSection label={deviceAgent ? t("设备代理版本") : t("主机上运行的版本")} version={running} other={local} />
         </div>
       ) : (
         <p className="text-neutral-500">{t("本地与主机上的组件版本均无法确认。")}</p>
@@ -716,8 +716,8 @@ export function HelperOperationView({
       )}
 
       {replaceFailure && (
-        <section aria-label={t("组件升级失败")} className="flex flex-col gap-1 rounded border border-red-500/40 p-2">
-          <h3 className="font-medium text-neutral-200">{t("组件升级失败")}</h3>
+        <section aria-label={t("持久终端组件更新失败")} className="flex flex-col gap-1 rounded border border-red-500/40 p-2">
+          <h3 className="font-medium text-neutral-200">{t("持久终端组件更新失败")}</h3>
           <p role="alert" className="text-red-300">{replaceFailureText(replaceFailure)}</p>
           {replaceFailure.forced && <p className="text-[var(--nx-fg-warning)]">{FORCED_STOP_NOTE}</p>}
           {replaceFailure.cause && <p className="break-words text-neutral-500">{replaceFailure.cause}</p>}
@@ -793,7 +793,7 @@ export function HelperOperationView({
                   : t("暂时无法确认更新状态。")}
               </p>
             )}
-            {update.interrupted && update.status !== "interrupted" && <p>{t("已明确中断活动进程。")}</p>}
+            {update.interrupted && update.status !== "interrupted" && <p>{t("已中断运行中的进程。")}</p>}
             {update.updated && update.status !== "interrupted" && <p>{t("持久终端组件已更新。")}</p>}
             {update.rolledBack && <p>{t("已恢复为更新前的版本；更新时结束的进程不会恢复。")}</p>}
             {update.detail && <details className="mt-1 text-neutral-400"><summary tabIndex={0} className="cursor-pointer">{t("更新详情")}</summary><p>{update.detail}</p></details>}

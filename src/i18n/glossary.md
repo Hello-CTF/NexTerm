@@ -62,7 +62,7 @@ and SSH software).
 | 资产包 | 資產包 | asset bundle | アセットバンドル | 자산 번들 | Asset-Paket | lot de ressources | paquete de recursos | пакет ресурсов |
 | 账号与同步 | 帳號與同步 | Account and sync | アカウントと同期 | 계정 및 동기화 | Konto und Synchronisierung | Compte et synchronisation | Cuenta y sincronización | Учётная запись и синхронизация |
 | 超级管理员 | 超級管理員 | super administrator | スーパー管理者 | 최고 관리자 | Superadministrator | super-administrateur | superadministrador | суперадминистратор |
-| 二次验证 | 二次驗證 | two-factor authentication | 二要素認証 | 2단계 인증 | Zwei-Faktor-Authentifizierung | authentification à deux facteurs | autenticación de dos factores | двухфакторная аутентификация |
+| 两步验证 | 兩步驗證 | two-factor authentication | 二要素認証 | 2단계 인증 | Zwei-Faktor-Authentifizierung | authentification à deux facteurs | autenticación de dos factores | двухфакторная аутентификация |
 | 审计 | 稽核 | audit | 監査 | 감사 | Audit | audit | auditoría | аудит |
 | 工具 | 工具 | Tools | ツール | 도구 | Werkzeuge | Outils | Herramientas | Инструменты |
 | 设置 | 設定 | Settings | 設定 | 설정 | Einstellungen | Paramètres | Configuración | Настройки |

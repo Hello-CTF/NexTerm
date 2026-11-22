@@ -108,7 +108,7 @@ describe("desktop host share IPC wire", () => {
   it("forwards revocation and remote close without allowing more input", async () => {
     const { connection, errors, closes } = recorded();
     mocks.handler!({ type: "ready", session_id: "s-1", permission: "read_write", expires_at: 10 });
-    mocks.handler!({ type: "error", code: "forbidden", message: "主机分享已吊销" });
+    mocks.handler!({ type: "error", code: "forbidden", message: "主机分享已撤销" });
     mocks.handler!({ type: "close", code: 1008, reason: "share terminated", wasClean: true });
     connection.sendInput("no");
     await Promise.resolve();

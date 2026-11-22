@@ -250,7 +250,7 @@ export function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPal
             }}
           >
             <IconTerminal size={14} />
-            {t("打开本地终端")}
+            {t("打开本机终端")}
           </button>
         )}
         {onPalette && (
@@ -368,7 +368,7 @@ export function WelcomePage({
           {!mobile && (
             <button className="nx-btn nx-btn-outline" onClick={openLocal}>
               <IconTerminal size={14} />
-              {t("打开本地终端")}
+              {t("打开本机终端")}
             </button>
           )}
           {onPalette && (

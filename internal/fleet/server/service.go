@@ -375,7 +375,7 @@ func (s *Service) authorize(ctx context.Context, identity *account.Identity, dev
 	case err != nil:
 		outcome, reason, decision = "deny", "not_found", err
 	case grant.revoked:
-		outcome, reason, decision = "deny", "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+		outcome, reason, decision = "deny", "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已撤销")
 	case grant.userID != identity.UserID:
 		outcome, reason, decision = "deny", "not_owner", ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
 	}
@@ -396,7 +396,7 @@ func (s *Service) canAccess(ctx context.Context, identity *account.Identity, dev
 		return nil, err
 	}
 	if grant.revoked {
-		return nil, ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+		return nil, ipc.NewError(ipc.CodeForbidden, "设备已撤销")
 	}
 	if grant.userID != identity.UserID {
 		return nil, ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
@@ -559,7 +559,7 @@ func (s *Service) AuthenticateAgent(ctx context.Context, deviceID, secret string
 		Where(syncCredential.SecretHash.Eq(hashSecret(secret)), syncCredential.Purpose.Eq(PurposeDeviceAgent)).
 		First()
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", ipc.NewError(ipc.CodeForbidden, "设备凭证无效")
+		return "", ipc.NewError(ipc.CodeForbidden, "设备凭据无效")
 	}
 	if err != nil {
 		return "", dbError(err)
@@ -567,20 +567,20 @@ func (s *Service) AuthenticateAgent(ctx context.Context, deviceID, secret string
 	userDevice := query.Use(s.db).UserDevice
 	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(credential.DeviceID)).First()
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", ipc.NewError(ipc.CodeForbidden, "设备凭证无效")
+		return "", ipc.NewError(ipc.CodeForbidden, "设备凭据无效")
 	}
 	if err != nil {
 		return "", dbError(err)
 	}
 	switch {
 	case credential.DeviceID != deviceID:
-		return "", ipc.NewError(ipc.CodeForbidden, "设备凭证与设备不匹配")
+		return "", ipc.NewError(ipc.CodeForbidden, "设备凭据与设备不匹配")
 	case credential.RevokedAt != nil:
-		return "", ipc.NewError(ipc.CodeForbidden, "设备凭证已吊销")
+		return "", ipc.NewError(ipc.CodeForbidden, "设备凭据已撤销")
 	case credential.ExpiresAt > 0 && s.now() >= credential.ExpiresAt:
-		return "", ipc.NewError(ipc.CodeForbidden, "设备凭证已过期")
+		return "", ipc.NewError(ipc.CodeForbidden, "设备凭据已过期")
 	case device.RevokedAt != nil:
-		return "", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+		return "", ipc.NewError(ipc.CodeForbidden, "设备已撤销")
 	}
 	if err := s.requireOwnerUsable(ctx, device.UserID); err != nil {
 		return "", err
@@ -637,13 +637,13 @@ func (s *Service) recheckDevice(ctx context.Context, deviceID string) error {
 	userDevice := query.Use(s.db).UserDevice
 	device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(deviceID)).First()
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return ipc.NewError(ipc.CodeForbidden, "设备凭证无效")
+		return ipc.NewError(ipc.CodeForbidden, "设备凭据无效")
 	}
 	if err != nil {
 		return dbError(err)
 	}
 	if device.RevokedAt != nil {
-		return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+		return ipc.NewError(ipc.CodeForbidden, "设备已撤销")
 	}
 	return s.requireOwnerUsable(ctx, device.UserID)
 }
@@ -925,7 +925,7 @@ func normalizeBaseURL(entry BaseURLEntry) (BaseURLEntry, error) {
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	parsed.RawPath = ""
 	if scheme == "http" && !entry.Insecure && !isLocalOrPrivate(parsed.Hostname()) {
-		return BaseURLEntry{}, ipc.NewError(ipc.CodeForbidden, "公网地址必须使用 HTTPS；设备凭证不能通过明文 HTTP 传输")
+		return BaseURLEntry{}, ipc.NewError(ipc.CodeForbidden, "公网地址必须使用 HTTPS；设备凭据不能通过明文 HTTP 传输")
 	}
 	entry.URL = strings.TrimRight(parsed.String(), "/")
 	return entry, nil
@@ -954,7 +954,7 @@ func (s *Service) RecordMetrics(ctx context.Context, deviceID string, sample Met
 		return dbError(err)
 	}
 	if device.RevokedAt != nil {
-		return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+		return ipc.NewError(ipc.CodeForbidden, "设备已撤销")
 	}
 	sample.TS = s.trustedMetricTS(deviceID, sample.TS)
 	row := store.DeviceMetrics{

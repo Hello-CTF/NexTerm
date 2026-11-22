@@ -155,7 +155,7 @@ describe("PreviewShareMenu WEB dispatch", () => {
       await flush();
     });
     await flushUntil(() => container.textContent?.includes("进行中的预览") === true);
-    const revokes = [...container.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "吊销");
+    const revokes = [...container.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "撤销");
     expect(revokes).toHaveLength(1);
     expect(mocks.remoteActive).not.toHaveBeenCalled();
 

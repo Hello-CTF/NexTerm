@@ -222,7 +222,7 @@ export function AppRail({
       <button
         className={`nx-rail-btn ${homeOpen ? "is-active" : ""}`}
         data-tip={needsMe > 0 ? t("所有终端的状态一览（{needsMe} 个需要处理）", { needsMe }) : t("所有终端的状态一览")}
-        aria-label={t("会话总览")}
+        aria-label={t("终端总览")}
         aria-pressed={homeOpen}
         onClick={() => {
           if (homeOpen) {

@@ -207,7 +207,7 @@ func TestAssetIDOfAbsentForFailedConnectsAndServiceClose(t *testing.T) {
 	revoked := identityTestService(t, mysqlAssetResolver("asset-1"))
 	revoked.newID = func() (string, error) { return "conn-revoked", nil }
 	revokedCtx := ipc.WithAccountSessionCheck(ctx, func(context.Context) error {
-		return ipc.NewError(ipc.CodeForbidden, "会话已吊销")
+		return ipc.NewError(ipc.CodeForbidden, "会话已撤销")
 	})
 	if _, err := revoked.Connect(revokedCtx, ConnectArgs{AssetID: "asset-1"}); err == nil {
 		t.Fatal("connect with revoked account session succeeded")

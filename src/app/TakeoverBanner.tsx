@@ -81,7 +81,7 @@ export async function resumeTakeover() {
   if (!takeover || !takeoverPaused(takeover) || takeover.control) return;
   updateSame(takeover, (current) => withControl(current, "resuming"));
   try {
-    if (!takeover.jobId) throw new Error(tr("接管任务 ID 缺失"));
+    if (!takeover.jobId) throw new Error(tr("找不到接管任务，请重新发起接管"));
     const handler = resumeHandlers.get(takeover.jobId);
     if (!handler) throw new Error(tr("接管会话已断开，请打开对应 AI 会话后重试"));
     await handler();

@@ -90,11 +90,11 @@ describe("HostShareTerminalApp", () => {
     mountApp();
     ready("read_write");
     act(() => {
-      mocks.handlers!.onError({ code: "forbidden", message: "主机分享已吊销" });
+      mocks.handlers!.onError({ code: "forbidden", message: "主机分享已撤销" });
       mocks.handlers!.onClose({ code: 1008, reason: "share terminated", wasClean: true });
     });
     await flush();
-    expect(mounted!.container.textContent).toContain("主机分享已吊销");
+    expect(mounted!.container.textContent).toContain("主机分享已撤销");
   });
 
   it("offers retry when the device is offline", () => {
@@ -108,7 +108,7 @@ describe("HostShareTerminalApp", () => {
     mountApp();
     ready("read");
     act(() => mocks.handlers!.onClose({ code: 1000, reason: "share ended", wasClean: true }));
-    expect(mounted!.container.textContent).toContain("共享终端已结束");
+    expect(mounted!.container.textContent).toContain("分享的终端已结束");
     mounted!.unmount();
     mounted = undefined;
     expect(connection.close).toHaveBeenCalledTimes(1);

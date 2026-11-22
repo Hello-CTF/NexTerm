@@ -600,11 +600,11 @@ describe("winrm ephemeral line tabs share the no-detach path", () => {
     expect(closeActionHint(terminal())).toBe("结束 WinRM 非交互进程");
     expect(closeActionHint(execTerminal())).toBe("结束容器内命令进程");
     seed([{ id: "p", tabs: [], activeTabId: null }], "ssh");
-    expect(closeTabHint(terminal())).toBe("关闭标签页（转入后台运行）");
-    expect(closeActionHint(terminal())).toBe("转入后台运行");
+    expect(closeTabHint(terminal())).toBe("关闭标签页（转入后台）");
+    expect(closeActionHint(terminal())).toBe("转入后台");
     expect(closeActionHint({ ...terminal(), exited: true })).toBeUndefined();
     expect(closeTabHint({ ...terminal(), exited: true, exitCode: 0 })).toBe("关闭标签页（进程已结束）");
-    expect(closeTabHint({ ...terminal(), exited: true })).toBe("关闭标签页（转入后台会话）");
+    expect(closeTabHint({ ...terminal(), exited: true })).toBe("关闭标签页（转入后台）");
     expect(closeTabHint({ id: "x", kind: "files", title: "x", closable: true })).toBe("关闭标签页");
   });
 });

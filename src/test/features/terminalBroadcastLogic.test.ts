@@ -213,7 +213,7 @@ describe("localRemoteMix / broadcastRiskMessage", () => {
     const candidates = collectBroadcastCandidates([ws], [session("s1", "local"), session("s2", "ssh")]);
     const mix = localRemoteMix(candidates);
     expect(mix).toEqual({ local: 1, remote: 1, mixed: true });
-    expect(broadcastRiskMessage(2, mix)).toContain("本地终端（1 个）与远程终端（1 个）");
+    expect(broadcastRiskMessage(2, mix)).toContain("本机终端（1 个）与远程终端（1 个）");
   });
 
   it("does not add the mixed warning for pure remote sets", () => {
@@ -223,7 +223,7 @@ describe("localRemoteMix / broadcastRiskMessage", () => {
     expect(mix.mixed).toBe(false);
     const message = broadcastRiskMessage(2, mix);
     expect(message).toContain("2 个终端");
-    expect(message).not.toContain("本地终端");
+    expect(message).not.toContain("本机终端");
   });
 });
 

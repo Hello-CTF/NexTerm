@@ -84,7 +84,7 @@ function FleetUnsupported() {
             className="nx-btn nx-btn-outline nx-btn-sm"
             onClick={() => openAccountSyncSettings()}
           >
-            {t("前往「设置 → 账号同步」登录")}
+            {t("前往「设置 → 账号与同步」登录")}
           </button>
         </div>
       </div>
@@ -819,7 +819,7 @@ export function DevicesView() {
               <div className="text-[13px] text-neutral-300">
                 {authOff ? t("该服务端已关闭账号功能，设备管理不可用。") : t("登录后方可查看与管理设备。")}
               </div>
-              {!authOff && <div className="mt-1 text-[11.5px] text-neutral-500">{t("登录入口位于「设置 → 账号同步」的「账号」卡片。")}</div>}
+              {!authOff && <div className="mt-1 text-[11.5px] text-neutral-500">{t("登录入口位于「设置 → 账号与同步」的「账号」卡片。")}</div>}
             </div>
           </div>
         </div>

@@ -134,7 +134,7 @@ describe("AiSidebar history conversation run status", () => {
   }
 
   async function openHistory() {
-    const btn = mounted!.container.querySelector<HTMLButtonElement>('button[title="历史会话"]');
+    const btn = mounted!.container.querySelector<HTMLButtonElement>('button[title="终端历史"]');
     if (!btn) throw new Error("history button not found");
     click(btn);
     await flush();

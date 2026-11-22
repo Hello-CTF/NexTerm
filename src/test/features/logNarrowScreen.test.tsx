@@ -187,7 +187,7 @@ describe("ServiceJournal on narrow screens", () => {
   it("lets the filters share a row and wraps lines by default on a phone", () => {
     setNarrow(true);
     mounted = mountWithClient(createElement(ServiceJournal, { session, host: "host-one", unit: "nginx.service", onClose: vi.fn() }));
-    const include = mounted.container.querySelector<HTMLInputElement>('input[aria-label="journal 包含正则"]')!;
+    const include = mounted.container.querySelector<HTMLInputElement>('input[aria-label="日志匹配正则"]')!;
     expect(include.className).toContain("flex-1");
     expect(include.className).not.toMatch(/(^|\s)w-52(\s|$)/);
     expect(logArea(mounted.container).dataset.wrap).toBe("true");

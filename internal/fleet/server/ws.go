@@ -45,7 +45,7 @@ type controlMessage struct {
 // forbiddenFrame is the handshake denial frame. It stays code forbidden for every cause so old agents stop;
 // an unavailable owner account additionally carries reason owner_unavailable for agents that can wait for recovery.
 func forbiddenFrame(err error) controlMessage {
-	frame := controlMessage{Type: "error", Code: "forbidden", Message: "设备凭证无效"}
+	frame := controlMessage{Type: "error", Code: "forbidden", Message: "设备凭据无效"}
 	if isOwnerUnavailable(err) {
 		frame.Reason = agent.ErrorCodeOwnerUnavailable
 		frame.Message = "设备所属账号暂不可用"

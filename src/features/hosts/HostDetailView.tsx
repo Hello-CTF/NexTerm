@@ -349,10 +349,10 @@ function DeviceDetail({ assetId, deviceId, visible }: { assetId: string; deviceI
     return (
       <Notice
         title={t("登录服务端账号后可查看设备")}
-        hint={t("受管设备属于服务端账号。在「设置 → 账号同步」登录后即可查看该设备。")}
+        hint={t("受管设备属于服务端账号。在「设置 → 账号与同步」登录后即可查看该设备。")}
         action={
           <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={openAccountSyncSettings}>
-            {t("前往「设置 → 账号同步」登录")}
+            {t("前往「设置 → 账号与同步」登录")}
           </button>
         }
       />

@@ -308,7 +308,7 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		fmt.Fprintln(stdout, "agent: 已下载并校验新版本，稍后将自动完成替换并启动服务")
 		return ExitOK
 	case errors.Is(err, ErrRevoked):
-		fmt.Fprintln(stderr, "agent: 设备已被吊销，已停止运行；如需重新接入，请执行 agent enroll")
+		fmt.Fprintln(stderr, "agent: 设备已被撤销，已停止运行；如需重新接入，请执行 agent enroll")
 		return ExitRevoked
 	case errors.Is(err, ErrProtocolMismatch):
 		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容，且自动升级不可用或已失败；请执行 agent update --force，或使用 install-device.sh 重新安装")

@@ -276,7 +276,7 @@ describe("FileTree tilde handling", () => {
     expect(mocks.list).not.toHaveBeenCalledWith(SID, "/");
     expect(mocks.toast).not.toHaveBeenCalledWith("info", expect.stringContaining("不支持"));
     expect(
-      mounted!.container.querySelector('button[title="回到家目录 (~)"]'),
+      mounted!.container.querySelector('button[title="回到主目录（~）"]'),
     ).not.toBeNull();
   });
 });

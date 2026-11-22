@@ -1123,7 +1123,7 @@ describe("QuickConnect first connection and returning paths", () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(mocks.toast).toHaveBeenCalledWith(
       "info",
-      "移动端不支持本地终端，请双击资产连接远程主机",
+      "移动端不支持本机终端，请双击资产连接远程主机",
     );
   });
 });

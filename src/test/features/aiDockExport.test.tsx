@@ -77,7 +77,7 @@ describe("AI dock conversation export", () => {
   it("offers the batch export from the history list", async () => {
     mounted = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
     await flush();
-    click(mounted.container.querySelector<HTMLButtonElement>('button[title="历史会话"]')!);
+    click(mounted.container.querySelector<HTMLButtonElement>('button[title="终端历史"]')!);
     await flushUntil(() => text().includes("Investigate nginx"));
     const exportButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "导出…");
     click(exportButton!);

@@ -419,7 +419,7 @@ describe("AiSidebar permission request dialogs", () => {
       { id: "u1", role: "user", content: { role: "user", content: "按上面的方案执行。" } },
       { id: "a1", role: "assistant", content: { role: "assistant", content: "Execution complete" } },
     ]);
-    click(mounted!.container.querySelector('button[title="历史会话"]')!);
+    click(mounted!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     clickButton(mounted!.container, "Demo");
     await flush();

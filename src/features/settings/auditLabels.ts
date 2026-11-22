@@ -5,7 +5,7 @@ export const KIND_LABELS: Record<string, string> = {
   device_enroll: t("设备接入"),
   device_online: t("设备上线"),
   device_offline: t("设备离线"),
-  device_revoke: t("设备吊销"),
+  device_revoke: t("设备撤销"),
   device_autostart: t("设备开机自启"),
   device_terminal_toggle: t("设备远程终端开关"),
   device_failover: t("设备切换连接"),

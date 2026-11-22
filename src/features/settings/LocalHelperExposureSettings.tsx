@@ -13,7 +13,7 @@ const STATE_TEXT: Record<string, string> = {
   enrolling: t("正在注册"),
   connecting: t("未连接服务端"),
   online: t("已连接"),
-  revoked: t("已吊销"),
+  revoked: t("已撤销"),
   failed: t("出现错误"),
 };
 

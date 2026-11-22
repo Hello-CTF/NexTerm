@@ -429,7 +429,7 @@ export async function restartTransferTask(id: string): Promise<void> {
     }));
     pump();
   } catch (error) {
-    const message = tr("全量重传准备失败：{value}", { value: describeError(error) });
+    const message = tr("从头重新传输准备失败：{value}", { value: describeError(error) });
     useTransferStore.setState((state) => ({
       tasks: state.tasks.map((item) =>
         item.id === id ? { ...item, restartPreparing: false, error: message } : item,

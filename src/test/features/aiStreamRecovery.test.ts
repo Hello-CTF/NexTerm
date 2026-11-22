@@ -686,7 +686,7 @@ describe("AiSidebar stream recovery", () => {
       { type: "delta", text: "半截回答", seq: 1 },
       { type: "canceled", message: "已停止", seq: 2 },
     ]);
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     clickButton(view!.container, "Old conversation");
     await flush();

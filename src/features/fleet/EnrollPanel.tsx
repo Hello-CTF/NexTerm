@@ -343,7 +343,7 @@ export function EnrollPanel(props: EnrollPanelProps) {
             {t("无法读取服务端版本，暂不能提供一键命令。请展开「手动接入」，在已安装 nexterm-agent 的设备上执行命令。")}
           </p>
         )}
-        <p className="nx-hint text-[11.5px]">{t("接入码仅可使用一次，设备凭证只保存在设备上。")}</p>
+        <p className="nx-hint text-[11.5px]">{t("接入码仅可使用一次，设备凭据只保存在设备上。")}</p>
         <div className="flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2" role="status" aria-live="polite">
             <IconRefresh size={12} className="shrink-0 animate-spin text-neutral-400" aria-hidden="true" />

@@ -671,7 +671,7 @@ describe("AiSidebar agent production mounting", () => {
       if (cmd === "ai_watch_targets") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected call: ${cmd}`));
     });
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     return flushUntil(() => textOf(view!).includes("Conversation B")).then(() => {
       const button = [...view!.container.querySelectorAll("button")].find(
         (candidate) => candidate.getAttribute("title") === "Conversation B",

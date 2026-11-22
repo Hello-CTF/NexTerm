@@ -956,7 +956,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   };
 
   const newDirIn = async (dir: string) => {
-    const name = await promptText(t("新建目录名"), "");
+    const name = await promptText(t("新建文件夹名"), "");
     if (name === null) return;
     const problem = validateEntryName(name, pathStyle);
     if (problem) {
@@ -1637,7 +1637,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       },
       {
         kind: "item",
-        label: t("新建目录"),
+        label: t("新建文件夹"),
         icon: <IconFolderPlus size={13} />,
         hint: gone.hint,
         disabled: gone.disabled,
@@ -1645,7 +1645,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       },
       {
         kind: "item",
-        label: t("新建空白文件"),
+        label: t("新建文件"),
         icon: <IconFilePlus size={13} />,
         hint: gone.hint,
         disabled: gone.disabled,
@@ -1887,7 +1887,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     const needsDir = sessionGone ? goneHint : computer ? t("请选择实际目录") : undefined;
     const items: MenuItem[] = [
       { kind: "item", label: t("新建文件"), icon: <IconFilePlus size={13} />, hint: needsDir, disabled: sessionGone || computer, onSelect: () => void newFileIn(targetDir()) },
-      { kind: "item", label: t("新建目录"), icon: <IconFolderPlus size={13} />, hint: needsDir, disabled: sessionGone || computer, onSelect: () => void newDirIn(targetDir()) },
+      { kind: "item", label: t("新建文件夹"), icon: <IconFolderPlus size={13} />, hint: needsDir, disabled: sessionGone || computer, onSelect: () => void newDirIn(targetDir()) },
       { kind: "separator" },
       { kind: "item", label: t("上传文件…"), icon: <IconUpload size={13} />, hint: needsDir, disabled: sessionGone || computer, onSelect: () => void uploadTo(targetDir()) },
       { kind: "item", label: t("上传文件夹…"), icon: <IconUpload size={13} />, hint: needsDir, disabled: sessionGone || computer, onSelect: () => void uploadFolderTo(targetDir()) },
@@ -2065,8 +2065,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         </button>
         <button
           className="nx-tree-caret"
-          title={homeSupported ? t("回到家目录 (~)") : t("WinRM 后端不支持 ~ 展开")}
-          aria-label={homeSupported ? t("回到家目录 (~)") : t("WinRM 后端不支持 ~ 展开")}
+          title={homeSupported ? t("回到主目录（~）") : t("WinRM 后端不支持 ~ 展开")}
+          aria-label={homeSupported ? t("回到主目录（~）") : t("WinRM 后端不支持 ~ 展开")}
           disabled={!homeSupported || root === homeTarget}
           onClick={() => {
             if (homeSupported) navigateRoot(homeTarget);

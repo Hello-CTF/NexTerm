@@ -79,12 +79,12 @@ function TransferRow({ task, showTarget }: { task: ScopedTransferTask; showTarge
           <button
             type="button"
             className="nx-link shrink-0"
-            title={task.restartPreparing ? tr("正在准备全量重传") : tr("全量重传这个传输任务")}
-            aria-label={tr("全量重传 {name}", { name })}
+            title={task.restartPreparing ? tr("正在准备从头重新传输") : tr("从头重新传输这个传输任务")}
+            aria-label={tr("从头重新传输 {name}", { name })}
             disabled={task.restartPreparing}
             onClick={() => void restartTransferTask(task.id)}
           >
-            {task.restartPreparing ? tr("准备中") : tr("全量重传")}
+            {task.restartPreparing ? tr("准备中") : tr("从头重新传输")}
           </button>
         )}
         {canResumeTransfer(task) && (
@@ -156,7 +156,7 @@ export function TransferPanel({ sessionId }: { sessionId: string }) {
       <div className="flex items-center gap-2 px-3 pt-1.5 text-[11px] text-neutral-500">
         <span className="shrink-0 font-semibold text-neutral-300">{tr("传输")}</span>
         <span className="min-w-0 truncate">
-          {tasks.length === 0 ? tr("无任务") : active > 0 ? tr("{active} 进行中", { active }) : tr("已结束")}
+          {tasks.length === 0 ? tr("无任务") : active > 0 ? tr("{active} 个进行中", { active }) : tr("已结束")}
         </span>
         <span className="nx-spacer" />
         <button

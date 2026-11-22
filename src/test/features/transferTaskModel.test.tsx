@@ -522,10 +522,10 @@ describe("transfer resume eligibility", () => {
     first.reject(new Error("connection reset"));
     await waitFor(() => expect(useTransferStore.getState().tasks[0].status).toBe("failed"));
     expect(hasButton(mounted!.container, "续传这个传输任务")).toBe(false);
-    expect(hasButton(mounted!.container, "全量重传这个传输任务")).toBe(true);
+    expect(hasButton(mounted!.container, "从头重新传输这个传输任务")).toBe(true);
     expect(mocks.discardStaged).not.toHaveBeenCalledWith("/staged/atomic");
 
-    click(button(mounted!.container, "全量重传这个传输任务"));
+    click(button(mounted!.container, "从头重新传输这个传输任务"));
     await waitFor(() =>
       expect(mocks.upload).toHaveBeenNthCalledWith(2, "s1", "/staged/atomic", "/remote/atomic", false, task.id, expect.any(String)),
     );
@@ -541,10 +541,10 @@ describe("transfer resume eligibility", () => {
     expect(task.transferred).toBe(0);
     expect(task.total).toBe(0);
     expect(hasButton(mounted!.container, "续传这个传输任务")).toBe(false);
-    expect(hasButton(mounted!.container, "全量重传这个传输任务")).toBe(true);
+    expect(hasButton(mounted!.container, "从头重新传输这个传输任务")).toBe(true);
     expect(mocks.discardStaged).not.toHaveBeenCalledWith("/staged/empty");
 
-    click(button(mounted!.container, "全量重传这个传输任务"));
+    click(button(mounted!.container, "从头重新传输这个传输任务"));
     await waitFor(() =>
       expect(mocks.upload).toHaveBeenNthCalledWith(2, "s1", "/staged/empty", "/remote/empty", false, task.id, expect.any(String)),
     );
@@ -561,10 +561,10 @@ describe("transfer resume eligibility", () => {
     emitProgress(task.id, 100, 100, true);
     first.reject(new Error("rename failed"));
     await waitFor(() => expect(useTransferStore.getState().tasks[0].status).toBe("failed"));
-    expect(hasButton(mounted!.container, "全量重传这个传输任务")).toBe(true);
+    expect(hasButton(mounted!.container, "从头重新传输这个传输任务")).toBe(true);
     expect(mocks.discardStaged).not.toHaveBeenCalledWith("/staged/complete");
 
-    click(button(mounted!.container, "全量重传这个传输任务"));
+    click(button(mounted!.container, "从头重新传输这个传输任务"));
     await waitFor(() =>
       expect(mocks.upload).toHaveBeenNthCalledWith(2, "s1", "/staged/complete", "/remote/complete", false, task.id, expect.any(String)),
     );
@@ -582,10 +582,10 @@ describe("transfer resume eligibility", () => {
     emitProgress(task.id, 100, 100, true);
     first.reject({ code: "cancelled", message: "cancelled" });
     await waitFor(() => expect(useTransferStore.getState().tasks[0].status).toBe("cancelled"));
-    expect(hasButton(mounted!.container, "全量重传这个传输任务")).toBe(true);
+    expect(hasButton(mounted!.container, "从头重新传输这个传输任务")).toBe(true);
     expect(mocks.discardStaged).not.toHaveBeenCalledWith("/staged/cancel-complete");
 
-    click(button(mounted!.container, "全量重传这个传输任务"));
+    click(button(mounted!.container, "从头重新传输这个传输任务"));
     await waitFor(() =>
       expect(mocks.upload).toHaveBeenNthCalledWith(2, "s1", "/staged/cancel-complete", "/remote/cancel-complete", false, task.id, expect.any(String)),
     );
@@ -644,10 +644,10 @@ describe("transfer resume eligibility", () => {
     });
     await waitFor(() => expect(useTransferStore.getState().tasks[0].resumeIssue).toBe("partial_mismatch"));
     expect(hasButton(mounted!.container, "续传这个传输任务")).toBe(false);
-    expect(hasButton(mounted!.container, "全量重传这个传输任务")).toBe(true);
+    expect(hasButton(mounted!.container, "从头重新传输这个传输任务")).toBe(true);
     expect(mocks.discardStaged).not.toHaveBeenCalledWith("/staged/mismatch");
 
-    click(button(mounted!.container, "全量重传这个传输任务"));
+    click(button(mounted!.container, "从头重新传输这个传输任务"));
     await waitFor(() =>
       expect(mocks.upload).toHaveBeenNthCalledWith(
         3,
@@ -687,7 +687,7 @@ describe("transfer resume eligibility", () => {
     expect(mocks.discardStaged).toHaveBeenCalledWith("/staged/expired");
     expect(hasButton(mounted!.container, "续传这个传输任务")).toBe(false);
 
-    click(button(mounted!.container, "全量重传这个传输任务"));
+    click(button(mounted!.container, "从头重新传输这个传输任务"));
     await waitFor(() => expect(mocks.pickLocalFile).toHaveBeenCalledTimes(1));
     await waitFor(() =>
       expect(mocks.upload).toHaveBeenNthCalledWith(
@@ -754,7 +754,7 @@ describe("transfer resume eligibility", () => {
     expect(useTransferStore.getState().tasks[0].resumeIssue).toBeUndefined();
     expect(mocks.discardStaged).not.toHaveBeenCalledWith("/staged/remote-error");
     expect(hasButton(mounted!.container, "续传这个传输任务")).toBe(true);
-    expect(hasButton(mounted!.container, "全量重传这个传输任务")).toBe(false);
+    expect(hasButton(mounted!.container, "从头重新传输这个传输任务")).toBe(false);
 
     clickResume(task.id);
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(3));
@@ -785,7 +785,7 @@ describe("transfer resume eligibility", () => {
     expect(mocks.discardStaged).toHaveBeenCalledWith("/staged/expired-download");
     expect(hasButton(mounted!.container, "续传这个传输任务")).toBe(false);
 
-    click(button(mounted!.container, "全量重传这个传输任务"));
+    click(button(mounted!.container, "从头重新传输这个传输任务"));
     await waitFor(() => expect(mocks.pickSavePath).toHaveBeenCalledWith("file"));
     await waitFor(() =>
       expect(mocks.download).toHaveBeenNthCalledWith(

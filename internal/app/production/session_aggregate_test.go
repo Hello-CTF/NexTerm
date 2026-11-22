@@ -82,7 +82,7 @@ func TestSessionAggregateListsTheAccountsDevicesThroughTheBridge(t *testing.T) {
 			checked = append(checked, userID+"/"+deviceID)
 			mu.Unlock()
 			if deviceID == "revoked" {
-				return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+				return ipc.NewError(ipc.CodeForbidden, "设备已撤销")
 			}
 			return nil
 		},

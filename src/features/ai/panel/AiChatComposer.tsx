@@ -47,10 +47,10 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
     ? t("生产环境中「完全放行」按「自动执行」处理")
     : permissionSourceText(permState?.source ?? "global");
   const permTitle = permError
-    ? t("未能读取 AI 权限（选择以查看并重试）")
+    ? t("未能读取 AI 权限（点按查看并重试）")
     : applied
       ? t("AI 权限与模式：{value}（{value2}），含计划模式和免确认授权", { value: MODE_LABEL[applied.mode], value2: permReason })
-      : t("AI 权限与模式：读取中（选择以设置）");
+      : t("AI 权限与模式：读取中（点按设置）");
   // Rarely used or experimental actions live here; with no terminal tab the
   // takeover entry is omitted instead of shown disabled.
   const conversationId = ctx.conversationId;
@@ -409,7 +409,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
                   activeRun?.cancellation === "cancelling"
                     ? t("停止当前任务：已提交停止请求，等待任务结束")
                     : activeRun?.cancellation === "unconfirmed"
-                      ? t("停止当前任务：停止未确认，选择以重试")
+                      ? t("停止当前任务：停止未确认，点按重试")
                       : t("停止当前任务（保留已完成的输出）")
                 }
                 disabled={activeRun?.cancellation === "cancelling"}

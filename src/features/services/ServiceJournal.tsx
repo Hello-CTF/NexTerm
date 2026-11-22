@@ -128,7 +128,7 @@ export function ServiceJournal({
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/70 px-3 py-2">
-        <input className="nx-input nx-input-sm min-w-0 flex-1 basis-40 font-mono sm:w-52 sm:flex-none" value={include} placeholder={t("只显示匹配的行（正则表达式）")} aria-label={t("journal 包含正则")} onChange={(event) => setInclude(event.target.value)} />
+        <input className="nx-input nx-input-sm min-w-0 flex-1 basis-40 font-mono sm:w-52 sm:flex-none" value={include} placeholder={t("只显示匹配的行（正则表达式）")} aria-label={t("日志匹配正则")} onChange={(event) => setInclude(event.target.value)} />
         <input className="nx-input nx-input-sm min-w-0 flex-1 basis-40 font-mono sm:w-44 sm:flex-none" value={exclude} placeholder={t("隐藏匹配的行（正则表达式）")} aria-label={t("journal 排除正则")} onChange={(event) => setExclude(event.target.value)} />
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" aria-pressed={paused} onClick={() => {
           const next = !paused;

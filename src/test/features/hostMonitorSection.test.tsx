@@ -105,7 +105,7 @@ describe("HostMonitorSection", () => {
     setSession("telnet");
     const container = render(workspace("a1"));
     await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(container.textContent).toContain("主机监控只支持 SSH、WinRM、本地会话和受管设备。");
+    expect(container.textContent).toContain("主机监控只支持 SSH、WinRM、本机会话和受管设备。");
     expect(mocks.sample).not.toHaveBeenCalled();
   });
 

@@ -517,7 +517,7 @@ export function JumpPalette({
       return;
     }
     if (mobile && asset.kind === "local") {
-      useUi.getState().pushToast("info", t("移动端不支持本地终端，请双击资产连接远程主机"));
+      useUi.getState().pushToast("info", t("移动端不支持本机终端，请双击资产连接远程主机"));
       return;
     }
     if (useUi.getState().connectingAssetIds.includes(asset.id)) return;
@@ -1035,7 +1035,7 @@ export function JumpPalette({
                   className="nx-btn nx-btn-outline nx-btn-sm mt-4"
                   onClick={() => setShowHidden(!showHidden)}
                 >
-                  {showHidden ? t("隐藏已隐藏资产") : t("显示隐藏资产（{hiddenDatabaseCount}）", { hiddenDatabaseCount })}
+                  {showHidden ? t("收起已隐藏的资产") : t("显示隐藏资产（{hiddenDatabaseCount}）", { hiddenDatabaseCount })}
                 </button>
               )}
               {scope === "hosts" && (

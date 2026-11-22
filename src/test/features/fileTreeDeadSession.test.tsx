@@ -318,7 +318,7 @@ describe("FileTree deleted session", () => {
       expect(btn?.disabled, ariaLabel).toBe(true);
       expect(btn?.title, ariaLabel).toBe(GONE_HINT);
     }
-    for (const label of ["新建文件", "新建目录", "上传文件…"]) {
+    for (const label of ["新建文件", "新建文件夹", "上传文件…"]) {
       const item = barMenuItem(label);
       expect(item?.disabled, label).toBe(true);
       expect(item?.textContent, label).toContain(GONE_HINT);
@@ -522,7 +522,7 @@ describe("FileTree transient file errors", () => {
     for (const ariaLabel of ["刷新文件列表", "上传到当前目录"]) {
       expect(toolbarButton(ariaLabel)?.disabled, ariaLabel).toBe(false);
     }
-    for (const label of ["新建文件", "新建目录"]) {
+    for (const label of ["新建文件", "新建文件夹"]) {
       expect(barMenuItem(label)?.disabled, label).toBe(false);
     }
 
@@ -588,7 +588,7 @@ describe("FileTree Windows roots and navigation", () => {
 
     mocks.list.mockClear();
     expect(toolbarButton("上传到当前目录")?.disabled).toBe(true);
-    for (const label of ["新建文件", "新建目录", "上传文件…", "上传文件夹…"]) {
+    for (const label of ["新建文件", "新建文件夹", "上传文件…", "上传文件夹…"]) {
       expect(barMenuItem(label)?.disabled, label).toBe(true);
     }
     openBlankMenu();

@@ -244,7 +244,7 @@ func (s *Service) authorizeDevice(ctx context.Context, identity *account.Identit
 	case err != nil:
 		return nil, "deny", "not_found", err
 	case grant.revoked:
-		return nil, "deny", "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+		return nil, "deny", "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已撤销")
 	case grant.userID != identity.UserID:
 		return nil, "deny", "not_owner", ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
 	case grant.localHelper:
@@ -284,7 +284,7 @@ func (s *Service) checkDeviceBinding(ctx context.Context, grant *Grant) (string,
 		return "", dbError(err)
 	}
 	if device.RevokedAt != nil {
-		return "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+		return "device_revoked", ipc.NewError(ipc.CodeForbidden, "设备已撤销")
 	}
 	if device.UserID != grant.OwnerID {
 		return "owner_mismatch", ipc.NewError(ipc.CodeForbidden, "设备归属与授权不一致")

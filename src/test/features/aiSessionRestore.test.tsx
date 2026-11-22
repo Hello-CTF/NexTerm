@@ -320,7 +320,7 @@ describe("AiSidebar session restore", () => {
     await flushReplay();
     expect(textOf(view!)).toContain("未能打开此会话：会话库不可用");
 
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     click(view!.container.querySelector('button[aria-label="删除会话「Investigate 502」"]')!);
     await flushUntil(() => mocks.conversationDelete.mock.calls.length > 0);
@@ -406,7 +406,7 @@ describe("AiSidebar session restore", () => {
     await flush();
     mocks.conversationList.mockResolvedValue([{ id: "c-9", title: "旧会话", updatedAt: 0 }]);
     mocks.messages.mockResolvedValue([{ role: "user", content: { role: "user", content: "旧问题" } }]);
-    click(view!.container.querySelector('button[title="历史会话"]')!);
+    click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
     clickButton(view!.container, "旧会话");
     await flush();
