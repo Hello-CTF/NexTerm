@@ -27,7 +27,17 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
   listenEvent: vi.fn(),
   enqueueDownload: vi.fn(),
+  folderDownload: false,
+  startFolderDownload: vi.fn(),
 }));
+vi.mock("../../features/files/folderDownload", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../features/files/folderDownload")>();
+  return {
+    ...actual,
+    folderDownloadAvailable: () => mocks.folderDownload,
+    startFolderDownload: mocks.startFolderDownload,
+  };
+});
 vi.mock("../../ui/dialogs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ui/dialogs")>();
   return {
@@ -199,6 +209,8 @@ beforeEach(() => {
   mocks.remove.mockResolvedValue(undefined);
   mocks.pickSavePath.mockImplementation((name: string) => Promise.resolve(`/tmp/${name}`));
   mocks.listenEvent.mockReturnValue(Promise.resolve(() => {}));
+  mocks.folderDownload = false;
+  mocks.startFolderDownload.mockResolvedValue({ status: "cancelled" });
   useUi.setState({
     pushToast: mocks.toast,
     leftOpen: true,
@@ -416,5 +428,79 @@ describe("FileTree touch multi-select", () => {
     expect(mocks.ask.mock.calls[0][0]).toContain("2 项");
     expect(mocks.remove).toHaveBeenCalledTimes(2);
     expect(mocks.toast).toHaveBeenCalledWith("success", "已删除 2 项");
+  });
+});
+
+describe("FileTree row gestures", () => {
+  function clickTimes(el: Element, detail: number): void {
+    act(() => {
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail }));
+    });
+  }
+
+  it("double-clicking a folder enters it without collapsing it first", async () => {
+    await mountReady();
+    clickTimes(row("sub"), 1);
+    expect(row("sub").getAttribute("aria-expanded")).toBe("true");
+    clickTimes(row("sub"), 2);
+    expect(row("sub").getAttribute("aria-expanded")).toBe("true");
+    act(() => {
+      row("sub").dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    });
+    await waitForRendered(() => expect(mounted!.container.querySelector('[role="treeitem"][title="~/sub"]')).toBeNull());
+  });
+
+  it("offers a download from the notice about a file that cannot be edited", async () => {
+    mocks.list.mockImplementation((_s: string, p: string) =>
+      Promise.resolve(p === "~" ? [entry("photo.bin", "file")] : []),
+    );
+    mounted = mountTree();
+    await waitForRendered(() => expect(row("photo.bin")).toBeTruthy());
+    act(() => {
+      row("photo.bin").dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    });
+    const call = mocks.toast.mock.calls.find((c) => String(c[1]).includes("不是文本文件"));
+    expect(call?.[2]?.label).toBe("下载");
+    call?.[2]?.onSelect();
+    await waitForRendered(() =>
+      expect(mocks.enqueueDownload).toHaveBeenCalledWith(SID, { remotePath: "~/photo.bin", localPath: "/tmp/photo.bin" }),
+    );
+  });
+
+  it("keeps single and batch delete unavailable once the session is gone", async () => {
+    mocks.list.mockImplementation((_s: string, p: string) =>
+      p === "~"
+        ? Promise.resolve(ENTRIES.map((e) => ({ ...e })))
+        : Promise.reject({ code: "not_found", message: "会话不存在", detail: { resource: "session" } }),
+    );
+    await mountReady();
+    click(row("sub"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("会话已在服务端删除"));
+    contextMenu(row("a.txt"));
+    const remove = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.startsWith("删除"),
+    );
+    expect(remove?.disabled).toBe(true);
+    keyDown(row("a.txt"), "Delete");
+    await flush();
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
+});
+
+describe("FileTree desktop batch download", () => {
+  it("asks for one folder for the whole selection instead of a save dialog per file", async () => {
+    mocks.folderDownload = true;
+    await mountReady();
+    click(row("a.txt"));
+    clickWith(row("sub"), { ctrlKey: true });
+    contextMenu(row("sub"));
+    expect(menuLabels().join("|")).not.toContain("下载 2 个文件");
+    click(menuItem("下载到文件夹…"));
+    await flush();
+    expect(mocks.startFolderDownload).toHaveBeenCalledTimes(1);
+    expect(mocks.startFolderDownload.mock.calls[0][1].map((e: FileEntryDto) => e.path).sort()).toEqual(["~/a.txt", "~/sub"]);
+    expect(mocks.pickSavePath).not.toHaveBeenCalled();
+    expect(mocks.enqueueDownload).not.toHaveBeenCalled();
   });
 });

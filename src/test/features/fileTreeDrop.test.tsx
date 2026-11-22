@@ -298,6 +298,73 @@ describe("FileTree drop targeting", () => {
   });
 });
 
+describe("FileTree drop destination", () => {
+  function nestedListing(): void {
+    mocks.list.mockImplementation((_sid: string, path: string) =>
+      Promise.resolve(
+        path === "~"
+          ? [entry("a.txt", "file"), entry("sub", "dir")]
+          : path === "~/sub"
+            ? [{ ...entry("inner.txt", "file"), path: "~/sub/inner.txt" }]
+            : [],
+      ),
+    );
+  }
+
+  function dispatchDragOver(target: Element): void {
+    const event = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: { types: ["Files"], dropEffect: "none" } });
+    act(() => {
+      target.dispatchEvent(event);
+    });
+  }
+
+  async function expandSub(): Promise<void> {
+    act(() => {
+      rowByPath("~/sub").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await waitForRendered(() => expect(rowByPath("~/sub/inner.txt")).toBeDefined());
+  }
+
+  function uploadedTo(remote: string) {
+    return expect(mocks.upload).toHaveBeenCalledWith(SID, expect.any(String), remote, false, expect.any(String), expect.any(String));
+  }
+
+  it("uploads a drop on a file row next to that file and names the destination", async () => {
+    nestedListing();
+    mounted = mountTree();
+    await waitForRendered(() => expect(rowByPath("~/sub")).toBeDefined());
+    await expandSub();
+
+    dispatchDragOver(rowByPath("~/sub/inner.txt"));
+    expect(rowByPath("~/sub").hasAttribute("data-drop-target")).toBe(true);
+    expect(mounted.container.textContent).toContain("上传到 ~/sub");
+
+    dispatchDrop(rowByPath("~/sub/inner.txt"), { files: [new File(["x"], "d.txt")] });
+    await waitForRendered(() => uploadedTo("~/sub/d.txt"));
+    expect(toastTexts()).toContain("上传到 ~/sub");
+    expect(rowByPath("~/sub").hasAttribute("data-drop-target")).toBe(false);
+  });
+
+  it("uploads a drop on the blank area into the shown folder even when a nested file is selected", async () => {
+    nestedListing();
+    mounted = mountTree();
+    await waitForRendered(() => expect(rowByPath("~/sub")).toBeDefined());
+    await expandSub();
+    act(() => {
+      rowByPath("~/sub/inner.txt").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(rowByPath("~/sub/inner.txt").getAttribute("aria-selected")).toBe("true");
+
+    const tree = mounted.container.querySelector("[role='tree']")!;
+    dispatchDragOver(tree);
+    expect(mounted.container.querySelector("[data-drop-target]")).toBeNull();
+    dispatchDrop(tree, { files: [new File(["x"], "d.txt")] });
+    await waitForRendered(() => uploadedTo("~/d.txt"));
+    expect(toastTexts()).toContain("上传到 ~");
+  });
+});
+
 describe("FileTree drop with unresolvable entries", () => {
   it("uploads nothing and shows the skip notice when a dropped directory cannot be resolved", async () => {
     mounted = mountTree();
