@@ -1511,7 +1511,7 @@ func TestForwardRuntimeVerticalContracts(t *testing.T) {
 		want   []string
 		absent []string
 	}{
-		{name: "Environment", want: []string{"available: boolean;", "platform: string;", "listenHost: string;", "reason?: string;"}},
+		{name: "Environment", want: []string{"listenHost: string;"}, absent: []string{"available", "platform", "reason"}},
 		{name: "Spec", want: []string{"id: string;", "sessionId: string;", "hostId?: string;", "status: string;", "error?: string;", "listenHost: string;", "listenPort: number;", "targetHost: string | null;", "targetPort: number | null;", "kind: string;", "createdAt: number;"}, absent: []string{"listenHost?:", "targetHost?:", "targetPort?:", "autoStart", "assetId", "stopped"}},
 		{name: "CreateLocalArgs", want: []string{"sessionId: string;", "listenPort: number;", "targetHost: string;", "targetPort: number;"}, absent: []string{"acknowledgeRisk", "autoStart"}},
 		{name: "CreateSocksArgs", want: []string{"sessionId: string;", "listenPort: number;", "acknowledgeRisk?: boolean;"}, absent: []string{"targetHost", "targetPort", "autoStart"}},
