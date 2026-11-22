@@ -283,7 +283,7 @@ export function isHostWorkspace(ws: Workspace | null | undefined): boolean {
   return ws?.kind === "session" && Boolean(ws.sessionId);
 }
 
-// showLeftPanel is the asset/credentials switch of the left sidebar. In a host workspace it is a temporary override,
+// showLeftPanel is the asset/credentials switch of the left sidebar. In a host workspace it is an override that stays until changed,
 // and a click on the already active button while the dock is open reverts to the file tree; elsewhere it sets the
 // persisted choice. dockOpen is whether the dock is visible now; the return value says whether the caller should
 // open the dock.
