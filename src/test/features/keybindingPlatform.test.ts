@@ -24,6 +24,7 @@ import {
   formatBindingAria,
   getKeybinding,
   matchAppKeybinding,
+  matchTerminalWithheldKeybinding,
   matchBinding,
   resetAllKeybindings,
   setKeybinding,
@@ -190,5 +191,20 @@ describe("desktop default keymap", () => {
     harness.mac = false;
     expect(matchAppKeybinding(new KeyboardEvent("keydown", { key: "+", code: "Equal", ctrlKey: true, shiftKey: true })))
       .toEqual({ action: "terminalFontIncrease", digit: null });
+  });
+
+  it("never treats an AltGr character on the Ctrl+Alt defaults as a shortcut", () => {
+    // AltGr reports Ctrl+Alt on Windows, and layouts type braces, brackets, backslash and tilde with AltGr+7/8/9/0/-/=.
+    const keys: Array<[string, string]> = [
+      ["7", "Digit7"], ["8", "Digit8"], ["9", "Digit9"], ["0", "Digit0"], ["1", "Digit1"], ["-", "Minus"], ["=", "Equal"],
+    ];
+    for (const [key, code] of keys) {
+      const plain = keyEvent({ key, code, ctrlKey: true, altKey: true });
+      const altGr = { ...plain, getModifierState: (name: string) => name === "AltGraph" };
+      expect(matchAppKeybinding(altGr), `${code} app`).toBeNull();
+      expect(matchTerminalWithheldKeybinding(altGr), `${code} terminal`).toBeNull();
+    }
+    // The same chord without AltGr is still a shortcut, so the check above is not vacuous.
+    expect(matchAppKeybinding(keyEvent({ key: "1", code: "Digit1", ctrlKey: true, altKey: true }))?.action).toBe("switchTab");
   });
 });
