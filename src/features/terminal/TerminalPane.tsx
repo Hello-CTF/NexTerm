@@ -2119,13 +2119,13 @@ export function TerminalPane({
       ? ([{ kind: "item", label: execInterrupted ? tr("容器命令已结束") : tr("容器内命令"), disabled: true }] satisfies MenuItem[])
       : []),
     ...(throttleNow?.active
-      ? ([{ kind: "item", label: tr("输出积压，画面可能有延迟"), disabled: true }] satisfies MenuItem[])
+      ? ([{ kind: "item", label: tr("输出未及时送达，画面可能有延迟"), disabled: true }] satisfies MenuItem[])
       : []),
     ...(throttleNow?.resyncing
       ? ([{ kind: "item", label: tr("输出过快，正在同步画面"), disabled: true }] satisfies MenuItem[])
       : []),
     ...(streamBacklog
-      ? ([{ kind: "item", label: tr("解析积压，画面可能有延迟"), disabled: true }] satisfies MenuItem[])
+      ? ([{ kind: "item", label: tr("渲染跟不上输出，画面可能有延迟"), disabled: true }] satisfies MenuItem[])
       : []),
     ...(recording?.state === "failed"
       ? ([{ kind: "item", label: tr("录制失败"), hint: recording.safeError || undefined, disabled: true }] satisfies MenuItem[])
@@ -2624,9 +2624,9 @@ export function TerminalPane({
         {throttleNow?.active && (
           <span
             className="nx-badge nx-badge-amber"
-            title={tr("终端输出积压（{inflightBytes} 字节待发送），画面可能有延迟", { inflightBytes: throttleNow.inflightBytes })}
+            title={tr("终端输出未及时送达此窗口（{inflightBytes} 字节排队中），画面可能有延迟", { inflightBytes: throttleNow.inflightBytes })}
           >
-            {tr("输出积压")}
+            {tr("传输延迟")}
           </span>
         )}
         {throttleNow?.resyncing && (
@@ -2635,16 +2635,16 @@ export function TerminalPane({
           </span>
         )}
         {throttleNow?.recovered && (
-          <span className="nx-badge nx-badge-green" title={tr("终端输出积压已消退，画面恢复实时")}>
+          <span className="nx-badge nx-badge-green" title={tr("终端输出已跟上，画面恢复实时")}>
             {tr("输出已恢复")}
           </span>
         )}
         {streamBacklog && (
           <span
             className="nx-badge nx-badge-amber"
-            title={tr("终端输出解析积压（{pendingBytes} 字节待解析），画面可能有延迟", { pendingBytes: streamBacklog.pendingBytes })}
+            title={tr("终端渲染跟不上输出（{pendingBytes} 字节待显示），画面可能有延迟", { pendingBytes: streamBacklog.pendingBytes })}
           >
-            {tr("解析积压")}
+            {tr("渲染延迟")}
           </span>
         )}
         {recording?.state === "running" && (
