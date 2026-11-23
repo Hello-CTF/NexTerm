@@ -34,8 +34,9 @@ func (m *Manager) installBlocker() string {
 // it in; the old bundle is removed only after the new one is in place. It returns the new bundle executable as
 // the restart target.
 //
-// hdiutil opens the verified copy by path; the copy sits in a private directory of the stage directory, but a
-// process of the same user could still replace it between the hash and the attach.
+// hdiutil opens the copy by path. The copy was verified after it was written and sits in a directory only this
+// user can write, but macOS has no mandatory lock: a process of the same user could still replace it between the
+// hash and the attach.
 func (m *Manager) applyInstall(ctx context.Context, archive string, _ *os.File) (string, error) {
 	// The package is staged in a directory that outlives the process; the mount point is a fresh temporary one.
 	mountpoint, err := os.MkdirTemp(platform.TempDir(), "nexterm-update-mnt-")

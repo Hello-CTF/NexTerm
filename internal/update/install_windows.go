@@ -17,8 +17,8 @@ import (
 // so loaded executable/runtime images are moved aside and restored on failure.
 // Loose copies leave the original file alone and restart into the installed version.
 //
-// NSIS runs the verified copy by path; the copy sits in a private directory of the stage directory, but a process
-// of the same user could still replace it between the hash and the launch.
+// NSIS runs the verified copy by path while the handle it was hashed through stays open and denies writing,
+// deleting and renaming it (see openVerifiedCopy), so the installer that runs is the one that was verified.
 func (m *Manager) applyInstall(ctx context.Context, archive string, _ *os.File) (string, error) {
 	target, inPlace := installTargetFor(m.ExePath, registeredInstallTarget(), defaultInstallDir(), canonicalExeName())
 	if !inPlace {
