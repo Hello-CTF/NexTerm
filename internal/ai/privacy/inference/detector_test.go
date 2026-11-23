@@ -158,22 +158,6 @@ func TestDetectorStitchesWindowsIntoUTF8Spans(t *testing.T) {
 	}
 }
 
-func TestDetectorStaticPaddingKeepsContentPositions(t *testing.T) {
-	d := syntheticDetector(t)
-	d.staticSequence, d.padTokenID = 4, 1
-	d.contentWindow = 1
-	d.overlap = 0
-	spans, err := d.detect(t.Context(), "secret", func(ctx context.Context, input modelInput, labels int) ([]float32, error) {
-		if !slices.Equal(input.ids, []int64{0, 5, 2, 1}) || !slices.Equal(input.attention, []int64{1, 1, 1, 0}) || !slices.Equal(input.typeIDs, []int64{0, 0, 0, 0}) {
-			t.Fatalf("padded window %+v", input)
-		}
-		return secretModel(ctx, input, labels)
-	})
-	if err != nil || len(spans) != 1 || spans[0].Start != 0 || spans[0].End != 6 {
-		t.Fatalf("got %+v %v", spans, err)
-	}
-}
-
 func TestDetectorHonoursCancellationLimitsAndFailures(t *testing.T) {
 	d := syntheticDetector(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -234,17 +218,20 @@ func writeInstallation(t *testing.T, precision string, mutate func(map[string]an
 }
 
 func TestInstallationManifestAdapter(t *testing.T) {
-	for _, precision := range []string{"int8", "fp32", "fp16"} {
-		directory := writeInstallation(t, precision, nil)
-		m, err := loadInstallationManifest(directory)
-		if err != nil {
-			t.Fatalf("%s: %v", precision, err)
-		}
-		if err := m.validateFiles(directory); err != nil {
-			t.Fatalf("%s files: %v", precision, err)
-		}
-		if (precision == "fp16") != (m.staticSequence == 512 && m.padTokenID == 1 && len(m.externalDataPaths) == 0) {
-			t.Fatalf("%s execution: %+v", precision, m)
+	directory := writeInstallation(t, "fp32", nil)
+	m, err := loadInstallationManifest(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.validateFiles(directory); err != nil {
+		t.Fatal(err)
+	}
+	if m.modelPath != "model.onnx" || !slices.Equal(m.externalDataPaths, []string{"model.onnx_data"}) {
+		t.Fatalf("fp32 files: %+v", m)
+	}
+	for _, precision := range []string{"int8", "fp16"} {
+		if _, err := loadInstallationManifest(writeInstallation(t, precision, nil)); !errors.Is(err, ErrUnsupportedPrecision) {
+			t.Errorf("%s: got %v, want ErrUnsupportedPrecision", precision, err)
 		}
 	}
 	for name, mutate := range map[string]func(map[string]any){
@@ -252,7 +239,8 @@ func TestInstallationManifestAdapter(t *testing.T) {
 		"empty version": func(m map[string]any) { m["version"] = "" },
 		"bad revision":  func(m map[string]any) { m["revision"] = "HEAD" },
 		"bad precision": func(m map[string]any) { m["precision"] = "q4" },
-		"missing model": func(m map[string]any) { delete(m["files"].(map[string]any), "model_int8.onnx") },
+		"missing model": func(m map[string]any) { delete(m["files"].(map[string]any), "model.onnx") },
+		"missing data":  func(m map[string]any) { delete(m["files"].(map[string]any), "model.onnx_data") },
 		"parent path": func(m map[string]any) {
 			m["files"].(map[string]any)["../x"] = map[string]any{"sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "size": 1}
 		},
@@ -264,15 +252,15 @@ func TestInstallationManifestAdapter(t *testing.T) {
 			m["files"].(map[string]any)["config.json"].(map[string]any)["sha256"] = "0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef"
 		},
 	} {
-		if _, err := loadInstallationManifest(writeInstallation(t, "int8", mutate)); err == nil {
+		if _, err := loadInstallationManifest(writeInstallation(t, "fp32", mutate)); err == nil {
 			t.Errorf("%s accepted", name)
 		}
 	}
-	directory := writeInstallation(t, "int8", nil)
+	directory = writeInstallation(t, "fp32", nil)
 	if err := os.WriteFile(filepath.Join(directory, "config.json"), []byte("longer"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m, err := loadInstallationManifest(directory)
+	m, err = loadInstallationManifest(directory)
 	if err != nil {
 		t.Fatal(err)
 	}

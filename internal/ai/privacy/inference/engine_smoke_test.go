@@ -1,8 +1,7 @@
-//go:build (linux || darwin || windows) && (amd64 || arm64) && (cgo || !(android || ios))
-
 package inference
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -15,83 +14,18 @@ import (
 	"testing"
 )
 
-// A library the loader rejects reports the loader diagnostic while staying
-// ErrUnavailable. It runs before TestRuntimeSmoke loads a real runtime.
-func TestRuntimeLoaderErrorIsReported(t *testing.T) {
-	onnxRuntime.Lock()
-	loaded := onnxRuntime.path != ""
-	onnxRuntime.Unlock()
-	if loaded {
-		t.Skip("a runtime is already loaded in this process")
-	}
-	directory := t.TempDir()
-	if err := os.WriteFile(filepath.Join(directory, filepath.FromSlash(RuntimeFiles()[0])), []byte("not a library"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	path, err := runtimePath(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = initializeRuntime(path)
-	if !errors.Is(err, ErrUnavailable) || err.Error() == ErrUnavailable.Error() {
-		t.Fatalf("got %v, want ErrUnavailable with loader detail", err)
-	}
-}
-
-// TestRuntimeSmoke loads a staged ONNX Runtime through purego and runs
-// a generated token-classification model end to end, so a wrong OrtApi slot
-// or ABI mismatch fails here instead of crashing users. Set
-// NEXTERM_PRIVACY_TEST_RUNTIME to the staged ai-runtime directory.
-func TestRuntimeSmoke(t *testing.T) {
-	runtimeDir := os.Getenv("NEXTERM_PRIVACY_TEST_RUNTIME")
-	if runtimeDir == "" {
-		t.Skip("runtime path not configured")
-	}
-	// A platform without an ONNX Runtime build stages a manifest that says so; the loader must then refuse it.
-	if raw, err := os.ReadFile(filepath.Join(runtimeDir, "runtime.json")); err == nil {
-		var staged struct {
-			Unavailable string `json:"unavailable"`
-		}
-		if json.Unmarshal(raw, &staged) == nil && staged.Unavailable != "" {
-			if Available(runtimeDir) == nil {
-				t.Fatalf("runtime staged as unavailable (%s) but the loader accepted it", staged.Unavailable)
-			}
-			t.Logf("runtime unavailable on this platform: %s", staged.Unavailable)
-			return
-		}
-	}
-	if err := Available(runtimeDir); err != nil {
-		t.Fatal(err)
-	}
+// TestEngineSmoke runs a generated token-classification model end to end
+// through the pure-Go backend: parsing, weight loading, compilation with a
+// dynamic sequence axis, logits shape checks and decoding.
+func TestEngineSmoke(t *testing.T) {
 	modelDir := writeSmokeModel(t)
-	engine, err := Open(modelDir, runtimeDir, "int8")
+	if _, err := Open(modelDir, "int8"); !errors.Is(err, ErrUnsupportedPrecision) {
+		t.Fatalf("int8: got %v, want ErrUnsupportedPrecision", err)
+	}
+	engine, err := Open(modelDir, Precision)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer engine.Close()
-
-	version := runtimeVersion()
-	if version == "" {
-		t.Fatal("ONNX Runtime reported no version")
-	}
-	manifest, err := os.ReadFile(filepath.Join(runtimeDir, "runtime.json"))
-	switch {
-	case err == nil:
-		var staged struct {
-			ONNXRuntime string `json:"onnxRuntime"`
-		}
-		if err := json.Unmarshal(manifest, &staged); err != nil || staged.ONNXRuntime == "" {
-			t.Fatalf("runtime.json has no onnxRuntime version: %v", err)
-		}
-		if version != staged.ONNXRuntime {
-			t.Fatalf("loaded ONNX Runtime %s, staged runtime.json declares %s", version, staged.ONNXRuntime)
-		}
-	case errors.Is(err, os.ErrNotExist) && os.Getenv("CI") == "":
-		t.Logf("runtime.json absent; loaded ONNX Runtime %s", version)
-	default:
-		t.Fatal(err)
-	}
-
 	text := "a secret a"
 	spans, err := engine.Detect(t.Context(), text)
 	if err != nil {
@@ -102,6 +36,36 @@ func TestRuntimeSmoke(t *testing.T) {
 	}
 	if spans, err := engine.Detect(t.Context(), "a a"); err != nil || len(spans) != 0 {
 		t.Fatalf("spans %+v, %v", spans, err)
+	}
+	long := strings.Repeat("a ", 1200) + "secret"
+	if spans, err := engine.Detect(t.Context(), long); err != nil || len(spans) != 1 || strings.TrimSpace(long[spans[0].Start:spans[0].End]) != "secret" {
+		t.Fatalf("multi-window spans %+v, %v", spans, err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := engine.Detect(ctx, text); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled detection: %v", err)
+	}
+	if err := engine.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Detect(t.Context(), text); !errors.Is(err, ErrClosed) {
+		t.Fatalf("closed detection: %v", err)
+	}
+}
+
+// A graph whose output is not the manifest's logits is rejected at Open.
+func TestEngineRejectsModelWithoutLogits(t *testing.T) {
+	modelDir := writeSmokeModel(t)
+	data := smokeModel(1 + 2*len(guardKinds))
+	data = []byte(strings.Replace(string(data), "logits", "output", -1))
+	if err := os.WriteFile(filepath.Join(modelDir, "model.onnx"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rewriteSmokeInstallation(t, modelDir)
+	if engine, err := Open(modelDir, Precision); err == nil {
+		engine.Close()
+		t.Fatal("model without logits accepted")
 	}
 }
 
@@ -121,21 +85,34 @@ func writeSmokeModel(t *testing.T) string {
 		t.Fatal(err)
 	}
 	files := map[string][]byte{
-		"model_int8.onnx":      smokeModel(1 + 2*len(guardKinds)),
-		"model_int8.onnx_data": {0},
-		"tokenizer.json":       []byte(syntheticTokenizer),
-		"config.json":          config,
+		"model.onnx":      smokeModel(1 + 2*len(guardKinds)),
+		"model.onnx_data": {0},
+		"tokenizer.json":  []byte(syntheticTokenizer),
+		"config.json":     config,
 	}
-	installed := map[string]any{}
 	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(directory, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rewriteSmokeInstallation(t, directory)
+	return directory
+}
+
+// rewriteSmokeInstallation records the current smoke files in installation.json.
+func rewriteSmokeInstallation(t *testing.T, directory string) {
+	t.Helper()
+	installed := map[string]any{}
+	for _, name := range []string{"model.onnx", "model.onnx_data", "tokenizer.json", "config.json"} {
+		data, err := os.ReadFile(filepath.Join(directory, name))
+		if err != nil {
 			t.Fatal(err)
 		}
 		digest := sha256.Sum256(data)
 		installed[name] = map[string]any{"size": len(data), "sha256": hex.EncodeToString(digest[:])}
 	}
 	installation, err := json.Marshal(map[string]any{
-		"version": "smoke", "revision": strings.Repeat("0", 40), "precision": "int8", "files": installed,
+		"version": "smoke", "revision": strings.Repeat("0", 40), "precision": "fp32", "files": installed,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +120,6 @@ func writeSmokeModel(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(directory, "installation.json"), installation, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return directory
 }
 
 func itoa(value int) string {

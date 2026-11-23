@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { privacyApi, privacyBroken, type PrivacyConfig, type PrivacyInstallation, type PrivacyPrecision, type PrivacyStatus } from "../../ipc/privacy";
+import { privacyApi, privacyBroken, supportedPrivacyPrecision, type PrivacyConfig, type PrivacyInstallation, type PrivacyPrecision, type PrivacyStatus } from "../../ipc/privacy";
 import { WEB } from "../../ipc/env";
 import { useUi } from "../../app/store";
 import { DownloadProgress } from "../../ui/DownloadProgress";
@@ -13,16 +13,6 @@ import { SummaryDialog } from "./SummaryDialog";
 import { modelDisplayName } from "./privacyModel";
 import { t } from "../../i18n";
 
-const precisionNames: Record<PrivacyPrecision, string> = {
-  int8: "INT8",
-  fp16: "FP16",
-  fp32: "FP32",
-};
-const precisionDescriptions: Record<PrivacyPrecision, string> = {
-  int8: t("推荐"),
-  fp16: t("均衡"),
-  fp32: t("精度优先"),
-};
 const installationSize = (item: PrivacyInstallation) => Object.values(item.files).reduce((sum, file) => sum + file.size, 0);
 const keyOf = (item: { revision: string; precision: PrivacyPrecision }) => `${item.revision}:${item.precision}`;
 
@@ -38,7 +28,6 @@ function PrivacyCardBody() {
   const [busy, setBusy] = useState(false);
   const [enabling, setEnabling] = useState(false);
   const [checkError, setCheckError] = useState("");
-  const [precision, setPrecision] = useState<PrivacyPrecision>("int8");
   const mounted = useRef(true);
   const autoChecked = useRef(false);
   // undefined until the first status arrives: a completion already recorded then is stale, not news.
@@ -64,7 +53,7 @@ function PrivacyCardBody() {
     return () => window.clearInterval(timer);
   }, [refresh, status?.download.running, busy]);
   useEffect(() => {
-    if (!status || autoChecked.current || status.latest || !status.canManage || !status.runtime.supported) return;
+    if (!status || autoChecked.current || status.latest || !status.canManage) return;
     autoChecked.current = true;
     void privacyApi.checkUpdates()
       .then(() => refresh())
@@ -91,16 +80,16 @@ function PrivacyCardBody() {
   const config = status?.config;
   const selected = config?.revision ? keyOf(config) : "";
   const progress = status?.download.progress;
-  const supported = status?.runtime.supported ?? true;
   const broken = status ? privacyBroken(status) : false;
   const missingSelection = !!status && !!selected && !status.installed.some((item) => keyOf(item) === selected);
   const currentInstallation = status?.installed.find((item) => keyOf(item) === selected);
   const completed = status?.download.completed;
-  const completedKey = completed ? keyOf({ revision: completed.revision, precision: status?.download.precision ?? "int8" }) : "";
+  const completedKey = completed ? keyOf({ revision: completed.revision, precision: status?.download.precision ?? supportedPrivacyPrecision }) : "";
   const noModelHint = status && !status.canManage && status.installed.length === 0 ? t("请联系超级管理员下载模型") : t("尚未下载模型");
   const hasLatest = !!status?.latest && status.installed.some((item) => item.revision === status.latest?.revision);
-  // A download always fetches the latest release; the precision is the only choice.
+  // A download always fetches the latest release in the only precision the engine runs.
   const downloadTarget = `${modelDisplayName(status?.latest)}${status?.latest ? ` ${status.latest.version}` : ""}`;
+  const downloadSize = status?.latestSizes?.[supportedPrivacyPrecision];
 
   useEffect(() => {
     if (!status) return;
@@ -131,13 +120,9 @@ function PrivacyCardBody() {
         <div className="flex flex-col gap-3">
           {broken ? (
             <div role="alert" className="nx-alert nx-alert-danger text-[12px]">
-              {t("{value}在恢复或关闭脱敏前，所有 AI 请求都将被阻止。{value2}", { value: supported
-                ? t("已启用脱敏，但所选模型不可用：{value}。", { value: status.selection?.error ?? t("未知原因") })
-                : t("{value}的脱敏运行时不可用：{value2}。", { value: WEB ? t("服务端") : t("本机"), value2: status.runtime.reason ?? t("未知原因") }), value2: supported && !status.canManage ? t("请联系超级管理员下载模型。") : "" })}
+              {t("{value}在恢复或关闭脱敏前，所有 AI 请求都将被阻止。{value2}", { value: t("已启用脱敏，但所选模型不可用：{value}。", { value: status.selection?.error ?? t("未知原因") }), value2: !status.canManage ? t("请联系超级管理员下载模型。") : "" })}
             </div>
-          ) : !supported && (
-            <div role="alert" className="nx-alert nx-alert-danger text-[12px]">{t("本地脱敏当前不可用：")}{status.runtime.reason}。</div>
-          )}
+          ) : null}
           <label className="flex cursor-pointer items-center gap-3">
             <div className="min-w-0 flex-1">
               <div className="text-[12.5px] text-neutral-200">{t("启用脱敏")}</div>
@@ -146,7 +131,7 @@ function PrivacyCardBody() {
               </p>
             </div>
             <input type="checkbox" className="h-4 w-4 shrink-0" checked={config.enabled}
-              disabled={busy || (!config.enabled && (!selected || missingSelection || !supported))}
+              disabled={busy || (!config.enabled && (!selected || missingSelection || config.precision !== supportedPrivacyPrecision))}
               onChange={(event) => void run(() => configure({ ...config, enabled: event.target.checked }))} />
           </label>
           <div className="border-t border-neutral-800/60 pt-3">
@@ -178,7 +163,8 @@ function PrivacyCardBody() {
                         ...status.installed.map((item) => ({
                           value: keyOf(item),
                           label: `${modelDisplayName(item)} · ${item.precision.toUpperCase()} · ${item.version}`,
-                          description: formatBytes(installationSize(item)),
+                          description: item.precision === supportedPrivacyPrecision ? formatBytes(installationSize(item)) : t("此版本不再支持，可删除"),
+                          disabled: item.precision !== supportedPrivacyPrecision,
                         })),
                       ]}
                       onChange={(value) => {
@@ -191,19 +177,11 @@ function PrivacyCardBody() {
                   <div className="flex flex-col gap-1.5">
                     <div className="text-xs text-neutral-400">{t("下载 {downloadTarget}", { downloadTarget })}</div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Select className="min-w-48 flex-1 sm:flex-none" ariaLabel={t("下载模型精度")} value={precision}
-                        disabled={busy || status.download.running || !supported}
-                        options={(Object.keys(precisionNames) as PrivacyPrecision[]).map((value) => ({
-                          value,
-                          label: precisionNames[value],
-                          description: `${precisionDescriptions[value]}${status.latestSizes?.[value] ? t(" · 约 {value}", { value: formatBytes(status.latestSizes[value]) }) : ""}`,
-                        }))}
-                        onChange={(value) => setPrecision(value as PrivacyPrecision)} />
-                      <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || status.download.running || !supported}
-                        onClick={() => void run(async () => { const next = await privacyApi.download(precision); if (mounted.current) setStatus(next); })}>
-                        {t("下载")}
+                      <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || status.download.running}
+                        onClick={() => void run(async () => { const next = await privacyApi.download(supportedPrivacyPrecision); if (mounted.current) setStatus(next); })}>
+                        {downloadSize ? t("下载（约 {value}）", { value: formatBytes(downloadSize) }) : t("下载")}
                       </button>
-                      <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy || !supported}
+                      <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy}
                         onClick={() => void run(async () => { await privacyApi.checkUpdates(); await refresh(); })}>
                         <IconRefresh size={12} />{t("检查更新")}
                       </button>
@@ -218,7 +196,7 @@ function PrivacyCardBody() {
                     <div className="text-xs text-neutral-400">{t("已下载 · 共占用 {value}", { value: formatBytes(status.diskUsage) })}</div>
                     {status.installed.map((item) => (
                       <div key={keyOf(item)} className="flex items-center justify-between gap-2 text-[11.5px]">
-                        <span>{modelDisplayName(item)} · {item.precision.toUpperCase()} · {item.version} · {formatBytes(installationSize(item))}{keyOf(item) === selected ? t(" · 当前") : ""}</span>
+                        <span>{modelDisplayName(item)} · {item.precision.toUpperCase()} · {item.version} · {formatBytes(installationSize(item))}{keyOf(item) === selected ? t(" · 当前") : ""}{item.precision !== supportedPrivacyPrecision ? t(" · 此版本不再支持") : ""}</span>
                         {status.canManage && (
                           <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy || status.download.running || (config.enabled && keyOf(item) === selected)}
                             title={config.enabled && keyOf(item) === selected ? t("正在使用，请先关闭脱敏或切换到其他模型") : undefined}

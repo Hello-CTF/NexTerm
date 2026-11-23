@@ -1,6 +1,8 @@
 import { call } from "./commands";
 
 export type PrivacyPrecision = "int8" | "fp32" | "fp16";
+/** The only precision the local engine runs; INT8 and FP16 installs from earlier releases can only be removed. */
+export const supportedPrivacyPrecision: PrivacyPrecision = "fp32";
 export interface PrivacyRelease { version: string; revision: string }
 export interface PrivacyInstallation extends PrivacyRelease {
   precision: PrivacyPrecision;
@@ -16,7 +18,6 @@ export interface PrivacyStatus {
   latest?: PrivacyRelease;
   newerIncompatible?: PrivacyRelease;
   latestSizes?: Partial<Record<PrivacyPrecision, number>>;
-  runtime: { supported: boolean; reason?: string };
   selection?: { available: boolean; error?: string };
   diskUsage: number;
   canManage: boolean;
@@ -43,9 +44,9 @@ const publish = (status: PrivacyStatus) => {
   return status;
 };
 
-/** Protection is on but requests are blocked: missing model, failed load or unsupported device. */
+/** Protection is on but requests are blocked: missing, unsupported or unloadable model. */
 export const privacyBroken = (status: PrivacyStatus) =>
-  status.config.enabled && (!status.runtime.supported || status.selection?.available === false);
+  status.config.enabled && status.selection?.available === false;
 
 export const privacyApi = {
   status: () => call<PrivacyStatus>("ai_privacy_status", {}).then(publish),

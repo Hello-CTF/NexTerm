@@ -25,14 +25,13 @@ vi.mock("../../features/auth/store", () => ({ useAuth: (select: (value: unknown)
 import { PrivacyCard } from "../../features/settings/PrivacyCard";
 
 const baseline = (): PrivacyStatus => ({
-  config: { enabled: false, precision: "int8", revision: "", version: "" },
+  config: { enabled: false, precision: "fp32", revision: "", version: "" },
   installed: [],
-  runtime: { supported: true },
   diskUsage: 0,
   canManage: true,
   latest: { version: "v0.1.3", revision: "c".repeat(40) },
-  latestSizes: { int8: 300 * 1024 * 1024, fp32: 1100 * 1024 * 1024 },
-  download: { running: false, precision: "int8", progress: { file: "", downloaded: 0, total: 0 } },
+  latestSizes: { fp32: 147 * 1024 * 1024 },
+  download: { running: false, precision: "fp32", progress: { file: "", downloaded: 0, total: 0 } },
 });
 let mounted: MountedView | undefined;
 beforeEach(() => { vi.resetAllMocks(); mocks.status.mockResolvedValue(baseline()); });
@@ -56,7 +55,7 @@ function choose(label: string, optionText: string): void {
 }
 
 describe("AI privacy settings", () => {
-  it("starts disabled, explains the server location, and downloads the selected precision without enabling", async () => {
+  it("starts disabled, explains the server location, and downloads the FP32 model without enabling", async () => {
     mounted = mount(createElement(PrivacyCard));
     await waitForRendered(() => expect(mounted!.container.querySelector('input[type="checkbox"]')).not.toBeNull());
     const toggle = mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
@@ -69,9 +68,9 @@ describe("AI privacy settings", () => {
     expect(document.body.textContent).not.toContain("Hugging Face");
     expect(document.body.textContent).toContain("脱敏可能漏检或误报，请勿将其作为唯一的保护措施。");
     expect(document.body.textContent).not.toContain("每台设备需单独下载");
-    choose("下载模型精度", "FP32");
+    expect(document.body.querySelector('button[aria-label="下载模型精度"]')).toBeNull();
     mocks.download.mockResolvedValue({ ...baseline(), download: { ...baseline().download, running: true, precision: "fp32" } });
-    click(button("下载"));
+    click(button("下载（约 147 MiB）"));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("正在下载 AstrLink Guard v0.1.3 · FP32"));
     expect(mounted.container.querySelector('[role="progressbar"]')).not.toBeNull();
     expect(mocks.download).toHaveBeenCalledWith("fp32");
@@ -84,16 +83,16 @@ describe("AI privacy settings", () => {
     expect(mocks.configure).not.toHaveBeenCalled();
   });
 
-  it("retains the disabled state and shows a native runtime failure when enabling fails", async () => {
+  it("retains the disabled state and shows a model load failure when enabling fails", async () => {
     const state = baseline();
-    state.config = { enabled: false, precision: "int8", revision: "a".repeat(40), version: "v0.1.3" };
+    state.config = { enabled: false, precision: "fp32", revision: "a".repeat(40), version: "v0.1.3" };
     state.installed = [{ ...state.config, files: { "model.onnx": { size: 1024, sha256: "a".repeat(64) } } }];
     mocks.status.mockResolvedValue(state);
-    mocks.configure.mockRejectedValue(new Error("本地隐私推理运行时未安装或不兼容"));
+    mocks.configure.mockRejectedValue(new Error("隐私模型格式、文件或算子与本地隐私引擎不兼容"));
     mounted = mount(createElement(PrivacyCard));
     await waitForRendered(() => expect(mounted!.container.querySelector('input[type="checkbox"]')).not.toBeNull());
     click(mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!);
-    await waitForRendered(() => expect(mounted!.container.querySelector('[role="alert"]')?.textContent).toContain("运行时未安装"));
+    await waitForRendered(() => expect(mounted!.container.querySelector('[role="alert"]')?.textContent).toContain("本地隐私引擎不兼容"));
     expect(mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(false);
     expect(mocks.configure).toHaveBeenCalledWith({ enabled: true, precision: state.config.precision, revision: state.config.revision });
   });
@@ -116,15 +115,15 @@ describe("AI privacy settings", () => {
     const initial = baseline();
     delete initial.latest;
     delete initial.latestSizes;
-    initial.installed = [{ version: "v0.1.2", revision: "b".repeat(40), precision: "int8", files: { "model.onnx": { size: 1024, sha256: "a".repeat(64) } } }];
+    initial.installed = [{ version: "v0.1.2", revision: "b".repeat(40), precision: "fp32", files: { "model.onnx": { size: 1024, sha256: "a".repeat(64) } } }];
     const latest = { version: "v0.2.0", revision: "c".repeat(40) };
-    mocks.status.mockResolvedValueOnce(initial).mockResolvedValue({ ...initial, latest, latestSizes: { int8: 200 * 1024 * 1024 } });
+    mocks.status.mockResolvedValueOnce(initial).mockResolvedValue({ ...initial, latest, latestSizes: { fp32: 200 * 1024 * 1024 } });
     mocks.checkUpdates.mockResolvedValue(latest);
     mounted = mount(createElement(PrivacyCard));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("可更新至 v0.2.0"));
     expect(mocks.checkUpdates).toHaveBeenCalledOnce();
     click(button("管理"));
-    expect(button("下载")).toBeTruthy();
+    expect(button("下载（约 200 MiB）")).toBeTruthy();
     expect(mocks.configure).not.toHaveBeenCalled();
     expect(mocks.download).not.toHaveBeenCalled();
   });
@@ -135,15 +134,27 @@ describe("AI privacy settings", () => {
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("新版本 v2.0.0 需要先更新 NexTerm"));
   });
 
-  it("disables downloading and enabling on an unsupported device", async () => {
-    mocks.status.mockResolvedValue({ ...baseline(), runtime: { supported: false, reason: "本地 AI 脱敏需要 macOS 13.4 或更新版本" } });
+  it("lists an INT8 model from an earlier release as unsupported but removable, and never selects or enables it", async () => {
+    const state = baseline();
+    const legacy = { version: "v0.1.3", revision: "b".repeat(40), precision: "int8" as const, files: { "model_int8.onnx": { size: 2 * 1024 * 1024, sha256: "a".repeat(64) } } };
+    state.config = { enabled: false, precision: "int8", revision: legacy.revision, version: legacy.version };
+    state.installed = [legacy];
+    state.diskUsage = 2 * 1024 * 1024;
+    mocks.status.mockResolvedValue(state);
     mounted = mount(createElement(PrivacyCard));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("本地脱敏当前不可用：本地 AI 脱敏需要 macOS 13.4 或更新版本。"));
-    click(button("下载模型"));
-    expect(button("下载").disabled).toBe(true);
+    await waitForRendered(() => expect(button("管理")).toBeTruthy());
     expect(mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.disabled).toBe(true);
-    expect(mounted.container.textContent).toContain("尚未下载模型");
-    expect(mocks.checkUpdates).not.toHaveBeenCalled();
+    click(button("管理"));
+    expect(document.body.textContent).toContain("AstrLink Guard · INT8 · v0.1.3 · 2.0 MiB · 当前 · 此版本不再支持");
+    click(control("使用的本地隐私模型"));
+    const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("INT8"));
+    expect(option?.textContent).toContain("此版本不再支持，可删除");
+    expect(option?.getAttribute("aria-disabled")).toBe("true");
+    mocks.confirm.mockResolvedValue(true);
+    mocks.remove.mockResolvedValue({ ...baseline() });
+    click(button("删除"));
+    await waitForRendered(() => expect(mocks.remove).toHaveBeenCalledWith({ revision: legacy.revision, precision: "int8" }));
+    expect(mocks.configure).not.toHaveBeenCalled();
   });
 
   it("warns that requests are blocked when the enabled selection is missing and keeps it visible", async () => {
@@ -164,14 +175,13 @@ describe("AI privacy settings", () => {
     expect(mounted.container.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it("attributes an enabled guard's failure to the runtime when the runtime is unavailable", async () => {
+  it("tells the user to download FP32 when an enabled INT8 selection blocks requests", async () => {
     const state = baseline();
     state.config = { enabled: true, precision: "int8", revision: "d".repeat(40), version: "v0.1.3" };
-    state.runtime = { supported: false, reason: "未找到可用的本地推理运行时" };
+    state.selection = { available: false, error: "本地隐私引擎只支持 FP32 模型，请下载 FP32 模型后选择它" };
     mocks.status.mockResolvedValue(state);
     mounted = mount(createElement(PrivacyCard));
-    await waitForRendered(() => expect(mounted!.container.querySelector('[role="alert"]')?.textContent).toContain("服务端的脱敏运行时不可用：未找到可用的本地推理运行时。"));
-    expect(mounted.container.querySelector('[role="alert"]')?.textContent).not.toContain("所选模型不可用");
+    await waitForRendered(() => expect(mounted!.container.querySelector('[role="alert"]')?.textContent).toContain("已启用脱敏，但所选模型不可用：本地隐私引擎只支持 FP32 模型"));
   });
 
   it("asks accounts that cannot manage models to contact an administrator", async () => {
@@ -232,7 +242,7 @@ describe("AI privacy settings", () => {
 
   it("does not announce a download that finished before the settings page opened", async () => {
     useUi.setState({ toasts: [] });
-    const installed = { version: "v0.1.3", revision: "c".repeat(40), precision: "int8" as const, files: { "model.onnx": { size: 1024, sha256: "a".repeat(64) } } };
+    const installed = { version: "v0.1.3", revision: "c".repeat(40), precision: "fp32" as const, files: { "model.onnx": { size: 1024, sha256: "a".repeat(64) } } };
     mocks.status.mockResolvedValue({ ...baseline(), installed: [installed], download: { ...baseline().download, completed: { version: "v0.1.3", revision: installed.revision } } });
     mounted = mount(createElement(PrivacyCard));
     await waitForRendered(() => expect(button("管理")).toBeTruthy());
@@ -241,12 +251,12 @@ describe("AI privacy settings", () => {
 
   it("announces a download that completes while the page is open", async () => {
     useUi.setState({ toasts: [] });
-    const installed = { version: "v0.1.3", revision: "c".repeat(40), precision: "int8" as const, files: { "model.onnx": { size: 1024, sha256: "a".repeat(64) } } };
+    const installed = { version: "v0.1.3", revision: "c".repeat(40), precision: "fp32" as const, files: { "model.onnx": { size: 1024, sha256: "a".repeat(64) } } };
     mocks.status.mockResolvedValue({ ...baseline(), download: { ...baseline().download, running: true } });
     mounted = mount(createElement(PrivacyCard));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("正在下载"));
     mocks.status.mockResolvedValue({ ...baseline(), installed: [installed], download: { ...baseline().download, completed: { version: "v0.1.3", revision: installed.revision } } });
-    await waitForRendered(() => expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual(["模型 AstrLink Guard v0.1.3 INT8 下载完成"]), 3000);
+    await waitForRendered(() => expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual(["模型 AstrLink Guard v0.1.3 FP32 下载完成"]), 3000);
   });
 
 });

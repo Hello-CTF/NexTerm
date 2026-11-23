@@ -18,8 +18,6 @@ const (
 	maxRequestTokens = 128 * 1024
 	modelWindow      = 512
 	modelStride      = 128
-	// Token ids index the embedding table; no tokenizer comes close to this.
-	maxPadTokenID = (1 << 24) - 1
 )
 
 // modelManifest is the subset of AstrLink's model manifest that a NexTerm
@@ -33,8 +31,6 @@ type modelManifest struct {
 	tokenizerPath     string
 	configPath        string
 	files             map[string]int64
-	staticSequence    int // 0 for dynamic input shapes
-	padTokenID        int64
 	labelMapping      map[string]*string
 	inputIDs, mask    string
 	tokenTypeIDs      string
@@ -87,20 +83,11 @@ func loadInstallationManifest(directory string) (*modelManifest, error) {
 		inputIDs: "input_ids", mask: "attention_mask", tokenTypeIDs: "token_type_ids", outputName: "logits",
 		window: modelWindow, stride: modelStride, maxRequestTokens: maxRequestTokens,
 	}
-	switch m.precision {
-	case "int8":
-		m.modelPath = "model_int8.onnx"
-	case "fp32":
-		m.modelPath = "model.onnx"
-	case "fp16":
-		m.modelPath = "model_fp16_static512.onnx"
-		m.staticSequence, m.padTokenID = modelWindow, 1
-	default:
-		return nil, errors.New("unsupported_precision")
+	if m.precision != Precision {
+		return nil, ErrUnsupportedPrecision
 	}
-	if m.precision != "fp16" {
-		m.externalDataPaths = []string{m.modelPath + "_data"}
-	}
+	m.modelPath = "model.onnx"
+	m.externalDataPaths = []string{m.modelPath + "_data"}
 	for _, kind := range guardKinds {
 		m.labelMapping[kind] = &kind
 	}
@@ -121,9 +108,6 @@ func (m *modelManifest) validate() error {
 		return errInvalidManifest
 	}
 	if m.window == 0 || m.stride >= m.window || m.window > m.maxRequestTokens || m.maxRequestTokens > maxRequestTokens {
-		return errInvalidManifest
-	}
-	if m.staticSequence != 0 && (m.staticSequence != m.window || m.padTokenID < 0 || m.padTokenID > maxPadTokenID) {
 		return errInvalidManifest
 	}
 	required := append([]string{m.modelPath, m.tokenizerPath, m.configPath}, m.externalDataPaths...)

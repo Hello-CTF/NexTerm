@@ -23,12 +23,12 @@ func TestValidateSpansRejectsBadOffsetsAndScores(t *testing.T) {
 	}
 }
 
-func TestRuntimeUnavailableIsExplicit(t *testing.T) {
-	if _, err := Open(t.TempDir(), t.TempDir(), "int8"); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("got %v", err)
+func TestOpenRejectsMissingAndUnsupportedModels(t *testing.T) {
+	if _, err := Open(t.TempDir(), "int8"); !errors.Is(err, ErrUnsupportedPrecision) {
+		t.Fatalf("int8: got %v", err)
 	}
-	if err := Available(t.TempDir()); err == nil {
-		t.Fatal("empty runtime directory reported available")
+	if _, err := Open(t.TempDir(), Precision); err == nil {
+		t.Fatal("empty model directory accepted")
 	}
 }
 
@@ -41,33 +41,15 @@ type privacyCase struct {
 	} `json:"entities"`
 }
 
-// Set both paths to opt into real model verification: the model directory
-// is an installation written by privacy.Catalog and the runtime directory
-// holds the ONNX Runtime library. A normal unit test run needs neither.
+// Set NEXTERM_PRIVACY_TEST_MODEL to an FP32 installation written by
+// privacy.Catalog to opt into real model verification. A normal unit test
+// run does not need it.
 func TestAstrLinkGuardRealModel(t *testing.T) {
-	modelDir, runtimeDir := os.Getenv("NEXTERM_PRIVACY_TEST_MODEL"), os.Getenv("NEXTERM_PRIVACY_TEST_RUNTIME")
-	if modelDir == "" && runtimeDir == "" {
-		t.Skip("real model and runtime paths not configured")
+	modelDir := os.Getenv("NEXTERM_PRIVACY_TEST_MODEL")
+	if modelDir == "" {
+		t.Skip("real model path not configured")
 	}
-	if modelDir == "" || runtimeDir == "" {
-		t.Fatal("both model and runtime paths are required")
-	}
-	if err := Available(runtimeDir); err != nil {
-		t.Fatal(err)
-	}
-	precision := os.Getenv("NEXTERM_PRIVACY_TEST_PRECISION")
-	if precision == "" {
-		precision = "int8"
-	}
-	otherPrecision := "fp32"
-	if precision == otherPrecision {
-		otherPrecision = "int8"
-	}
-	if mismatched, err := Open(modelDir, runtimeDir, otherPrecision); err == nil {
-		mismatched.Close()
-		t.Fatal("model loaded with mismatched precision")
-	}
-	engine, err := Open(modelDir, runtimeDir, precision)
+	engine, err := Open(modelDir, Precision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,18 +141,14 @@ func TestAstrLinkGuardRealModel(t *testing.T) {
 }
 
 // BenchmarkDetectRealModel measures Detect latency on the real model for a
-// short sentence and a multi-window input. It uses the same opt-in paths as
+// short sentence and a multi-window input. It uses the same opt-in path as
 // TestAstrLinkGuardRealModel.
 func BenchmarkDetectRealModel(b *testing.B) {
-	modelDir, runtimeDir := os.Getenv("NEXTERM_PRIVACY_TEST_MODEL"), os.Getenv("NEXTERM_PRIVACY_TEST_RUNTIME")
-	if modelDir == "" || runtimeDir == "" {
-		b.Skip("real model and runtime paths not configured")
+	modelDir := os.Getenv("NEXTERM_PRIVACY_TEST_MODEL")
+	if modelDir == "" {
+		b.Skip("real model path not configured")
 	}
-	precision := os.Getenv("NEXTERM_PRIVACY_TEST_PRECISION")
-	if precision == "" {
-		precision = "int8"
-	}
-	engine, err := Open(modelDir, runtimeDir, precision)
+	engine, err := Open(modelDir, Precision)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -213,12 +191,4 @@ func describeSpans(text string, spans []Span) string {
 		parts = append(parts, span.Label+"="+strings.TrimSpace(text[span.Start:span.End]))
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
-}
-
-func TestRuntimePathReportsMissingFile(t *testing.T) {
-	_, err := runtimePath(t.TempDir())
-	var runtimeErr *RuntimeError
-	if !errors.As(err, &runtimeErr) || !runtimeErr.Missing || !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("got %v", err)
-	}
 }

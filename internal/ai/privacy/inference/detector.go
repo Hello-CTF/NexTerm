@@ -34,8 +34,6 @@ type detector struct {
 	overlap          int
 	maxRequestTokens int
 	tokenTypeIDs     bool
-	staticSequence   int
-	padTokenID       int64
 }
 
 func readModelFile(directory, name string, limit int64) ([]byte, error) {
@@ -93,14 +91,10 @@ func newDetector(directory string, m *modelManifest) (*detector, error) {
 	if contentWindow <= m.stride {
 		return nil, errCode("invalid_model_window")
 	}
-	if m.staticSequence != 0 && (m.padTokenID >= int64(len(t.model.pieces))) {
-		return nil, errInvalidManifest
-	}
 	return &detector{
 		tokenizer: t, decoder: d, spanContract: spanContract,
 		modelWindow: m.window, contentWindow: contentWindow, overlap: m.stride,
 		maxRequestTokens: m.maxRequestTokens, tokenTypeIDs: m.tokenTypeIDs != "",
-		staticSequence: m.staticSequence, padTokenID: m.padTokenID,
 	}, nil
 }
 
@@ -237,18 +231,6 @@ func (d *detector) detect(ctx context.Context, text string, run runModel) (spans
 		if d.tokenTypeIDs {
 			input.typeIDs = w.typeIDs
 		}
-		if d.staticSequence != 0 {
-			// Content positions index the unpadded prefix, so the padded
-			// tail never reaches the stitched scores.
-			if length > d.staticSequence {
-				return nil, errCode("invalid_model_window")
-			}
-			input.ids = padded(input.ids, d.staticSequence, d.padTokenID)
-			input.attention = padded(input.attention, d.staticSequence, 0)
-			if input.typeIDs != nil {
-				input.typeIDs = padded(input.typeIDs, d.staticSequence, 0)
-			}
-		}
 		logits, err := run(ctx, input, labels)
 		if err != nil {
 			return nil, err
@@ -284,15 +266,6 @@ func (d *detector) detect(ctx context.Context, text string, run runModel) (spans
 		return a.End - b.End
 	})
 	return spans, nil
-}
-
-func padded(values []int64, length int, value int64) []int64 {
-	result := make([]int64, length)
-	copy(result, values)
-	for i := len(values); i < length; i++ {
-		result[i] = value
-	}
-	return result
 }
 
 var errInference = errors.New("本地隐私推理失败")

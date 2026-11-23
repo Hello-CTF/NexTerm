@@ -1,7 +1,6 @@
 package privacy
 
 import (
-	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -10,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -34,7 +32,7 @@ type Engine interface {
 }
 type EngineLoader func(context.Context, string, Installation) (Engine, error)
 
-// maxCachedEngines bounds resident native sessions; each may hold hundreds of MiB.
+// maxCachedEngines bounds resident compiled models; each holds hundreds of MiB.
 const maxCachedEngines = 2
 
 type cachedEngine struct {
@@ -66,12 +64,6 @@ type DownloadState struct {
 	Completed *ModelRelease `json:"completed,omitempty"`
 }
 
-// RuntimeStatus reports whether this device can run the local engine at all.
-type RuntimeStatus struct {
-	Supported bool   `json:"supported"`
-	Reason    string `json:"reason,omitempty"`
-}
-
 // SelectionStatus reports the configured model's health without hashing it.
 type SelectionStatus struct {
 	Available bool   `json:"available"`
@@ -83,28 +75,16 @@ type Status struct {
 	Installed []Installation `json:"installed"`
 	Download  DownloadState  `json:"download"`
 	Latest    *ModelRelease  `json:"latest,omitempty"`
-	// LatestSizes is the download size of each precision of Latest, when known.
+	// LatestSizes is the download size of Latest's FP32 files, when known.
 	LatestSizes map[Precision]int64 `json:"latestSizes,omitempty"`
 	// NewerIncompatible is a newer release that needs a newer NexTerm to load.
 	NewerIncompatible *ModelRelease    `json:"newerIncompatible,omitempty"`
-	Runtime           RuntimeStatus    `json:"runtime"`
 	Selection         *SelectionStatus `json:"selection,omitempty"`
 	DiskUsage         int64            `json:"diskUsage"`
 	// CanManage is false for server accounts that may not download or delete
 	// the instance-wide model files.
 	CanManage bool `json:"canManage"`
 }
-
-// RuntimeDirectory resolves the packaged inference libraries, honoring the
-// NEXTERM_AI_RUNTIME_DIR override.
-func RuntimeDirectory() string {
-	if directory := os.Getenv("NEXTERM_AI_RUNTIME_DIR"); directory != "" {
-		return directory
-	}
-	return inference.DefaultRuntimeDirectory()
-}
-
-func defaultRuntimeCheck() error { return inference.Available(RuntimeDirectory()) }
 
 type Manager struct {
 	settings          Settings
@@ -113,7 +93,6 @@ type Manager struct {
 	shared            bool
 	catalog           *Catalog
 	load              EngineLoader
-	runtime           func() error
 	mu                sync.Mutex
 	downloads         map[string]DownloadState
 	cancels           map[string]context.CancelFunc
@@ -147,7 +126,7 @@ func NewManager(settings Settings, root string, shared bool, load EngineLoader) 
 	lifetime, stop := context.WithCancel(context.Background())
 	m := &Manager{
 		lifetime: lifetime, stop: stop, shutdownDone: make(chan struct{}),
-		settings: settings, root: root, shared: shared, catalog: NewCatalog(), load: load, runtime: defaultRuntimeCheck,
+		settings: settings, root: root, shared: shared, catalog: NewCatalog(), load: load,
 		downloads: map[string]DownloadState{}, cancels: map[string]context.CancelFunc{},
 		engineSlot: make(chan struct{}, 1), engines: map[string]*cachedEngine{}, failures: map[string]string{}, verified: map[string]string{},
 	}
@@ -166,7 +145,7 @@ func configKey(id string) string {
 	return userConfigPrefix + id
 }
 func (m *Manager) read(ctx context.Context, id string) (savedConfig, error) {
-	state := savedConfig{Config: Config{Precision: INT8}}
+	state := savedConfig{Config: Config{Precision: FP32}}
 	raw, found, err := m.settings.SettingGet(ctx, configKey(id))
 	if err != nil || !found {
 		return state, err
@@ -209,48 +188,22 @@ func (m *Manager) authorizeManage(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) runtimeError() error {
-	if m.runtime == nil {
-		return nil
-	}
-	return m.runtime()
-}
-
 // safeMessage returns UI-safe text for an error; other diagnostics are hidden.
-// RuntimeUnavailableMessage is the user-facing text for a missing or incompatible
-// ONNX Runtime. On Linux an in-app update from an older release replaces only the
-// executable, so the message names how to restore the runtime payload.
-func RuntimeUnavailableMessage() string {
-	message := "未找到可用的本地推理运行时，请安装支持本设备的完整 NexTerm 版本"
-	if runtime.GOOS == "linux" {
-		message += "（Linux：重新安装 deb 包：apt install ./nexterm-*.deb，或重新运行安装脚本）"
-	}
-	return message
-}
-
-// UnavailableMessage explains an inference.ErrUnavailable failure, naming a
-// missing file or a system load refusal when the error carries that cause.
-func UnavailableMessage(err error) string { return safeMessage(err, RuntimeUnavailableMessage()) }
-
 func safeMessage(err error, fallback string) string {
 	var safe *UserError
-	var platform *inference.PlatformError
-	var runtimeErr *inference.RuntimeError
 	switch {
-	case errors.As(err, &runtimeErr) && runtimeErr.Missing:
-		return "本地推理运行时文件不存在: " + runtimeErr.Path + "。" + RuntimeUnavailableMessage()
-	case errors.As(err, &runtimeErr):
-		return "系统拒绝加载本地推理运行时（可能是签名、权限或隔离属性限制）: " + runtimeErr.Error()
 	case errors.As(err, &safe):
 		return safe.Message
-	case errors.As(err, &platform):
-		return platform.Message
-	case errors.Is(err, inference.ErrUnavailable):
-		return RuntimeUnavailableMessage()
+	case errors.Is(err, inference.ErrUnsupportedPrecision):
+		return inference.ErrUnsupportedPrecision.Error()
 	default:
 		return fallback
 	}
 }
+
+// errUnsupportedPrecision rejects selecting or downloading an INT8 or FP16
+// model, which only earlier releases could run.
+func errUnsupportedPrecision() error { return userError(inference.ErrUnsupportedPrecision.Error()) }
 
 // clearNoticeLocked drops a finished download's result once the owner acts again.
 func (m *Manager) clearNoticeLocked(id string) {
@@ -286,14 +239,12 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 		status.NewerIncompatible = &newer
 	}
 	m.mu.Unlock()
-	status.Runtime.Supported = true
-	if err := m.runtimeError(); err != nil {
-		status.Runtime = RuntimeStatus{Reason: safeMessage(err, "本地推理运行时不可用")}
-	}
 	if state.Revision != "" {
 		directory := m.modelDir(state.Config)
 		selection := SelectionStatus{Available: true}
-		if _, err := checkInstallation(directory, state.Config); err != nil {
+		if !state.Precision.Supported() {
+			selection = SelectionStatus{Error: inference.ErrUnsupportedPrecision.Error()}
+		} else if _, err := checkInstallation(directory, state.Config); err != nil {
 			selection = SelectionStatus{Error: safeMessage(err, "本地隐私模型不可用")}
 		} else if failure := m.failure(directory); failure != "" {
 			selection = SelectionStatus{Error: failure}
@@ -327,8 +278,8 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 	return status, nil
 }
 
-// CheckUpdates resolves the newest supported release and the download size of
-// each precision so the UI can show them before anything is downloaded.
+// CheckUpdates resolves the newest supported release and its FP32 download
+// size so the UI can show it before anything is downloaded.
 func (m *Manager) CheckUpdates(ctx context.Context) (ModelRelease, error) {
 	id, err := owner.ID(ctx, m.shared)
 	if err != nil {
@@ -345,19 +296,11 @@ func (m *Manager) CheckUpdates(ctx context.Context) (ModelRelease, error) {
 	if err != nil {
 		return release, err
 	}
-	sizes := map[Precision]int64{}
-	var firstErr error
-	for _, precision := range []Precision{INT8, FP32, FP16} {
-		manifest, err := m.catalog.Manifest(ctx, release, precision)
-		if err != nil {
-			firstErr = cmp.Or(firstErr, err)
-			continue
-		}
-		sizes[precision] = manifest.Size()
+	manifest, err := m.catalog.Manifest(ctx, release, FP32)
+	if err != nil {
+		return release, err
 	}
-	if len(sizes) == 0 {
-		return release, firstErr
-	}
+	sizes := map[Precision]int64{FP32: manifest.Size()}
 	m.mu.Lock()
 	m.latest = &release
 	m.latestSizes = sizes
@@ -391,6 +334,8 @@ func (m *Manager) Configure(ctx context.Context, enabled bool, precision Precisi
 	next := Config{Enabled: enabled, Precision: precision, Revision: revision}
 	if !enabled && revision == state.Revision && precision == state.Precision {
 		next.Version = state.Version
+	} else if revision != "" && !precision.Supported() {
+		return Status{}, errUnsupportedPrecision()
 	} else if revision != "" {
 		installation, err := checkInstallation(m.modelDir(next), next)
 		if err != nil {
@@ -402,8 +347,8 @@ func (m *Manager) Configure(ctx context.Context, enabled bool, precision Precisi
 		if revision == "" {
 			return Status{}, userError("请先下载并选择本地隐私模型")
 		}
-		if err := m.runtimeError(); err != nil {
-			return Status{}, err
+		if !precision.Supported() {
+			return Status{}, errUnsupportedPrecision()
 		}
 		if err := m.preverify(ctx, next); err != nil {
 			return Status{}, err
@@ -747,7 +692,7 @@ func (m *Manager) ensureEngine(ctx context.Context, config Config) (Engine, erro
 }
 func (m *Manager) loadEngine(ctx context.Context, directory string, config Config) (Engine, error) {
 	if m.load == nil {
-		return nil, userError("本地隐私推理运行时不可用")
+		return nil, userError("本地隐私引擎不可用")
 	}
 	installation, err := ReadInstallation(directory)
 	if errors.Is(err, os.ErrNotExist) {
@@ -758,6 +703,9 @@ func (m *Manager) loadEngine(ctx context.Context, directory string, config Confi
 	}
 	if installation.Revision != config.Revision || installation.Precision != config.Precision {
 		return nil, userError("隐私模型清单不匹配")
+	}
+	if !installation.Precision.Supported() {
+		return nil, errUnsupportedPrecision()
 	}
 	// The fingerprint is taken before hashing: a rewrite during verification
 	// changes it, so the next load verifies again.
@@ -794,8 +742,8 @@ func (m *Manager) StartDownload(ctx context.Context, precision Precision) (Statu
 	if !precision.Valid() {
 		return Status{}, userError("无效的模型精度")
 	}
-	if err := m.runtimeError(); err != nil {
-		return Status{}, err
+	if !precision.Supported() {
+		return Status{}, errUnsupportedPrecision()
 	}
 	m.mu.Lock()
 	if m.closed {
@@ -981,7 +929,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		return nil
 	}
 	state, err := m.read(ctx, "")
-	if err != nil || !state.Enabled || m.runtimeError() != nil {
+	if err != nil || !state.Enabled {
 		return nil
 	}
 	m.workers.Add(1)

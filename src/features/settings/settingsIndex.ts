@@ -148,7 +148,7 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
   },
   "settings-ai-privacy": {
     description: t("用本地模型识别敏感信息，以占位符替换并在回复中还原；下载或删除本地模型"),
-    keywords: ["privacy", "guard", "astrlink", "int8", "fp32", "fp16", t("脱敏"), t("隐私"), t("敏感"), t("还原"), t("模型下载"), t("删除模型"), t("磁盘占用")],
+    keywords: ["privacy", "guard", "astrlink", "fp32", t("脱敏"), t("隐私"), t("敏感"), t("还原"), t("模型下载"), t("删除模型"), t("磁盘占用")],
   },
   "settings-ai-rules": {
     description: t("AI 操作命中后需确认或拒绝的危险命令规则"),
