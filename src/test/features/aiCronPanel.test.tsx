@@ -299,7 +299,7 @@ describe("CronPanel", () => {
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
     expect(question).toContain("磁盘巡检");
-    expect(question).not.toContain("所属对话");
+    expect(question).not.toContain("所属会话");
     expect(mocks.unregister).not.toHaveBeenCalled();
     expect(mounted.container.textContent).toContain("磁盘巡检");
   });
@@ -340,7 +340,7 @@ describe("CronPanel", () => {
     await flush();
 
     clickButton(mounted.container, "新建定时任务");
-    expect(mounted.container.querySelector('select[aria-label="所属 AI 对话"]')).toBeNull();
+    expect(mounted.container.querySelector('select[aria-label="所属 AI 会话"]')).toBeNull();
     setInputValue(
       mounted.container.querySelector<HTMLInputElement>('input[aria-label="任务名称"]')!,
       "Clean logs",
