@@ -11,7 +11,7 @@ export const RACE_UNIT_SHARDS = 5;
 
 // Script and workflow files whose change must build every native target: they drive the native jobs or the
 // artifacts those jobs produce. Templates and the Go test weights do not.
-const FULL_NATIVE_FILES = /^(build\/|\.github\/(workflows\/(ci|release)\.yml$|actions\/|native-matrix\.json$|scripts\/(build-native|helper-matrix|helper-metadata|verify-reused-binary|verify-packaged-runtime|stage-server-evidence)\.mjs$|scripts\/windows-real-tests\.ps1$)|scripts\/(build|test-production)\.mjs$|scripts\/lib\/build-|scripts\/pack-)|(^|\/)(go\.mod|go\.sum)$/;
+const FULL_NATIVE_FILES = /^(build\/|\.github\/(workflows\/(ci|release)\.yml$|actions\/|native-matrix\.json$|scripts\/(build-native|helper-matrix|helper-metadata|verify-reused-binary|stage-server-evidence)\.mjs$|scripts\/windows-real-tests\.ps1$)|scripts\/(build|test-production)\.mjs$|scripts\/lib\/build-|scripts\/pack-)|(^|\/)(go\.mod|go\.sum)$/;
 // Go files compiled only for some operating systems build those systems' native targets (both architectures).
 // Fallback files for other systems (_other, _unsupported, _default, _stub) build every target.
 const OS_FILES = [
