@@ -40,7 +40,7 @@ export function presenceView(
 ): AgentStateView {
   switch (presence) {
     case "attached":
-      return { key: "attached", label: t("已附加"), tone: "ok", evidence, unknown: false };
+      return { key: "attached", label: t("已连接"), tone: "ok", evidence, unknown: false };
     case "detached":
       return { key: "detached", label: t("已分离"), tone: "muted", evidence, unknown: false };
     case "disconnected":

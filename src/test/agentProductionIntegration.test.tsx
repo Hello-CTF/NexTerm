@@ -105,7 +105,7 @@ describe("production integration: roster panel", () => {
     const text = build.textContent ?? "";
     // The backend's verifiable target evidence renders as the full identity.
     expect(text).toContain("build@web-01:/srv/app");
-    expect(text).toContain("已附加");
+    expect(text).toContain("已连接");
     expect(text).toContain("生产环境");
     const deploy = view!.container.querySelector('[data-handle="deploy"]')!;
     // Unverifiable target evidence stays honestly unknown: no fabricated
@@ -164,7 +164,7 @@ describe("production integration: roster panel", () => {
     mountRoster({ onOpened });
     await flush();
     const build = view!.container.querySelector('[data-handle="build"]')!;
-    clickButton(build as HTMLElement, "附加");
+    clickButton(build as HTMLElement, "接入对话");
     await flush();
     expect(mocks.call).toHaveBeenCalledWith("ai_roster_attach", { handle: "build", jobId: "job-live" });
     expect(onOpened).toHaveBeenCalledWith("tab-1", expect.objectContaining({ handle: "build" }));

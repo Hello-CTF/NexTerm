@@ -32,7 +32,7 @@ function entry(partial: Partial<AgentRosterEntry> = {}): AgentRosterEntry {
     persistent: true,
     incarnation: "inc-3",
     presence: "attached",
-    evidence: { kind: "attach", observedAt: 1_760_000_000_000, summary: "附加成功" },
+    evidence: { kind: "attach", observedAt: 1_760_000_000_000, summary: "接入成功" },
     releasePending: false,
     tabId: "tab-1",
     lastRun: null,
@@ -95,7 +95,7 @@ describe("AgentRosterPanel", () => {
     await mountPanel([entry()]);
     const row = rowFor("build");
     expect(row.textContent).toContain("build@web-01:/srv/app");
-    expect(row.textContent).toContain("已附加");
+    expect(row.textContent).toContain("已连接");
   });
 
   it("renders an idle last run as 空闲 and never as 已完成", async () => {
@@ -138,7 +138,7 @@ describe("AgentRosterPanel", () => {
     expect(api.open).toHaveBeenCalledWith("build");
     expect(onOpened).toHaveBeenCalledWith("tab-opened", expect.objectContaining({ handle: "build" }));
 
-    clickButton(rowFor("build"), "附加");
+    clickButton(rowFor("build"), "接入对话");
     await flush();
     expect(api.attach).toHaveBeenCalledWith("build");
     expect(onOpened).toHaveBeenCalledWith("tab-attached", expect.objectContaining({ handle: "build" }));
@@ -150,7 +150,7 @@ describe("AgentRosterPanel", () => {
     ]);
     const row = rowFor("build");
     expect(buttonIn(row, "打开").disabled).toBe(true);
-    expect(buttonIn(row, "附加").disabled).toBe(true);
+    expect(buttonIn(row, "接入对话").disabled).toBe(true);
     expect(row.textContent).toContain("已不存在");
     expect(api.open).not.toHaveBeenCalled();
   });
@@ -276,7 +276,7 @@ describe("AgentRosterPanel", () => {
         const row = rowFor("build");
         expect(row.textContent).toContain("未知");
         const open = buttonIn(row, "打开");
-        const attach = buttonIn(row, "附加");
+        const attach = buttonIn(row, "接入对话");
         expect(open.disabled).toBe(true);
         expect(attach.disabled).toBe(true);
         expect(open.title).toContain("未知");

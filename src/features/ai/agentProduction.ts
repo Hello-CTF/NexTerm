@@ -200,7 +200,7 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
         return { tabId: attachment.entry.tabId };
       }
       if (resolution === "nonpersistent") {
-        throw unsupported(t("子代理 {handle} 不在持久终端中，无法附加", { handle }));
+        throw unsupported(t("子代理 {handle} 不在持久终端中，无法接入", { handle }));
       }
       const text =
         resolution === "disconnected"
@@ -212,7 +212,7 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
               : resolution === "exited"
                 ? t("终端已退出")
                 : t("无法确认终端状态");
-      throw unsupported(t("未能附加子代理 {handle}：{text}", { handle, text }));
+      throw unsupported(t("未能接入子代理 {handle}：{text}", { handle, text }));
     },
 
     // Alias-only rename through the real command: the permanent handle and
