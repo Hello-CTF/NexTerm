@@ -212,7 +212,7 @@ describe("CronPanel", () => {
     mocks.list.mockResolvedValue([]);
     mounted = mountPanel();
     await flush();
-    expect(mounted.container.textContent).toContain("此会话暂无定时任务");
+    expect(mounted.container.textContent).toContain("此对话暂无定时任务");
   });
 
   it("shows loading errors and allows retry", async () => {
@@ -299,7 +299,7 @@ describe("CronPanel", () => {
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     const question = String(mocks.ask.mock.calls[0]?.[0] ?? "");
     expect(question).toContain("磁盘巡检");
-    expect(question).not.toContain("所属会话");
+    expect(question).not.toContain("所属对话");
     expect(mocks.unregister).not.toHaveBeenCalled();
     expect(mounted.container.textContent).toContain("磁盘巡检");
   });
@@ -320,7 +320,7 @@ describe("CronPanel", () => {
     expect(mocks.unregister).toHaveBeenCalledWith(CONV_ID, "j-1");
     expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已删除");
     expect(mounted.container.textContent).not.toContain("磁盘巡检");
-    expect(mounted.container.textContent).toContain("此会话暂无定时任务");
+    expect(mounted.container.textContent).toContain("此对话暂无定时任务");
   });
 
   it("keeps the job and reports deletion failures", async () => {
@@ -340,7 +340,7 @@ describe("CronPanel", () => {
     await flush();
 
     clickButton(mounted.container, "新建定时任务");
-    expect(mounted.container.querySelector('select[aria-label="所属 AI 会话"]')).toBeNull();
+    expect(mounted.container.querySelector('select[aria-label="所属 AI 对话"]')).toBeNull();
     setInputValue(
       mounted.container.querySelector<HTMLInputElement>('input[aria-label="任务名称"]')!,
       "Clean logs",
@@ -958,7 +958,7 @@ describe("CronPanel", () => {
       `下次执行 ${new Date("2032-04-05T06:00:00Z").toLocaleString()}`,
     );
     expect(mounted.container.textContent).toContain("启用、停用和删除只影响所选任务");
-    expect(mounted.container.textContent).toContain("删除 AI 会话时，该会话的全部定时任务也会一并删除");
+    expect(mounted.container.textContent).toContain("删除 AI 对话时，该对话的全部定时任务也会一并删除");
 
     const disabled = job({
       id: "j-disabled",

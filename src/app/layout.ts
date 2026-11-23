@@ -223,7 +223,7 @@ function sanitizeAiDockTab(raw: unknown): AiDockTab | null {
   const id = optStr(raw.id);
   if (!id) return null;
   const title = typeof raw.title === "string" ? clipText(raw.title.trim(), 80) : "";
-  return { id, title: title || tr("新会话"), conversationId: optStr(raw.conversationId) };
+  return { id, title: title || tr("新对话"), conversationId: optStr(raw.conversationId) };
 }
 
 function sanitizeAiBoard(raw: unknown): AiBoard | null {

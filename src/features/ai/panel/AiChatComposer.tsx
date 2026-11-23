@@ -60,7 +60,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           key: "export",
           label: t("导出当前对话"),
           icon: <IconDownload size={12} />,
-          title: t("将当前会话导出为 Markdown 文件"),
+          title: t("将当前对话导出为 Markdown 文件"),
           run: () => void exportConversationMarkdown({ id: conversationId, title: dockTitle }),
         },
       ]

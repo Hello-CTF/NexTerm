@@ -6,7 +6,7 @@ export type ConfirmDecision = "allow" | "allow_session" | "allow_persistent" | "
 
 export const CONFIRM_ACTION_LABELS: Record<ConfirmDecision, string> = {
   allow: t("允许一次"),
-  allow_session: t("本会话允许"),
+  allow_session: t("本对话允许"),
   allow_persistent: t("永久允许"),
   deny: t("拒绝"),
 };
@@ -24,7 +24,7 @@ export const CONFIRM_RESOLUTION: Record<ConfirmDecision, string> = {
 
 const RESOLUTION_LABELS: Record<string, string> = {
   已允许一次: t("已允许一次"),
-  本会话已允许此类: t("本会话已允许此类"),
+  本会话已允许此类: t("本对话已允许此类"),
   "已永久允许（可随时在授权管理中撤销）": t("已永久允许（可随时在授权管理中撤销）"),
   已拒绝: t("已拒绝"),
 };
@@ -34,7 +34,7 @@ export function resolutionLabel(resolution: string): string {
 }
 
 export const CONFIRM_HELP =
-  t("允许一次：仅本次；本会话允许：本次对话不再询问；永久允许：存入授权管理，可撤销。本会话允许和永久允许不覆盖高危、无法判断和生产环境的操作。");
+  t("允许一次：仅本次；本对话允许：本次对话不再询问；永久允许：存入授权管理，可撤销。本对话允许和永久允许不覆盖高危、无法判断和生产环境的操作。");
 
 // A tool call the user refused: the badge, the screen reader status and the result body.
 export const TOOL_USER_DENIED = {

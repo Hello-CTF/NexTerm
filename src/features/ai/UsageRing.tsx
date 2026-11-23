@@ -339,21 +339,21 @@ function UsageDetails({
       ) : null}
       {errorStats && errorStats.runs > 0 ? (
         <span className="block text-neutral-300">
-          {t("本会话 {runs} 次回答 · 可重试错误 {retries}（{value}） · 失败 {failures}（{value2}）", { runs: errorStats.runs, retries: errorStats.retries, value: percentText(errorStats.retryRate), failures: errorStats.failures, value2: percentText(errorStats.failureRate) })}</span>
+          {t("本对话 {runs} 次回答 · 可重试错误 {retries}（{value}） · 失败 {failures}（{value2}）", { runs: errorStats.runs, retries: errorStats.retries, value: percentText(errorStats.retryRate), failures: errorStats.failures, value2: percentText(errorStats.failureRate) })}</span>
       ) : null}
       {scenes ? (
         <>
           <span className="block text-neutral-300">
-            {t("对话 {runs} 次 · 输入 {value} · 输出{value2}{value3}（全部会话）", { runs: scenes.chat.runs, value: formatTokens(scenes.chat.tokensIn), value2: " ", value3: formatTokens(scenes.chat.tokensOut) })}
+            {t("对话 {runs} 次 · 输入 {value} · 输出{value2}{value3}（全部对话）", { runs: scenes.chat.runs, value: formatTokens(scenes.chat.tokensIn), value2: " ", value3: formatTokens(scenes.chat.tokensOut) })}
           </span>
           {scenes.cron.runs > 0 ? (
             <span className="block text-neutral-300">
-              {t("定时任务 {runs} 次 · 输入 {value} · 输出{value2}{value3}（全部会话）", { runs: scenes.cron.runs, value: formatTokens(scenes.cron.tokensIn), value2: " ", value3: formatTokens(scenes.cron.tokensOut) })}
+              {t("定时任务 {runs} 次 · 输入 {value} · 输出{value2}{value3}（全部对话）", { runs: scenes.cron.runs, value: formatTokens(scenes.cron.tokensIn), value2: " ", value3: formatTokens(scenes.cron.tokensOut) })}
             </span>
           ) : null}
           {scenes.subagent.runs > 0 ? (
             <span className="block text-neutral-300">
-              {t("子任务 {runs} 次 · 输入 {value} · 输出{value2}{value3}（全部会话）", { runs: scenes.subagent.runs, value: formatTokens(scenes.subagent.tokensIn), value2: " ", value3: formatTokens(scenes.subagent.tokensOut) })}
+              {t("子任务 {runs} 次 · 输入 {value} · 输出{value2}{value3}（全部对话）", { runs: scenes.subagent.runs, value: formatTokens(scenes.subagent.tokensIn), value2: " ", value3: formatTokens(scenes.subagent.tokensOut) })}
             </span>
           ) : null}
           <span className="block text-neutral-500">

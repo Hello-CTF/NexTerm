@@ -304,13 +304,13 @@ describe("AiSidebar session restore", () => {
     mountSidebar();
     await flushReplay();
 
-    expect(textOf(view!)).toContain("未能打开此会话：会话库不可用");
+    expect(textOf(view!)).toContain("未能打开此对话：会话库不可用");
     expect(textOf(view!)).not.toContain("开始新的对话");
 
     clickButton(view!.container, "重试");
     await flushReplay();
     expect(textOf(view!)).toContain("旧问题");
-    expect(textOf(view!)).not.toContain("会话加载失败");
+    expect(textOf(view!)).not.toContain("对话加载失败");
   });
 
   it("clears the error state after deleting the current conversation following a restore failure", async () => {
@@ -318,16 +318,16 @@ describe("AiSidebar session restore", () => {
     mocks.messages.mockRejectedValueOnce(new Error("会话库不可用"));
     mountSidebar();
     await flushReplay();
-    expect(textOf(view!)).toContain("未能打开此会话：会话库不可用");
+    expect(textOf(view!)).toContain("未能打开此对话：会话库不可用");
 
     click(view!.container.querySelector('button[title="终端历史"]')!);
     await flush();
-    click(view!.container.querySelector('button[aria-label="删除会话「Investigate 502」"]')!);
+    click(view!.container.querySelector('button[aria-label="删除对话「Investigate 502」"]')!);
     await flushUntil(() => mocks.conversationDelete.mock.calls.length > 0);
     await flush();
 
     expect(mocks.conversationDelete).toHaveBeenCalledWith("conv-1");
-    expect(textOf(view!)).not.toContain("会话加载失败");
+    expect(textOf(view!)).not.toContain("对话加载失败");
     expect(textOf(view!)).toContain("开始新的对话");
   });
 

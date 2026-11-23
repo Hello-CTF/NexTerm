@@ -143,8 +143,8 @@ describe("AiSidebar restored run placement", () => {
     useUi.setState({
       activeWorkspaceId: boardA,
       aiBoards: {
-        [boardA]: { tabs: [{ id: "tab-a", title: "新会话" }], activeTabId: "tab-a" },
-        [boardB]: { tabs: [{ id: "tab-b", title: "新会话" }], activeTabId: "tab-b" },
+        [boardA]: { tabs: [{ id: "tab-a", title: "新对话" }], activeTabId: "tab-a" },
+        [boardB]: { tabs: [{ id: "tab-b", title: "新对话" }], activeTabId: "tab-b" },
       },
     });
   });

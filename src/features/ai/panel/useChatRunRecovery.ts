@@ -369,7 +369,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
       if (!isLifecycleActive() || !isCurrentAiRun(activeRunRef.current, generation)) return;
       terminalPollFailuresRef.current += 1;
       if (terminalPollFailuresRef.current === 3) {
-        pushToast("error", t("暂时无法获取 AI 任务状态，正在重试。也可以重新打开会话确认结果"));
+        pushToast("error", t("暂时无法获取 AI 任务状态，正在重试。也可以重新打开对话确认结果"));
       }
     }
   };

@@ -40,7 +40,7 @@ var conversationLabelDefaults = map[string]string{
 	"status.failed":             "失败",
 	"status.idle":               "未运行",
 	"decision.allow":            "已允许一次",
-	"decision.allow_session":    "本会话已允许此类",
+	"decision.allow_session":    "本对话已允许此类",
 	"decision.allow_persistent": "已永久允许",
 	"decision.deny":             "已拒绝",
 	"decision.answered":         "已回答",

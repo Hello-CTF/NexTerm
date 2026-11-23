@@ -108,7 +108,7 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
             <button
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-xs"
-              title={t("批量导出 AI 会话")}
+              title={t("批量导出 AI 对话")}
               onClick={() => setArchiveOpen(true)}
             >
               <IconDownload size={11} />
@@ -135,10 +135,10 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
               <div key={c.id} className="flex items-center gap-0.5">
                 <button
                   className="nx-menu-item flex-1"
-                  title={c.title || t("（未命名会话）")}
+                  title={c.title || t("（未命名对话）")}
                   onClick={() => void openConversation(c.id, c.title)}
                 >
-                  <span className="nx-menu-label">{c.title || t("（未命名会话）")}</span>
+                  <span className="nx-menu-label">{c.title || t("（未命名对话）")}</span>
                   <span className="nx-menu-hint">
                     {c.updatedAt ? new Date(c.updatedAt).toLocaleDateString() : ""}
                   </span>
@@ -146,15 +146,15 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
                 {runStatusByConv[c.id] && (
                   <span
                     className={`nx-badge shrink-0 ${runStatusByConv[c.id] === "running" ? "nx-badge-amber" : "nx-badge-purple"}`}
-                    title={runStatusByConv[c.id] === "running" ? t("此会话有正在运行的 AI 任务") : t("此会话有被中断、待恢复的 AI 任务")}
+                    title={runStatusByConv[c.id] === "running" ? t("此对话有正在运行的 AI 任务") : t("此对话有被中断、待恢复的 AI 任务")}
                   >
                     {runStatusByConv[c.id] === "running" ? t("运行中") : t("待恢复")}
                   </span>
                 )}
                 <button
                   className="nx-icon-btn nx-icon-btn-sm shrink-0"
-                  title={t("删除「{value}」", { value: c.title || t("（未命名会话）") })}
-                  aria-label={t("删除会话「{value}」", { value: c.title || t("（未命名会话）") })}
+                  title={t("删除「{value}」", { value: c.title || t("（未命名对话）") })}
+                  aria-label={t("删除对话「{value}」", { value: c.title || t("（未命名对话）") })}
                   onClick={() => void deleteConversation(c)}
                 >
                   <IconTrash size={12} />

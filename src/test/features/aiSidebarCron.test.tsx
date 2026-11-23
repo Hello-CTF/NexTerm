@@ -220,7 +220,7 @@ describe("AiSidebar cron entry point", () => {
 
     click(view!.container.querySelector('button[title="终端历史"]')!);
     await flushUntil(() => textOf(view!).includes("Conversation A"));
-    click(view!.container.querySelector('button[aria-label="删除会话「Conversation A」"]')!);
+    click(view!.container.querySelector('button[aria-label="删除对话「Conversation A」"]')!);
     await flushUntil(() => mocks.conversationDelete.mock.calls.length > 0);
     expect(mocks.conversationDelete).toHaveBeenCalledWith("conv-1");
     await flush();
@@ -238,7 +238,7 @@ describe("AiSidebar cron entry point", () => {
 
     mocks.cronList.mockResolvedValue([]);
     click(view!.container.querySelector('button[aria-label="刷新定时任务"]')!);
-    await flushUntil(() => textOf(view!).includes("此会话暂无定时任务"));
+    await flushUntil(() => textOf(view!).includes("此对话暂无定时任务"));
     expect(cronButton(view!).getAttribute("aria-expanded")).toBe("true");
     expect(view!.container.querySelector('section[aria-label="后台任务"]')).not.toBeNull();
   });

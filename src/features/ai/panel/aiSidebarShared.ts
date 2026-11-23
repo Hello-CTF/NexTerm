@@ -25,7 +25,7 @@ export { composeUserMessage, splitUserRefs } from "../userRefs";
 
 export const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
   { value: "read_only", label: t("只读"), hint: t("AI 只能查看，修改一律拒绝") },
-  { value: "read_write", label: t("读写"), hint: t("查看操作直接执行，修改前需要你确认；选择「本会话允许」后，本次对话内同类操作不再询问") },
+  { value: "read_write", label: t("读写"), hint: t("查看操作直接执行，修改前需要你确认；选择「本对话允许」后，本次对话内同类操作不再询问") },
   { value: "silent", label: t("自动执行"), hint: t("普通修改直接执行，高危和无法判断的操作仍需要你确认") },
   {
     value: "full_access",

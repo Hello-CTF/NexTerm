@@ -31,15 +31,15 @@ export function HostAiHistoryPanel({ visible, assetId }: { visible: boolean; ass
     <div className="flex h-full min-h-0 flex-col" data-testid="host-ai-history">
       <div className="flex shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-3 py-1.5">
         <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-neutral-200">
-          {t("{host} 的 AI 会话（{count}）", { host: hostName, count: pages.total })}
+          {t("{host} 的 AI 对话（{count}）", { host: hostName, count: pages.total })}
         </span>
-        <button type="button" className="nx-icon-btn nx-icon-btn-sm" title={t("刷新")} aria-label={t("刷新会话列表")} onClick={pages.reload}>
+        <button type="button" className="nx-icon-btn nx-icon-btn-sm" title={t("刷新")} aria-label={t("刷新对话列表")} onClick={pages.reload}>
           <IconRefresh size={12} />
         </button>
         <button
           type="button"
           className="nx-btn nx-btn-ghost nx-btn-xs"
-          title={t("批量导出此主机的 AI 会话")}
+          title={t("批量导出此主机的 AI 对话")}
           disabled={!assetId}
           onClick={() => setArchiveOpen(true)}
         >
@@ -49,7 +49,7 @@ export function HostAiHistoryPanel({ visible, assetId }: { visible: boolean; ass
         <button
           type="button"
           className="nx-btn nx-btn-outline nx-btn-xs"
-          title={t("在工具工作区打开全局 AI 工作台，可筛选全部主机的会话")}
+          title={t("在工具工作区打开全局 AI 工作台，可筛选全部主机的对话")}
           onClick={openGlobal}
         >
           <IconGlobe size={12} />
@@ -66,7 +66,7 @@ export function HostAiHistoryPanel({ visible, assetId }: { visible: boolean; ass
             pages={pages}
             selectedId={selection.summary?.id ?? null}
             onSelect={(item) => selection.select(item)}
-            emptyText={t("此主机还没有 AI 会话")}
+            emptyText={t("此主机还没有 AI 对话")}
           />
         </div>
         <div className="hidden md:block">
@@ -77,7 +77,7 @@ export function HostAiHistoryPanel({ visible, assetId }: { visible: boolean; ass
             max={HOST_AI_LIST_WIDTH.max}
             defaultWidth={HOST_AI_LIST_WIDTH.default}
             onChange={setListWidth}
-            label={t("调整会话列表宽度")}
+            label={t("调整对话列表宽度")}
           />
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">

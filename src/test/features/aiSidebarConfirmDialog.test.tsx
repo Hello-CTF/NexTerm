@@ -588,10 +588,10 @@ describe("AiSidebar permission request dialogs", () => {
       },
     ]);
     expect(mounted!.container.textContent).toContain("本次对话内不再询问：terraform 命令");
-    clickButton(mounted!.container, "本会话允许");
+    clickButton(mounted!.container, "本对话允许");
     await flush();
     expect(mocks.confirm.mock.calls[0][0].decision).toBe("allow_session");
-    expect(mounted!.container.textContent).toContain("本会话已允许此类");
+    expect(mounted!.container.textContent).toContain("本对话已允许此类");
   });
 
   it("shows policy and user refusals as interceptions instead of failures", async () => {
@@ -626,7 +626,7 @@ describe("AiSidebar permission request dialogs", () => {
     ]);
     const labels = [...mounted!.container.querySelectorAll("button")].map((button) => button.textContent);
     expect(labels).toContain("允许一次");
-    expect(labels).not.toContain("本会话允许");
+    expect(labels).not.toContain("本对话允许");
     expect(labels).not.toContain("永久允许");
     expect(mounted!.container.textContent).toContain("高危操作，需要你确认");
     expect(mounted!.container.textContent).toContain("进程终止");

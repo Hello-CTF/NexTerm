@@ -83,7 +83,7 @@ export async function resumeTakeover() {
   try {
     if (!takeover.jobId) throw new Error(tr("找不到接管任务，请重新发起接管"));
     const handler = resumeHandlers.get(takeover.jobId);
-    if (!handler) throw new Error(tr("接管会话已断开，请打开对应 AI 会话后重试"));
+    if (!handler) throw new Error(tr("接管已断开，请打开对应的 AI 对话后重试"));
     await handler();
     updateSame(takeover, (current) => withTakeoverPaused(current, false));
   } catch (e) {

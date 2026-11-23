@@ -8,7 +8,7 @@ import (
 
 func (r *Runner) RunGet(ctx context.Context, jobID string) (RunDTO, error) {
 	if r.runs == nil {
-		return RunDTO{}, ipc.NewError(ipc.CodeUnsupported, "AI 会话存储未配置")
+		return RunDTO{}, ipc.NewError(ipc.CodeUnsupported, "AI 对话存储未配置")
 	}
 	row, err := r.runs.RunGet(ctx, jobID)
 	if err != nil {

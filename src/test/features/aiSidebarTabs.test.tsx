@@ -83,7 +83,7 @@ function textOf(view: MountedView): string {
 
 function stripTabs(view: MountedView): HTMLElement[] {
   return [
-    ...view.container.querySelectorAll<HTMLElement>('[aria-label="会话标签页"] [role="tab"]'),
+    ...view.container.querySelectorAll<HTMLElement>('[aria-label="对话标签页"] [role="tab"]'),
   ];
 }
 
@@ -153,7 +153,7 @@ describe("AiSidebar multiple tabs", () => {
     // A tab holding a draft is not "empty", so the plus button adds a new one.
     setInputValue(view!.container.querySelector("textarea")!, "草稿");
     await flush();
-    click(view!.container.querySelector('button[title="新建会话"]')!);
+    click(view!.container.querySelector('button[title="新建对话"]')!);
     await flush();
     expect(stripTabs(view!)).toHaveLength(2);
 
@@ -183,7 +183,7 @@ describe("AiSidebar multiple tabs", () => {
 
   it("focuses the existing empty tab instead of stacking another blank one", async () => {
     await flush();
-    const plus = () => view!.container.querySelector('button[title="新建会话"]')!;
+    const plus = () => view!.container.querySelector('button[title="新建对话"]')!;
     click(plus());
     await flush();
     click(plus());
@@ -203,7 +203,7 @@ describe("AiSidebar multiple tabs", () => {
     await send(view!, "Parallel one");
     expect(useUi.getState().aiBusy).toBe(true);
 
-    click(view!.container.querySelector('button[title="新建会话"]')!);
+    click(view!.container.querySelector('button[title="新建对话"]')!);
     await flush();
     await send(view!, "Parallel two");
     expect(mocks.chat).toHaveBeenCalledTimes(2);

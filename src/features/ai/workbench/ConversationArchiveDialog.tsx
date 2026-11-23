@@ -32,9 +32,9 @@ export interface ConversationArchiveDefaults {
 }
 
 export function conversationArchiveMessage(result: AiConversationExportResult, where: string): string {
-  let message = t("已导出 {count} 个会话到 {where}", { count: result.exported, where });
+  let message = t("已导出 {count} 个对话到 {where}", { count: result.exported, where });
   if (result.skipped.running > 0) {
-    message += t("。已跳过 {count} 个仍在运行的会话", { count: result.skipped.running });
+    message += t("。已跳过 {count} 个仍在运行的对话", { count: result.skipped.running });
   }
   return message;
 }
@@ -185,7 +185,7 @@ export function ConversationArchiveDialog({
       >
         <div className="nx-modal-body flex max-h-[75vh] flex-col gap-3 overflow-y-auto text-[12.5px]">
           <h2 id={titleId} className="text-[14px] font-semibold text-neutral-100">
-            {t("批量导出 AI 会话")}
+            {t("批量导出 AI 对话")}
           </h2>
 
           <div className="flex flex-col gap-1.5">
@@ -248,7 +248,7 @@ export function ConversationArchiveDialog({
             <label className="flex min-w-[140px] flex-1 flex-col gap-1.5">
               <span className="nx-hint">{t("状态")}</span>
               <Select
-                ariaLabel={t("导出的会话状态")}
+                ariaLabel={t("导出的对话状态")}
                 value={status}
                 options={[{ value: "", label: t("全部状态") }, ...WORKBENCH_STATUSES.map((value) => ({ value, label: conversationStatusLabel(value) }))]}
                 onChange={(value) => setStatus(value as AiConversationStatus | "")}
@@ -267,7 +267,7 @@ export function ConversationArchiveDialog({
               />
             </label>
           </div>
-          {query ? <div className="nx-hint">{t("只导出匹配搜索「{query}」的会话", { query })}</div> : null}
+          {query ? <div className="nx-hint">{t("只导出匹配搜索「{query}」的对话", { query })}</div> : null}
 
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={includeJson} onChange={(event) => setIncludeJson(event.target.checked)} />
@@ -276,14 +276,14 @@ export function ConversationArchiveDialog({
 
           <div className="nx-hint" data-testid="ai-archive-preview" aria-live="polite">
             {previewError
-              ? t("无法统计会话：{value}", { value: previewError })
+              ? t("无法统计对话：{value}", { value: previewError })
               : preview
                 ? (
                   <>
-                    {t("匹配 {matched} 个会话，将导出 {exported} 个", { matched: preview.matched, exported: preview.exported })}
+                    {t("匹配 {matched} 个对话，将导出 {exported} 个", { matched: preview.matched, exported: preview.exported })}
                     {preview.skipped.running > 0 && (
                       <div className="text-amber-300">
-                        {t("将跳过 {count} 个仍在运行的会话", { count: preview.skipped.running })}
+                        {t("将跳过 {count} 个仍在运行的对话", { count: preview.skipped.running })}
                       </div>
                     )}
                   </>
@@ -293,7 +293,7 @@ export function ConversationArchiveDialog({
                   : null}
           </div>
           <p className="nx-hint text-[11.5px]">
-            {t("每个会话导出为 Markdown：对话文字、工具调用摘要、文件变更差异和确认记录。压缩包内含 manifest.json，列出每个会话和跳过的原因。")}
+            {t("每个对话导出为 Markdown：对话文字、工具调用摘要、文件变更差异和确认记录。压缩包内含 manifest.json，列出每个对话和跳过的原因。")}
           </p>
         </div>
         <div className="nx-modal-footer">
