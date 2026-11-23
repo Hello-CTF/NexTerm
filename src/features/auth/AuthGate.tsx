@@ -403,7 +403,7 @@ function MfaEnrollForm() {
           <IconShield size={15} className="text-amber-300" />
           <span className="nx-card-title">{t("必须启用两步验证")}</span>
         </div>
-        <p className="nx-hint">{t("管理员已要求所有账号启用 TOTP 两步验证，完成绑定前无法使用其他功能。")}</p>
+        <p className="nx-hint">{t("超级管理员已要求所有账号启用 TOTP 两步验证，完成绑定前无法使用其他功能。")}</p>
         {error && <GateError error={{ code: "internal", message: error }} />}
         <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy} onClick={() => void startSetup()}>
           {busy ? t("正在生成…") : t("重试")}
@@ -497,7 +497,7 @@ function RegisterForm({ onBack }: { onBack: () => void }) {
         <IconKey size={15} className="text-neutral-400" />
         <span className="nx-card-title">{t("注册")}</span>
       </div>
-      <p className="nx-hint">{t("管理员已开放注册，可创建普通用户账号。")}</p>
+      <p className="nx-hint">{t("超级管理员已开放注册，可创建普通用户账号。")}</p>
       <Field label={t("用户名")} value={username} onChange={setUsername} autoComplete="username" />
       <Field label={t("显示名（可选）")} value={displayName} onChange={setDisplayName} />
       <Field label={t("密码")} value={password} onChange={setPassword} type="password" placeholder={t("至少 8 位")} autoComplete="new-password" />

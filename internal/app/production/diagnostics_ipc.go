@@ -185,7 +185,7 @@ func (s *diagnosticsService) authorize(ctx context.Context) error {
 	if role, ok := ipc.RoleFromContext(ctx); ok && role == "superadmin" {
 		return nil
 	}
-	return ipc.NewError(ipc.CodeForbidden, "仅管理员可使用诊断功能")
+	return ipc.NewError(ipc.CodeForbidden, "仅超级管理员可使用诊断功能")
 }
 
 func (s *diagnosticsService) status() (diagnosticsStatusDTO, error) {

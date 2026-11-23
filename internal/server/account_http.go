@@ -515,7 +515,7 @@ func (s *Server) serveAccountRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !registration {
-		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "注册已关闭，请联系管理员添加账号"))
+		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "注册已关闭，请联系超级管理员添加账号"))
 		return
 	}
 	user, err := s.accounts.CreateUserWithEnvelopes(r.Context(), request.Username, request.DisplayName, request.Password, request.toEnvelopes())

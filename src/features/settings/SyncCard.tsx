@@ -651,7 +651,7 @@ function DesktopLinkCard() {
       {step.kind === "reset" && (
         <div className="flex flex-col gap-2">
           <p className="nx-hint">
-            {tr("管理员已重置此账号，请先设置新密码。加密密钥、所有登录状态和两步验证绑定均已清除；设置后将生成新的加密密钥和一次性恢复密钥，加密数据需从仍保留数据的设备重新同步。")}
+            {tr("超级管理员已重置此账号，请先设置新密码。加密密钥、所有登录状态和两步验证绑定均已清除；设置后将生成新的加密密钥和一次性恢复密钥，加密数据需从仍保留数据的设备重新同步。")}
           </p>
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
             <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-new-pass">

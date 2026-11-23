@@ -13,7 +13,7 @@ import (
 )
 
 // mfaEnrollLockedMessage is the uniform rejection text for mfa_required locked sessions.
-const mfaEnrollLockedMessage = "管理员已要求启用两步验证：完成 TOTP 绑定前，该账号只能使用绑定相关功能"
+const mfaEnrollLockedMessage = "超级管理员已要求启用两步验证：完成 TOTP 绑定前，该账号只能使用绑定相关功能"
 
 // mfaEnrollmentLockedFor decides whether the given session identity is locked by the mfa_required policy (unbound).
 // reset_required sessions are constrained separately by the password-change flow; the two do not stack (change password first, then bind).

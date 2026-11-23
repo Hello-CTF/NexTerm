@@ -204,7 +204,7 @@ func (m *Manager) canManage(ctx context.Context) bool {
 }
 func (m *Manager) authorizeManage(ctx context.Context) error {
 	if !m.canManage(ctx) {
-		return ipc.NewError(ipc.CodeForbidden, "仅管理员可以下载、删除或检查本地隐私模型")
+		return ipc.NewError(ipc.CodeForbidden, "仅超级管理员可以下载、删除或检查本地隐私模型")
 	}
 	return nil
 }

@@ -388,7 +388,7 @@ describe("mfa_enrollment_required global event", () => {
       "fetch",
       vi.fn().mockImplementation(
         async () =>
-          new Response(JSON.stringify({ error: { code: "mfa_enrollment_required", message: "管理员已要求启用两步验证" } }), {
+          new Response(JSON.stringify({ error: { code: "mfa_enrollment_required", message: "超级管理员已要求启用两步验证" } }), {
             status: 403,
             headers: { "Content-Type": "application/json" },
           }),

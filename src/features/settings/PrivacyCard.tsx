@@ -97,7 +97,7 @@ function PrivacyCardBody() {
   const currentInstallation = status?.installed.find((item) => keyOf(item) === selected);
   const completed = status?.download.completed;
   const completedKey = completed ? keyOf({ revision: completed.revision, precision: status?.download.precision ?? "int8" }) : "";
-  const noModelHint = status && !status.canManage && status.installed.length === 0 ? t("请联系管理员下载模型") : t("尚未下载模型");
+  const noModelHint = status && !status.canManage && status.installed.length === 0 ? t("请联系超级管理员下载模型") : t("尚未下载模型");
   const hasLatest = !!status?.latest && status.installed.some((item) => item.revision === status.latest?.revision);
   // A download always fetches the latest release; the precision is the only choice.
   const downloadTarget = `${modelDisplayName(status?.latest)}${status?.latest ? ` ${status.latest.version}` : ""}`;
@@ -133,7 +133,7 @@ function PrivacyCardBody() {
             <div role="alert" className="nx-alert nx-alert-danger text-[12px]">
               {t("{value}在恢复或关闭脱敏前，所有 AI 请求都将被阻止。{value2}", { value: supported
                 ? t("已启用脱敏，但所选模型不可用：{value}。", { value: status.selection?.error ?? t("未知原因") })
-                : t("{value}的脱敏运行时不可用：{value2}。", { value: WEB ? t("服务端") : t("本机"), value2: status.runtime.reason ?? t("未知原因") }), value2: supported && !status.canManage ? t("请联系管理员下载模型。") : "" })}
+                : t("{value}的脱敏运行时不可用：{value2}。", { value: WEB ? t("服务端") : t("本机"), value2: status.runtime.reason ?? t("未知原因") }), value2: supported && !status.canManage ? t("请联系超级管理员下载模型。") : "" })}
             </div>
           ) : !supported && (
             <div role="alert" className="nx-alert nx-alert-danger text-[12px]">{t("本地脱敏当前不可用：")}{status.runtime.reason}。</div>
@@ -211,7 +211,7 @@ function PrivacyCardBody() {
                     <p className="nx-hint text-[11px]">{t("下载后不会自动启用脱敏。")}</p>
                   </div>
                 ) : (
-                  <p className="nx-hint text-[11.5px]">{t("模型由管理员在服务端下载和管理。")}</p>
+                  <p className="nx-hint text-[11.5px]">{t("模型由超级管理员在服务端下载和管理。")}</p>
                 )}
                 {status.installed.length > 0 && (
                   <div className="flex flex-col gap-1 border-t border-neutral-800/60 pt-2">

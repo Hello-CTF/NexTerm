@@ -27,7 +27,7 @@ type LinkConnectResult struct {
 // so they are recorded in LastError and the settings page guides the user through LinkSet's step-by-step onboarding.
 var (
 	errReloginMFA   = ipc.NewError(ipc.CodeForbidden, "账号已开启两步验证：请先在同步设置中完成验证")
-	errReloginReset = ipc.NewError(ipc.CodeForbidden, "账号密码已被管理员重置：请先在同步设置中完成密码重置")
+	errReloginReset = ipc.NewError(ipc.CodeForbidden, "账号密码已被超级管理员重置：请先在同步设置中完成密码重置")
 )
 
 // pendingLinkLogin is the intermediate state after the password has passed but a second factor or forced password change is pending: the client holds
