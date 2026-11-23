@@ -74,7 +74,7 @@ describe("web tray settings platform gate", () => {
     await flush();
     await flush();
 
-    expect(mounted.container.textContent).not.toContain("关闭时保留后台运行");
+    expect(mounted.container.textContent).not.toContain("关闭窗口时最小化到托盘");
     expect(mocks.trayGet).not.toHaveBeenCalled();
     expect(mocks.traySet).not.toHaveBeenCalled();
   });

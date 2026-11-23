@@ -238,7 +238,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "terminal-contrast", section: "settings-appearance", label: t("终端对比度"), keywords: ["contrast", t("对比度")], panel: "appearance-advanced" },
   { id: "default-terminal-mode", section: "settings-terminal", label: t("默认终端模式"), description: t("持久终端或临时终端"), keywords: ["durable", "persistent", "detach", t("持久"), "local", t("本机"), t("本机终端"), t("本机终端模式"), t("持久组件"), t("持久终端组件")] },
   { id: "close-action", section: "settings-terminal", label: t("关闭运行中的终端标签页时"), keywords: ["close", "kill", "detach", t("关闭"), t("后台")] },
-  { id: "close-to-tray", section: "settings-terminal", label: t("关闭时保留后台运行"), description: t("关闭窗口后最小化到系统托盘（仅 Windows 桌面版）"), keywords: ["tray", "minimize", "background", t("托盘"), t("最小化"), t("后台运行"), t("退出")], available: () => DESKTOP && isWindows() },
+  { id: "close-to-tray", section: "settings-terminal", label: t("关闭窗口时最小化到托盘"), description: t("应用留在系统托盘继续运行，会话保持连接（仅 Windows 桌面版）"), keywords: ["tray", "minimize", "background", t("托盘"), t("最小化"), t("后台运行"), t("退出")], available: () => DESKTOP && isWindows() },
   { id: "osc52", section: "settings-terminal", label: t("允许远程主机写入剪贴板（OSC 52）"), keywords: ["clipboard", "osc52", t("剪贴板")] },
   { id: "ctrl-v-paste", section: "settings-terminal", label: t("Ctrl+V 粘贴"), description: t("Windows：关闭后 Ctrl+V 发送 ^V"), keywords: ["paste", "ctrl+v", "clipboard", "vim", "^V", "quoted-insert", t("块选择"), t("粘贴"), t("剪贴板")], available: isWindows },
   { id: "terminal-confirm-multiline-paste", section: "settings-terminal", label: t("多行粘贴确认"), description: t("粘贴多行文本前的确认方式"), keywords: ["paste", "bracketed paste", t("括号粘贴"), "multiline", "multi-line", "confirm", "clipboard", t("粘贴"), t("多行"), t("确认"), t("提示"), t("剪贴板")] },
