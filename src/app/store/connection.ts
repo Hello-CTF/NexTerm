@@ -101,6 +101,7 @@ export async function openConnectedAssetSession(
   if (restored) {
     useUi.setState((state) => {
       let rebound = rebindWorkspaceSession(state.workspaces, restored.id, restored.sessionId, info.id);
+      if (asset.kind !== "ssh" && asset.kind !== "device") rebound = resetRestartedTerminals(rebound, restored.id);
       if (asset.kind === "docker") rebound = withDockerTab(rebound, restored.id, info.id);
       if (options?.preserveUserFocus) return { workspaces: rebound };
       return {
@@ -132,6 +133,23 @@ export async function openConnectedAssetSession(
   if ((quickTarget || options?.openTerminal) && asset.kind !== "docker" && asset.kind !== "device") {
     await openTerminalTab(info, undefined, pane.id);
   }
+}
+
+// resetRestartedTerminals clears the dead marks of a host without durable terminals once its new session is bound, as
+// the workspace reconnect does: a terminal reopens on the new session, and a container shell waits for an explicit
+// restart because its exec ended with the old connection.
+function resetRestartedTerminals(workspaces: Workspace[], workspaceId: string): Workspace[] {
+  return workspaces.map((workspace) => workspace.id !== workspaceId ? workspace : {
+    ...workspace,
+    panes: workspace.panes.map((pane) => ({
+      ...pane,
+      tabs: pane.tabs.map((tab) => {
+        if (tab.kind !== "terminal") return tab;
+        if (tab.containerId) return { ...tab, tabId: undefined, restorePending: true, dead: undefined, exited: true };
+        return { ...tab, dead: false };
+      }),
+    })),
+  });
 }
 
 // withDockerTab gives a reconnected container workspace its container list back when that tab was closed.
