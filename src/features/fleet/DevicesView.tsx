@@ -374,10 +374,10 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
       {!revoked && agent && !online && reasonOpen && (
         <div className="nx-alert nx-alert-info mt-2 text-[12px]">
           <div>
-            {t("设备{value}。常见原因：设备关机或断网，或后台服务未运行。", { value: lastSeenAt ? t("自 {value} 起未再联系服务端", { value: formatTime(lastSeenAt) }) : t("尚未联系过服务端") })}
+            {t("设备{value}。常见原因：设备关机或断网，或设备代理服务未运行。", { value: lastSeenAt ? t("自 {value} 起未再联系服务端", { value: formatTime(lastSeenAt) }) : t("尚未联系过服务端") })}
           </div>
           <div className="mt-1 text-neutral-400">
-            {t("请先确认设备已开机并联网；若后台服务未运行，可在设备上重新执行")} <code className="nx-code font-mono">nexterm-agent install</code>{t("。仍无法恢复时，请通过页面右上角的「接入新设备」重新接入。")}
+            {t("请先确认设备已开机并联网；若设备代理服务未运行，可在设备上重新执行")} <code className="nx-code font-mono">nexterm-agent install</code>{t("。仍无法恢复时，请通过页面右上角的「接入新设备」重新接入。")}
           </div>
         </div>
       )}
@@ -387,7 +387,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
           <span>
             {agent?.desired_autostart
               ? t("已设置随用户登录自动启动，但当前未生效")
-              : t("已设置不自动启动，但后台服务当前仍会随登录启动")}
+              : t("已设置不自动启动，但设备代理服务当前仍会随登录启动")}
           </span>
           {!online && <span className="nx-hint">{t("设备离线，上线后生效")}</span>}
           <button
@@ -401,7 +401,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
       )}
       {!revoked && serviceError && (
         <div className="mt-1 min-w-0 break-all text-[12px] text-red-300" title={serviceError}>
-          {t("后台服务出错：{serviceError}", { serviceError })}
+          {t("设备代理服务出错：{serviceError}", { serviceError })}
         </div>
       )}
       {!revoked && upgradeError && (
@@ -477,7 +477,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
             </label>
             {!online && <div className="nx-hint mt-0.5 text-[11px]">{t("设备离线：设置已保存，设备上线后生效")}</div>}
           </DetailRow>}
-          <DetailRow label={t("后台服务")}>{runningText}</DetailRow>
+          <DetailRow label={t("设备代理服务")}>{runningText}</DetailRow>
         </dl>
       )}
 
@@ -843,7 +843,7 @@ export function DevicesView() {
       what: t("{url} 的接入命令", { url: entry.url }),
       command: enrollCommand(entry.url, Boolean(entry.insecure), code),
     })),
-    install: { key: "install", label: t("安装后台服务"), what: t("安装命令"), command: installCommand() },
+    install: { key: "install", label: t("安装设备代理服务"), what: t("安装命令"), command: installCommand() },
   });
   const outdatedNote = (d: FleetDevice): string | null => {
     const agentRelease = releaseVersion(d.agent?.app_version);
