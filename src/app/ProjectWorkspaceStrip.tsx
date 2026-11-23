@@ -32,6 +32,14 @@ function workspaceIcon(workspace: Workspace) {
   return assetIcon(workspace.assetKind ?? "ssh");
 }
 
+// closeWorkspaceBatch closes the targets after one confirmation, the active workspace last like 关闭全部工作区, so
+// focus does not step through workspaces that are about to close.
+function closeWorkspaceBatch(targets: Workspace[]): Promise<void> {
+  const activeId = useUi.getState().activeWorkspaceId;
+  const ids = targets.map((item) => item.id);
+  return closeWorkspaces([...ids.filter((id) => id !== activeId), ...ids.filter((id) => id === activeId)]);
+}
+
 interface WorkspaceStripTabProps {
   workspace: Workspace;
   visibleWorkspaces: Workspace[];
@@ -102,14 +110,14 @@ function WorkspaceStripTab({
         label: t("关闭左侧全部工作区"),
         icon: <IconClose size={13} />,
         disabled: closableLeft.length === 0,
-        onSelect: () => void closeWorkspaces(closableLeft.map((item) => item.id)),
+        onSelect: () => void closeWorkspaceBatch(closableLeft),
       },
       {
         kind: "item",
         label: t("关闭右侧全部工作区"),
         icon: <IconClose size={13} />,
         disabled: closableRight.length === 0,
-        onSelect: () => void closeWorkspaces(closableRight.map((item) => item.id)),
+        onSelect: () => void closeWorkspaceBatch(closableRight),
       },
     );
     setMenu({ x: event.clientX, y: event.clientY, items });
