@@ -94,6 +94,9 @@ public class MainActivity extends AppCompatActivity {
         // Set up WebView
         setupWebView();
 
+        // Edge to edge, adjustResize no longer shrinks the WebView: report the keyboard to the page instead.
+        bridge.setKeyboardWatch(1);
+
         // Load the application
         loadApplication();
     }

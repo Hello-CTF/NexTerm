@@ -1,4 +1,6 @@
 import { useEffect } from "react";
+import { DESKTOP } from "../../ipc/env";
+import { listenWailsEvent } from "../../ipc/wails";
 import { isEditableTarget } from "../../ui/DialogHost";
 
 export function visualViewportInset(
@@ -43,6 +45,38 @@ export function virtualKeyboardInset(
   return Math.max(0, Math.min(innerHeight, innerHeight - keyboardTop));
 }
 
+// The Android app draws edge to edge, so the WebView keeps its height under the soft keyboard and neither
+// visualViewport nor the VirtualKeyboard API sees it. Its bridge reports the keyboard as "common:keyboard"
+// {visible, height}, height being the covered part of the WebView in CSS px.
+export const NATIVE_KEYBOARD_EVENT = "common:keyboard";
+
+// A keyboard reported taller than this share of the page is not plausible (a unit mix-up); it is ignored.
+const NATIVE_KEYBOARD_MAX_SHARE = 0.8;
+
+// nativeKeyboardInset reads a "common:keyboard" payload (an object, or its JSON text) as the inset to use, 0 when the
+// keyboard is hidden. It returns null for a payload it cannot trust, which leaves the browser's own readings in use.
+export function nativeKeyboardInset(payload: unknown, innerHeight: number): number | null {
+  let value = payload;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== "object") return null;
+  const { visible, height } = value as { visible?: unknown; height?: unknown };
+  if (visible === false) return 0;
+  if (typeof height !== "number" || !Number.isFinite(height) || height < 0) return null;
+  if (height === 0) return 0;
+  if (!Number.isFinite(innerHeight) || innerHeight <= 0 || height > innerHeight * NATIVE_KEYBOARD_MAX_SHARE) return null;
+  return height;
+}
+
+export function nativeKeyboardAvailable(desktop: boolean, userAgent: string): boolean {
+  return desktop && /Android/i.test(userAgent);
+}
+
 interface VirtualKeyboardLike extends EventTarget {
   overlaysContent: boolean;
   readonly boundingRect: DOMRect;
@@ -55,9 +89,17 @@ export function useKeyboardInset(): void {
     let frame: number | null = null;
     let vk: VirtualKeyboardLike | undefined;
 
+    // The last native keyboard inset; null until the Android bridge reported one or after one it could not trust.
+    // Only an open keyboard (above 0) overrides the browser's readings, so they stay the fallback.
+    let nativeInset: number | null = null;
+    // The inset overlays the layout viewport (native or VirtualKeyboard), so the visual viewport offset does not apply.
     let fromVk = false;
     const readInset = (): number => {
       fromVk = false;
+      if (nativeInset !== null && nativeInset > 0) {
+        fromVk = true;
+        return Math.min(nativeInset, window.innerHeight);
+      }
       if (vk) {
         try {
           fromVk = true;
@@ -141,6 +183,20 @@ export function useKeyboardInset(): void {
     } catch {
       vk = undefined;
     }
+    let disposed = false;
+    let unlistenNative: (() => void) | null = null;
+    if (nativeKeyboardAvailable(DESKTOP, navigator.userAgent)) {
+      listenWailsEvent<unknown>(NATIVE_KEYBOARD_EVENT, (payload) => {
+        nativeInset = nativeKeyboardInset(payload, window.innerHeight);
+        schedule();
+      }).then(
+        (off) => {
+          if (disposed) off();
+          else unlistenNative = off;
+        },
+        () => {},
+      );
+    }
     vv?.addEventListener("resize", schedule);
     vv?.addEventListener("scroll", schedule);
     window.addEventListener("resize", schedule);
@@ -148,6 +204,8 @@ export function useKeyboardInset(): void {
     document.addEventListener("focusin", schedule, true);
     schedule();
     return () => {
+      disposed = true;
+      unlistenNative?.();
       if (frame !== null) cancelAnimationFrame(frame);
       disableVk();
       vv?.removeEventListener("resize", schedule);
