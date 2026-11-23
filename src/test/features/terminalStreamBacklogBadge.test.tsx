@@ -180,23 +180,23 @@ afterEach(() => {
 
 describe("terminal stream parse-backlog badge", () => {
   it("shows while the stream writer is paused with pending byte visibility", () => {
-    expect(badge("解析积压")).toBeNull();
+    expect(badge("渲染延迟")).toBeNull();
     emitBacklog({ paused: true, pendingBytes: 4096, oldestPendingAgeMs: 12 });
-    const el = badge("解析积压");
+    const el = badge("渲染延迟");
     expect(el).not.toBeNull();
     expect(el?.getAttribute("title")).toContain("4096");
   });
 
   it("clears when the writer resumes", () => {
     emitBacklog({ paused: true, pendingBytes: 4096, oldestPendingAgeMs: 12 });
-    expect(badge("解析积压")).not.toBeNull();
+    expect(badge("渲染延迟")).not.toBeNull();
     emitBacklog(null);
-    expect(badge("解析积压")).toBeNull();
+    expect(badge("渲染延迟")).toBeNull();
   });
 
   it("clears stale backlog state when a new attach reports info", () => {
     emitBacklog({ paused: true, pendingBytes: 8192, oldestPendingAgeMs: 3 });
-    expect(badge("解析积压")).not.toBeNull();
+    expect(badge("渲染延迟")).not.toBeNull();
     act(() => {
       (harness.xtermProps?.onAttachInfo as ((info: unknown) => void) | undefined)?.({
         tabId: "kernel-1",
@@ -206,6 +206,6 @@ describe("terminal stream parse-backlog badge", () => {
         exited: false,
       });
     });
-    expect(badge("解析积压")).toBeNull();
+    expect(badge("渲染延迟")).toBeNull();
   });
 });
