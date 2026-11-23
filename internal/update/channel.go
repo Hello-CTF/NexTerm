@@ -23,6 +23,27 @@ func StoredChannel(ctx context.Context, store ChannelStore) ReleaseChannel {
 	return NormalizeReleaseChannel(value)
 }
 
+// LookupChannel reads the channel like StoredChannel but reports a read error instead of assuming stable, for
+// callers that would discard something on the stable channel.
+func LookupChannel(ctx context.Context, store ChannelStore) (ReleaseChannel, error) {
+	if store == nil {
+		return ChannelStable, nil
+	}
+	value, found, err := store.SettingGet(ctx, ReleaseChannelSettingKey)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return ChannelStable, nil
+	}
+	return NormalizeReleaseChannel(value), nil
+}
+
+// ChannelLookupFor adapts a store into Manager.ChannelLookup.
+func ChannelLookupFor(store ChannelStore) func(context.Context) (ReleaseChannel, error) {
+	return func(ctx context.Context) (ReleaseChannel, error) { return LookupChannel(ctx, store) }
+}
+
 // StoreChannel persists a validated channel to the local settings only.
 func StoreChannel(ctx context.Context, store ChannelStore, channel ReleaseChannel) error {
 	if _, ok := ParseReleaseChannel(string(channel)); !ok {

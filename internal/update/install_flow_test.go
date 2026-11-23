@@ -197,8 +197,8 @@ func TestRestartWaitsForRunningInstall(t *testing.T) {
 		return nil
 	}}
 	manager.installing.Store(true)
-	if result := manager.Restart(context.Background()); result.Restarted || result.UnavailableReason == "" || restarted {
-		t.Fatalf("restart during install = %+v", result)
+	if result := manager.Restart(context.Background()); result.Restarted || result.Failure != FailureApply || result.UnavailableReason == "" || restarted {
+		t.Fatalf("restart during install = %+v, want an apply failure (nothing installed)", result)
 	}
 	manager.installing.Store(false)
 	if result := manager.Restart(context.Background()); !result.Restarted || !restarted {

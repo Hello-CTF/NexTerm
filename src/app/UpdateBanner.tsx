@@ -19,6 +19,10 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
   useEffect(() => {
     if (installError) useUi.getState().pushToast("error", t("更新安装失败：{installError}", { installError }));
   }, [installError]);
+  // A restart that discards the package also drops the restart offer, so the reason would otherwise vanish with it.
+  useEffect(() => {
+    if (restartError) useUi.getState().pushToast("error", restartErrorText(restartFailure, restartError));
+  }, [restartError, restartFailure]);
   if (!DESKTOP) return null;
   if (install.active) {
     const percent =

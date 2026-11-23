@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/releasesig/releasesigtest"
 )
@@ -307,16 +308,20 @@ func TestRestartRefusesSymlinkedPackage(t *testing.T) {
 	stage.requireRefused(t, stage.manager)
 }
 
-func TestStagedReleaseCandidateIsDroppedOnStableChannel(t *testing.T) {
+func TestStagedReleaseCandidateIsDroppedOnExplicitSwitchToStable(t *testing.T) {
 	channel := ChannelRC
 	stage := newStageFixtureWith(t, "0.3.0-rc.1", t.TempDir(), stageOptions{prerelease: true, channel: &channel})
 	stage.install(t)
-	if state := stage.manager.State(); state.ReadyVersion != "0.3.0-rc.1" {
-		t.Fatalf("state = %+v", state)
-	}
 	channel = ChannelStable
+	// Reading the state never discards anything.
+	if state := stage.manager.State(); state.ReadyVersion != "0.3.0-rc.1" {
+		t.Fatalf("state = %+v, State must not discard the candidate", state)
+	}
+	if !stage.manager.ChannelChanged(context.Background(), ChannelStable) {
+		t.Fatal("switching to stable must discard the staged candidate")
+	}
 	if state := stage.manager.State(); state.ReadyVersion != "" || state.Phase == StateReady {
-		t.Fatalf("state after switching to stable = %+v, want the candidate dropped", state)
+		t.Fatalf("state after switching to stable = %+v", state)
 	}
 	requireStageEmpty(t, stage.stageDir)
 
@@ -325,6 +330,98 @@ func TestStagedReleaseCandidateIsDroppedOnStableChannel(t *testing.T) {
 	stage.install(t)
 	channel = ChannelStable
 	stage.requireRefused(t, stage.manager)
+}
+
+func TestChannelChangeLeavesTheStageAloneWhileInstalling(t *testing.T) {
+	channel := ChannelRC
+	stage := newStageFixtureWith(t, "0.3.0-rc.1", t.TempDir(), stageOptions{prerelease: true, channel: &channel})
+	stage.install(t)
+	stage.manager.installing.Store(true)
+	if stage.manager.ChannelChanged(context.Background(), ChannelStable) {
+		t.Fatal("a channel change must not touch the stage while a download or an apply holds it")
+	}
+	stage.manager.installing.Store(false)
+	if _, ok := stage.manager.stagedPackage(); !ok {
+		t.Fatal("the staged candidate must be kept")
+	}
+}
+
+func TestUnreadableChannelKeepsStagedCandidate(t *testing.T) {
+	channel := ChannelRC
+	stageDir := t.TempDir()
+	first := newStageFixtureWith(t, "0.3.0-rc.1", stageDir, stageOptions{prerelease: true, channel: &channel})
+	first.install(t)
+	next := newStageFixtureWith(t, "0.3.0-rc.1", stageDir, stageOptions{prerelease: true, channel: &channel})
+	next.manager.ChannelProvider = func(context.Context) ReleaseChannel { return ChannelStable }
+	next.manager.ChannelLookup = func(context.Context) (ReleaseChannel, error) { return "", errors.New("database is locked") }
+	if state := next.manager.State(); state.ReadyVersion != "0.3.0-rc.1" {
+		t.Fatalf("state = %+v, a settings read error must not discard the candidate", state)
+	}
+	if result := next.manager.Restart(context.Background()); !result.Installed || !result.Restarted {
+		t.Fatalf("restart = %+v", result)
+	}
+}
+
+func TestRestartInstallsOnlyTheOfferedVersion(t *testing.T) {
+	stageDir := t.TempDir()
+	offered := newStageFixture(t, "0.3.0", stageDir)
+	offered.install(t)
+	// Something else stages a newer signed-off release in the same directory meanwhile.
+	other := newStageFixture(t, "0.4.0", stageDir)
+	other.install(t)
+	result := offered.requireRefused(t, offered.manager)
+	if !strings.Contains(result.UnavailableReason, "0.4.0") {
+		t.Fatalf("reason = %q", result.UnavailableReason)
+	}
+}
+
+func TestStagedPrereleaseMustBeAReleaseCandidate(t *testing.T) {
+	for version, want := range map[string]bool{"0.3.0": true, "0.3.0-rc.2": true, "0.3.0-beta.1": false, "0.3.0-rc.01": false, "0.3.0-rc": false} {
+		if got := releaseVersionForm(version); got != want {
+			t.Fatalf("releaseVersionForm(%q) = %v, want %v", version, got, want)
+		}
+	}
+}
+
+func TestHungApplyIsBoundedAndKeepsThePackage(t *testing.T) {
+	stage := newStageFixture(t, "0.3.0", t.TempDir())
+	stage.install(t)
+	previous := applyTimeout
+	applyTimeout = time.Nanosecond
+	t.Cleanup(func() { applyTimeout = previous })
+	result := stage.manager.Restart(context.Background())
+	if result.Installed || result.Restarted || result.Failure != FailureApply || stage.content(t) != "old-binary" {
+		t.Fatalf("restart = %+v, content = %q", result, stage.content(t))
+	}
+	if _, ok := stage.manager.stagedPackage(); !ok {
+		t.Fatal("an apply that timed out must keep the package for another try")
+	}
+	if stage.manager.installing.Load() {
+		t.Fatal("the install lock must be released")
+	}
+}
+
+func TestUnreadablePackageIsKeptNotDiscarded(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any file")
+	}
+	stage := newStageFixture(t, "0.3.0", t.TempDir())
+	staged := stage.install(t)
+	path := staged.path(stage.stageDir)
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	result := stage.manager.Restart(context.Background())
+	if result.Installed || result.Failure != FailureApply || !strings.Contains(result.UnavailableReason, "可稍后重试") {
+		t.Fatalf("restart = %+v", result)
+	}
+	if _, ok := stage.manager.stagedPackage(); !ok {
+		t.Fatal("a package that could not be read must be kept")
+	}
+	if stage.restarts != 0 {
+		t.Fatal("nothing may be relaunched")
+	}
 }
 
 func TestRestartRefusesToRelaunchWhenTheOfferedPackageIsGone(t *testing.T) {

@@ -580,7 +580,8 @@ describe("install only at restart", () => {
     await flushUntil(() => (mounted?.container.textContent ?? "").includes("更新未安装：disk full"));
     await flush();
     expect(mounted.container.textContent).not.toContain("重启失败");
-    expect(toast).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith("error", "更新未安装：disk full");
     release();
   });
 
@@ -594,6 +595,41 @@ describe("install only at restart", () => {
     expect(mounted.container.textContent).toContain("请手动退出并重新打开应用");
     expect(mounted.container.textContent).not.toContain("下载完成，重启时安装");
     expect([...mounted.container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "立即重启")).toBe(true);
+  });
+
+  it("toasts why a restart from the banner discarded the package, even though the offer disappears", async () => {
+    const toast = vi.fn();
+    useUi.setState({ pushToast: toast });
+    mocks.restart.mockResolvedValue({ failure: "apply", installed: false, restarted: false, version: "", unavailableReason: "已下载的更新包校验失败，已丢弃，请重新下载: x" });
+    mocks.state.mockResolvedValue({ phase: "failed", version: "0.3.0", taskId: "", transferred: 0, total: 0, error: "x", readyVersion: "" });
+    useUpdateStore.setState({ status: makeStatus(), readyVersion: "0.3.0" });
+    mounted = mount(createElement(UpdateBanner, { onOpenSettings: vi.fn() }));
+    clickButton(mounted.container, "立即重启并安装");
+    await flushUntil(() => useUpdateStore.getState().readyVersion === null);
+    await flushUntil(() => toast.mock.calls.length === 1);
+    expect(toast).toHaveBeenCalledWith("error", "更新未安装：已下载的更新包校验失败，已丢弃，请重新下载: x");
+    expect(mounted.container.textContent).toContain("发现新版本");
+  });
+
+  it("does not tell the user to quit when a restart was refused without installing anything", async () => {
+    mocks.restart.mockResolvedValue({ installed: false, restarted: false, version: "", unavailableReason: "正在安装更新，请等待安装完成后再重启" });
+    mocks.state.mockResolvedValue({ phase: "ready", version: "0.3.0", taskId: "", transferred: 0, total: 0, error: "", readyVersion: "0.3.0" });
+    useUpdateStore.setState({ status: makeStatus(), readyVersion: "0.3.0" });
+    mounted = mount(createElement(UpdateCard));
+    clickButton(mounted.container, "立即重启并安装");
+    await flushUntil(() => (mounted?.container.textContent ?? "").includes("更新未安装：正在安装更新"));
+    expect(mounted.container.textContent).not.toContain("请手动退出");
+  });
+
+  it("disables the restart while a download runs", async () => {
+    useUpdateStore.setState({
+      status: makeStatus({ version: "0.3.1" }),
+      readyVersion: "0.3.0",
+      install: { active: true, phase: "download", transferred: 1, total: 8, error: null, taskId: "t1" },
+    });
+    mounted = mount(createElement(UpdateCard));
+    const button = [...mounted.container.querySelectorAll("button")].find((b) => b.textContent?.trim() === "立即重启并安装");
+    expect(button?.disabled).toBe(true);
   });
 
   it("names an old release without this platform's package neutrally", async () => {
