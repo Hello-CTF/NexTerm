@@ -93,7 +93,7 @@ func helperReplaceMessage(detail *HelperReplaceFailure) string {
 			message = "新版持久终端组件未能启动"
 		}
 	default:
-		message = "升级持久终端组件失败"
+		message = "替换持久终端组件失败"
 	}
 	if detail.Forced {
 		message += "；" + ForcedStopNote
@@ -108,11 +108,11 @@ func helperReplaceMessage(detail *HelperReplaceFailure) string {
 // (protocol 2) helper that this build cannot attach to. The session itself
 // keeps running there until the user agrees to replace that helper.
 var legacyHelperBanner = []byte("\r\n\x1b[33m[NexTerm] 旧版组件：此持久终端仍在主机上的旧版持久终端组件中运行，当前版本无法接入。" +
-	"在持久终端组件窗口确认升级后它会被终止；不升级时它继续在旧版组件中运行。\x1b[0m\r\n")
+	"在持久终端组件窗口确认替换后它会被终止；不替换时它继续在旧版组件中运行。\x1b[0m\r\n")
 
 // legacyHelperTerminatedBanner follows legacyHelperBanner once the user agreed
 // to replace the older helper: the session it ran was ended with it.
-var legacyHelperTerminatedBanner = []byte("\r\n\x1b[31m[NexTerm] 已终止：已按确认升级持久终端组件，旧版组件及此终端的会话已结束；" +
+var legacyHelperTerminatedBanner = []byte("\r\n\x1b[31m[NexTerm] 已终止：已按确认替换持久终端组件，旧版组件及此终端的会话已结束；" +
 	"其输出记录保留为只读。\x1b[0m\r\n")
 
 // legacyEndedTabs remembers the tabs of each session that ended with the

@@ -70,7 +70,7 @@ function replaceFailureText(failure: HelperReplaceFailurePresentation): string {
       if (failure.stopped) return t("旧版组件已结束（其中的会话已终止），但新版持久终端组件未能启动。");
       return t("新版持久终端组件未能启动。");
     default:
-      return t("升级持久终端组件失败。");
+      return t("替换持久终端组件失败。");
   }
 }
 
@@ -236,11 +236,11 @@ function versionSummary(version: HelperVersionPresentation): string {
   return parts.join(" · ") || t("组件版本");
 }
 
-// An older helper that was inspected is replaced in the app after explicit consent (the 旧版组件 section). Any other
+// An older helper that was inspected is replaced in the app after explicit consent (the 旧版持久终端组件 section). Any other
 // incompatible helper reports no process or session count, so the only way past it is to stop it on the host.
 const INCOMPATIBLE_REMEDY =
   t("可在主机上手动结束旧的持久终端组件进程（其中运行的终端会话会随之结束），然后重新连接，NexTerm 会安装新组件。");
-const LEGACY_REMEDY = t("可在下方「旧版组件」中查看其中的会话并确认升级。");
+const LEGACY_REMEDY = t("可在下方「旧版持久终端组件」中查看其中的会话并确认替换。");
 
 function versionCompatibilityText(
   compatibility: HelperCompatibility,
@@ -326,19 +326,19 @@ function LegacySection({
   ].filter(Boolean).join("，");
   const canReplace = Boolean(legacy.consentToken) && onReplaceLegacy !== undefined;
   return (
-    <section aria-label={t("旧版组件")} className="flex flex-col gap-2 rounded border border-[var(--nx-fg-warning)]/40 p-2">
-      <h3 className="font-medium text-neutral-200">{t("旧版组件")}</h3>
+    <section aria-label={t("旧版持久终端组件")} className="flex flex-col gap-2 rounded border border-[var(--nx-fg-warning)]/40 p-2">
+      <h3 className="font-medium text-neutral-200">{t("旧版持久终端组件")}</h3>
       <p>
-        {t("主机上仍在运行旧版持久终端组件（{identity}），当前版本无法接入其中的终端；不升级时它们继续在旧版组件中运行。", { identity })}
+        {t("主机上仍在运行旧版持久终端组件（{identity}），当前版本无法接入其中的终端；不替换时它们继续在旧版组件中运行。", { identity })}
       </p>
       <p>{legacySessionText(legacy)}</p>
       {legacy.stale && <p role="alert" className="text-[var(--nx-fg-warning)]">{t("旧版组件的状态已变化，请核对上面最新的会话数后重新确认。")}</p>}
       {legacy.consentToken ? (
         <p id={noteId} className="text-[var(--nx-fg-warning)]">
-          {t("升级会先请求旧版组件退出，超时后强制结束，再启动新版组件。上述会话会被终止且无法恢复；它们的输出记录保留为只读。")}
+          {t("替换时会先请求旧版组件退出，超时后强制结束，再启动新版组件。上述会话会被终止且无法恢复；它们的输出记录保留为只读。")}
         </p>
       ) : (
-        <p className="text-neutral-500">{t("无法核实旧版组件的进程归属或会话数，不能在应用内升级。")}</p>
+        <p className="text-neutral-500">{t("无法核实旧版组件的进程归属或会话数，不能在应用内替换。")}</p>
       )}
       {canReplace && (
         <div className="flex flex-col gap-2">
@@ -362,7 +362,7 @@ function LegacySection({
               onClick={onReplaceLegacy}
               onKeyDown={activateFromKeyboard}
             >
-              {t("终止旧版组件并升级")}
+              {t("终止旧版组件并替换为新版")}
             </button>
           </div>
         </div>
@@ -716,12 +716,12 @@ export function HelperOperationView({
       )}
 
       {replaceFailure && (
-        <section aria-label={t("持久终端组件更新失败")} className="flex flex-col gap-1 rounded border border-red-500/40 p-2">
-          <h3 className="font-medium text-neutral-200">{t("持久终端组件更新失败")}</h3>
+        <section aria-label={t("持久终端组件替换失败")} className="flex flex-col gap-1 rounded border border-red-500/40 p-2">
+          <h3 className="font-medium text-neutral-200">{t("持久终端组件替换失败")}</h3>
           <p role="alert" className="text-red-300">{replaceFailureText(replaceFailure)}</p>
           {replaceFailure.forced && <p className="text-[var(--nx-fg-warning)]">{FORCED_STOP_NOTE}</p>}
           {replaceFailure.cause && <p className="break-words text-neutral-500">{replaceFailure.cause}</p>}
-          <p className="text-neutral-500">{t("不会自动重试；如需再次升级，请重新检查组件状态并确认。")}</p>
+          <p className="text-neutral-500">{t("不会自动重试；如需再次替换，请重新检查组件状态并确认。")}</p>
         </section>
       )}
 
@@ -771,10 +771,10 @@ export function HelperOperationView({
 
       {update && !plainCurrent && (
         <section
-          aria-label={t("组件更新")}
+          aria-label={t("持久终端组件更新")}
           className="flex flex-col gap-2 rounded border border-neutral-800/70 p-2"
         >
-          <h3 className="font-medium text-neutral-200">{t("组件更新")}</h3>
+          <h3 className="font-medium text-neutral-200">{t("持久终端组件更新")}</h3>
           <div role="status" aria-live="polite" aria-atomic="true">
             {update.status === "current" && <p>{t("持久终端组件已是最新版本。")}</p>}
             {update.status === "available" && <p>{t("持久终端组件有可用更新。")}</p>}

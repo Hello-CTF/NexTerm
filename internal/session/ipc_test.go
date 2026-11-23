@@ -80,7 +80,7 @@ func TestIPCErrorUserMessagesAreActionable(t *testing.T) {
 		{err: ErrTabOpenElsewhere, code: ipc.Code("tab_open_elsewhere"), want: "已在另一个工作区打开"},
 		{err: ErrDurableUnrecoverable, code: ipc.Code("durable_unrecoverable"), want: "无法恢复"},
 		{err: fmt.Errorf("%w: %w", durable.ErrUnavailable, supervisor.ErrHelperUpgradeRequired), code: ipc.Code("helper_upgrade_required"), want: "升级后才能使用"},
-		{err: fmt.Errorf("%w: %w", durable.ErrUnavailable, supervisor.ErrLegacyHelperRunning), code: ipc.Code("helper_upgrade_required"), want: "确认升级"},
+		{err: fmt.Errorf("%w: %w", durable.ErrUnavailable, supervisor.ErrLegacyHelperRunning), code: ipc.Code("helper_upgrade_required"), want: "确认替换"},
 		{err: durable.ErrGenerationMismatch, code: ipc.Code("durable_helper_restarted"), want: "持久终端组件已重启"},
 		{err: supervisor.ErrClientUpgradeRequired, code: ipc.Code("client_upgrade_required"), want: "升级客户端"},
 		{err: ErrInvalidSize, code: ipc.CodeBadParam, want: "终端尺寸无效"},

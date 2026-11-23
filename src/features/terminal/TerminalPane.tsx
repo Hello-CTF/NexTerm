@@ -1808,7 +1808,7 @@ export function TerminalPane({
       } else if (result.legacy?.stale) {
         setHelperPanelError(tr("旧版组件的状态已变化，请核对最新的会话数后重新确认"));
       }
-    }, generation, tr("正在终止旧版组件并升级…"));
+    }, generation, tr("正在终止旧版组件并替换为新版…"));
   };
 
   const deferHelperUpdate = () => {

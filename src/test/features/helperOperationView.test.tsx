@@ -278,7 +278,7 @@ describe("HelperOperationView", () => {
       expect(terms(view.container)).not.toContain(term);
     }
     expect(view.container.querySelector("details")?.open).toBe(false);
-    expect(() => sectionByLabel(view.container, "组件更新")).toThrow();
+    expect(() => sectionByLabel(view.container, "持久终端组件更新")).toThrow();
     expect(view.container.textContent?.split("已是最新")).toHaveLength(2);
   });
 
@@ -343,7 +343,7 @@ describe("HelperOperationView", () => {
     expect(view.container.textContent).toContain("协议兼容，可继续使用；有可用更新。");
     expect(differs(sectionByLabel(view.container, "本机内置版本"), "发布版本")).toBe(true);
     expect(statusText(view.container)).toBe("持久终端已就绪");
-    expect(sectionByLabel(view.container, "组件更新").textContent).toContain("有可用更新");
+    expect(sectionByLabel(view.container, "持久终端组件更新").textContent).toContain("有可用更新");
   });
 
   it("does not promise continuing on a compatible protocol when the operation failed", () => {
@@ -377,7 +377,7 @@ describe("HelperOperationView", () => {
 
   it("tells the user to stop an incompatible helper by hand when the update state is unknown", () => {
     const view = renderView({ compatibility: "incompatible", update: { status: "unknown" } });
-    const update = sectionByLabel(view.container, "组件更新");
+    const update = sectionByLabel(view.container, "持久终端组件更新");
     expect(update.textContent).toContain("在主机上手动结束旧的持久终端组件进程");
     expect(update.textContent).not.toContain("可选择中断进程并更新");
     expect(update.querySelectorAll("button")).toHaveLength(0);
@@ -577,7 +577,7 @@ describe("HelperOperationView", () => {
       },
       onReplaceLegacy,
     });
-    const section = sectionByLabel(view.container, "旧版组件");
+    const section = sectionByLabel(view.container, "旧版持久终端组件");
     expect(section.textContent).toContain("协议 v2");
     expect(section.textContent).toContain("版本 1.2.9");
     expect(section.textContent).toContain("进程 4242");
@@ -586,7 +586,7 @@ describe("HelperOperationView", () => {
     expect(section.textContent).toContain("输出记录保留为只读");
     expect(view.container.textContent).not.toContain("手动结束");
 
-    const replace = buttonByText(section, "终止旧版组件并升级");
+    const replace = buttonByText(section, "终止旧版组件并替换为新版");
     expect(replace.disabled).toBe(true);
     click(replace);
     expect(onReplaceLegacy).not.toHaveBeenCalled();
@@ -607,7 +607,7 @@ describe("HelperOperationView", () => {
       legacy: { protocol: 2, ptySessions: 2, execSessions: 0, activityKnown: false, ptyListed: true, consentToken: "2:7:2:2", stale: true },
       onReplaceLegacy: vi.fn(),
     });
-    const section = sectionByLabel(listed.container, "旧版组件");
+    const section = sectionByLabel(listed.container, "旧版持久终端组件");
     expect(section.textContent).toContain("至少有 2 个终端会话");
     expect(section.textContent).toContain("后台命令数未知");
     expect(section.textContent).toContain("状态已变化");
@@ -619,9 +619,9 @@ describe("HelperOperationView", () => {
       legacy: { protocol: 2, ptySessions: 0, execSessions: 0, activityKnown: false, ptyListed: false },
       onReplaceLegacy: vi.fn(),
     });
-    const blocked = sectionByLabel(uninspected.container, "旧版组件");
+    const blocked = sectionByLabel(uninspected.container, "旧版持久终端组件");
     expect(blocked.textContent).toContain("无法确认其中有多少会话");
-    expect(blocked.textContent).toContain("不能在应用内升级");
+    expect(blocked.textContent).toContain("不能在应用内替换");
     expect(blocked.querySelector("button")).toBeNull();
   });
 
@@ -657,7 +657,7 @@ describe("HelperOperationView", () => {
 
   it("shows where a consented replacement failed and what it already did", () => {
     const stopped = renderView({ replaceFailure: { stage: "start", stopped: true, forced: true, rolledBack: true, cause: "did not start" } });
-    const section = sectionByLabel(stopped.container, "持久终端组件更新失败");
+    const section = sectionByLabel(stopped.container, "持久终端组件替换失败");
     expect(section.querySelector("[role=alert]")?.textContent).toContain("会话已终止");
     expect(section.textContent).toContain("已重新启动旧版组件，原会话不会恢复");
     expect(section.textContent).toContain("强制结束");
@@ -667,6 +667,6 @@ describe("HelperOperationView", () => {
     mounted = undefined;
 
     const refused = renderView({ replaceFailure: { stage: "terminate", stopped: false, forced: false, rolledBack: false } });
-    expect(sectionByLabel(refused.container, "持久终端组件更新失败").textContent).toContain("它和其中的会话仍在运行");
+    expect(sectionByLabel(refused.container, "持久终端组件替换失败").textContent).toContain("它和其中的会话仍在运行");
   });
 });
