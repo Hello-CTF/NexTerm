@@ -20,9 +20,9 @@ export function privacyGuardFor(status: PrivacyStatus | null, override: ModelPri
   return { enabled: true, broken: !privacyUsable(status) };
 }
 
-/** Whether redaction can run at all: a supported runtime and a chosen local model that is available. */
+/** Whether redaction can run at all: a chosen local model that is available. */
 export function privacyUsable(status: PrivacyStatus): boolean {
-  return status.runtime.supported && Boolean(status.config.revision) && status.selection?.available !== false;
+  return Boolean(status.config.revision) && status.selection?.available !== false;
 }
 
 /** Follows the privacy status IPC; null until the first status arrives. */

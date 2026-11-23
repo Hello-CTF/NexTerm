@@ -103,14 +103,13 @@ func managedFixture(t *testing.T) (*Manager, *memoryPrivacySettings, Installatio
 	t.Helper()
 	settings := newPrivacySettings()
 	root := t.TempDir()
-	installation, files := fixtureInstallation(t, INT8)
+	installation, files := fixtureInstallation(t, FP32)
 	writeFixtureInstallation(t, root, installation, files)
 	loads := &atomic.Int64{}
 	manager := NewManager(settings, root, false, func(context.Context, string, Installation) (Engine, error) {
 		loads.Add(1)
 		return &fixtureEngine{}, nil
 	})
-	manager.runtime = nil
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
 	return manager, settings, installation, loads
 }
@@ -148,7 +147,7 @@ func TestManagerStableAcrossRestartAndIsolatedAcrossOwners(t *testing.T) {
 	alice := privacyOwner(t, "alice", "same-conversation")
 	bob := privacyOwner(t, "bob", "same-conversation")
 	for _, ctx := range []context.Context{alice, bob} {
-		if _, err := manager.Configure(ctx, true, INT8, installation.Revision); err != nil {
+		if _, err := manager.Configure(ctx, true, FP32, installation.Revision); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -194,7 +193,7 @@ func TestManagerStableAcrossRestartAndIsolatedAcrossOwners(t *testing.T) {
 func TestManagerFailsClosedForMissingCorruptOrLockedModels(t *testing.T) {
 	manager, settings, installation, loads := managedFixture(t)
 	ctx := privacyOwner(t, "alice", "conversation")
-	if _, err := manager.Configure(ctx, true, INT8, ""); err == nil {
+	if _, err := manager.Configure(ctx, true, FP32, ""); err == nil {
 		t.Fatal("enabled without model")
 	}
 	status, err := manager.Status(ctx)
@@ -204,18 +203,18 @@ func TestManagerFailsClosedForMissingCorruptOrLockedModels(t *testing.T) {
 	if status.Config.Enabled {
 		t.Fatal("failed activation changed opt-in")
 	}
-	if err := os.WriteFile(filepath.Join(manager.modelDir(Config{Revision: installation.Revision, Precision: INT8}), modelFileName(INT8)), []byte("corrupt"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(manager.modelDir(Config{Revision: installation.Revision, Precision: FP32}), modelFileName(FP32)), []byte("corrupt"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.Configure(ctx, true, INT8, installation.Revision); err == nil {
+	if _, err := manager.Configure(ctx, true, FP32, installation.Revision); err == nil {
 		t.Fatal("corrupt model enabled")
 	}
 	if loads.Load() != 0 {
 		t.Fatal("corrupt file reached engine loader")
 	}
-	_, files := fixtureInstallation(t, INT8)
+	_, files := fixtureInstallation(t, FP32)
 	writeFixtureInstallation(t, manager.root, installation, files)
-	if _, err := manager.Configure(ctx, true, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(ctx, true, FP32, installation.Revision); err != nil {
 		t.Fatal(err)
 	}
 	settings.protector.locked.Store(true)
@@ -227,7 +226,7 @@ func TestManagerFailsClosedForMissingCorruptOrLockedModels(t *testing.T) {
 func TestManagerShutdownInvalidatesPreviouslyIssuedExchange(t *testing.T) {
 	manager, _, installation, loads := managedFixture(t)
 	ctx := privacyOwner(t, "alice", "conversation")
-	if _, err := manager.Configure(ctx, true, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(ctx, true, FP32, installation.Revision); err != nil {
 		t.Fatal(err)
 	}
 	exchange, err := manager.Exchange(ctx)
@@ -252,7 +251,7 @@ func TestManagerShutdownInvalidatesPreviouslyIssuedExchange(t *testing.T) {
 func TestManagerConcurrentRequestsKeepStableOwnerMappings(t *testing.T) {
 	manager, _, installation, _ := managedFixture(t)
 	ctx := privacyOwner(t, "alice", "conversation")
-	if _, err := manager.Configure(ctx, true, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(ctx, true, FP32, installation.Revision); err != nil {
 		t.Fatal(err)
 	}
 	results := make(chan string, 16)
@@ -294,10 +293,10 @@ func TestManagerConcurrentRequestsKeepStableOwnerMappings(t *testing.T) {
 
 func TestManagerDownloadDoesNotEnableProtection(t *testing.T) {
 	manager, _, installation, _ := managedFixture(t)
-	_, files := fixtureInstallation(t, INT8)
+	_, files := fixtureInstallation(t, FP32)
 	manager.catalog = newCatalogFixture(t, installation, files).catalog
 	ctx := privacyAdmin(t, "alice")
-	if _, err := manager.StartDownload(ctx, INT8); err != nil {
+	if _, err := manager.StartDownload(ctx, FP32); err != nil {
 		t.Fatal(err)
 	}
 	manager.workers.Wait()
@@ -329,13 +328,13 @@ func TestManagerDownloadDoesNotEnableProtection(t *testing.T) {
 func TestManagerCanDisableAfterModelFilesDisappear(t *testing.T) {
 	manager, _, installation, _ := managedFixture(t)
 	ctx := privacyOwner(t, "alice", "conversation")
-	if _, err := manager.Configure(ctx, true, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(ctx, true, FP32, installation.Revision); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.RemoveAll(manager.modelDir(Config{Revision: installation.Revision, Precision: INT8})); err != nil {
+	if err := os.RemoveAll(manager.modelDir(Config{Revision: installation.Revision, Precision: FP32})); err != nil {
 		t.Fatal(err)
 	}
-	status, err := manager.Configure(ctx, false, INT8, installation.Revision)
+	status, err := manager.Configure(ctx, false, FP32, installation.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +347,7 @@ func TestManagerCanDisableAfterModelFilesDisappear(t *testing.T) {
 }
 
 func TestManagerDownloadCancellationBelongsToInitiatingOwner(t *testing.T) {
-	installation, files := fixtureInstallation(t, INT8)
+	installation, files := fixtureInstallation(t, FP32)
 	started := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -370,12 +369,11 @@ func TestManagerDownloadCancellationBelongsToInitiatingOwner(t *testing.T) {
 	}))
 	defer server.Close()
 	manager := NewManager(newPrivacySettings(), t.TempDir(), false, nil)
-	manager.runtime = nil
 	manager.catalog = &Catalog{baseURL: server.URL, client: server.Client()}
 	defer manager.Shutdown(context.Background())
 	alice := privacyAdmin(t, "alice")
 	bob := privacyOwner(t, "bob", "conversation")
-	if _, err := manager.StartDownload(alice, INT8); err != nil {
+	if _, err := manager.StartDownload(alice, FP32); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -415,7 +413,7 @@ func TestManagerForcedExchangeRedactsWhileTheSwitchIsOff(t *testing.T) {
 	if exchange, err := manager.Exchange(WithForceEnabled(alice)); err == nil || exchange != nil {
 		t.Fatalf("forced redaction without a chosen model must block, exchange=%v err=%v", exchange, err)
 	}
-	if _, err := manager.Configure(alice, false, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(alice, false, FP32, installation.Revision); err != nil {
 		t.Fatal(err)
 	}
 	if exchange, err := manager.Exchange(alice); err != nil || exchange != nil {

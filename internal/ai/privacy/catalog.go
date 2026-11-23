@@ -66,6 +66,10 @@ const (
 
 func (p Precision) Valid() bool { return p == INT8 || p == FP32 || p == FP16 }
 
+// Supported reports whether the local engine runs p. INT8 and FP16 remain
+// valid so installations from earlier releases can be listed and removed.
+func (p Precision) Supported() bool { return string(p) == inference.Precision }
+
 type ModelRelease struct {
 	Version  string `json:"version"`
 	Revision string `json:"revision"`
@@ -233,21 +237,19 @@ func (c *Catalog) Resolve(ctx context.Context) (Resolution, error) {
 	return Resolution{NewerIncompatible: resolution.NewerIncompatible}, errors.New("no supported model release is available")
 }
 
-// compatible reports whether any precision of release passes the metadata
+// compatible reports whether the FP32 files of release pass the metadata
 // checks. Only transport failures are returned as errors; content or layout
-// the runtime cannot use makes the release incompatible.
+// the engine cannot use makes the release incompatible.
 func (c *Catalog) compatible(ctx context.Context, release ModelRelease) (bool, error) {
-	for _, precision := range []Precision{INT8, FP32, FP16} {
-		manifest, err := c.Manifest(ctx, release, precision)
-		if err == nil {
-			err = c.checkMetadata(ctx, manifest)
-		}
-		if err == nil {
-			return true, nil
-		}
-		if ctx.Err() != nil || !isContentError(err) {
-			return false, err
-		}
+	manifest, err := c.Manifest(ctx, release, FP32)
+	if err == nil {
+		err = c.checkMetadata(ctx, manifest)
+	}
+	if err == nil {
+		return true, nil
+	}
+	if ctx.Err() != nil || !isContentError(err) {
+		return false, err
 	}
 	return false, nil
 }

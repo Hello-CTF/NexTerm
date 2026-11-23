@@ -8,44 +8,62 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
-
-	"github.com/Hello-CTF/NexTerm/internal/ai/privacy/inference"
 )
 
-func TestManagerUnsupportedRuntimeIsReportedAndBlocksEnableAndDownload(t *testing.T) {
-	manager, _, installation, loads := managedFixture(t)
-	manager.runtime = func() error {
-		return &inference.PlatformError{Message: "本地 AI 脱敏需要 macOS 13.4 或更新版本"}
-	}
+// An INT8 or FP16 model installed by an earlier release stays listed and
+// removable, but cannot be selected, enabled or downloaded, and an enabled
+// selection reports why it no longer works without loading or hashing it.
+func TestManagerRejectsPrecisionsTheEngineCannotRun(t *testing.T) {
+	manager, settings, _, loads := managedFixture(t)
+	legacy, files := fixtureInstallation(t, INT8)
+	writeFixtureInstallation(t, manager.root, legacy, files)
 	ctx := privacyAdmin(t, "alice")
+	if _, err := manager.Configure(ctx, true, INT8, legacy.Revision); err == nil || !strings.Contains(err.Error(), "FP32") {
+		t.Fatalf("enabled an INT8 model: %v", err)
+	}
+	if _, err := manager.Configure(ctx, false, FP16, legacy.Revision); err == nil {
+		t.Fatal("selected an FP16 model")
+	}
+	if _, err := manager.StartDownload(ctx, INT8); err == nil || !strings.Contains(err.Error(), "FP32") {
+		t.Fatalf("started an INT8 download: %v", err)
+	}
+	if err := settings.SettingSet(ctx, configKey("alice"), `{"enabled":true,"precision":"int8","revision":"`+legacy.Revision+`"}`); err != nil {
+		t.Fatal(err)
+	}
 	status, err := manager.Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Runtime.Supported || !strings.Contains(status.Runtime.Reason, "macOS 13.4") {
-		t.Fatalf("runtime = %+v", status.Runtime)
+	if status.Selection == nil || status.Selection.Available || !strings.Contains(status.Selection.Error, "FP32") {
+		t.Fatalf("selection = %+v", status.Selection)
 	}
-	if _, err := manager.Configure(ctx, true, INT8, installation.Revision); err == nil {
-		t.Fatal("enabled on an unsupported device")
+	if !slices.ContainsFunc(status.Installed, func(i Installation) bool { return i.Precision == INT8 }) {
+		t.Fatalf("installed INT8 model not listed: %+v", status.Installed)
 	}
-	if _, err := manager.StartDownload(ctx, INT8); err == nil {
-		t.Fatal("download started on an unsupported device")
+	if err := protectOnce(t, manager, ctx, "secret"); err == nil || !strings.Contains(err.Error(), "FP32") {
+		t.Fatalf("protected with an INT8 selection: %v", err)
 	}
 	if loads.Load() != 0 {
-		t.Fatal("unsupported runtime loaded an engine")
+		t.Fatal("an INT8 model reached the engine loader")
+	}
+	if _, err := manager.Configure(ctx, false, INT8, legacy.Revision); err != nil {
+		t.Fatalf("could not disable the INT8 selection: %v", err)
+	}
+	if _, err := manager.Remove(ctx, legacy.Revision, INT8); err != nil {
+		t.Fatalf("could not remove the INT8 model: %v", err)
 	}
 }
 
 func TestManagerReportsBrokenEnabledSelection(t *testing.T) {
 	manager, _, installation, _ := managedFixture(t)
 	ctx := privacyOwner(t, "alice", "conversation")
-	if _, err := manager.Configure(ctx, true, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(ctx, true, FP32, installation.Revision); err != nil {
 		t.Fatal(err)
 	}
 	status, err := manager.Status(ctx)
@@ -55,7 +73,7 @@ func TestManagerReportsBrokenEnabledSelection(t *testing.T) {
 	if status.Selection == nil || !status.Selection.Available {
 		t.Fatalf("healthy selection = %+v", status.Selection)
 	}
-	if err := os.Remove(filepath.Join(manager.modelDir(status.Config), modelFileName(INT8))); err != nil {
+	if err := os.Remove(filepath.Join(manager.modelDir(status.Config), modelFileName(FP32))); err != nil {
 		t.Fatal(err)
 	}
 	status, err = manager.Status(ctx)
@@ -80,19 +98,19 @@ func TestManagerReportsBrokenEnabledSelection(t *testing.T) {
 func TestManagerRemoveProtectsActiveSelectionAndRequiresAdmin(t *testing.T) {
 	manager, _, installation, _ := managedFixture(t)
 	admin := privacyAdmin(t, "alice")
-	if _, err := manager.Remove(privacyOwner(t, "bob", "conversation"), installation.Revision, INT8); err == nil {
+	if _, err := manager.Remove(privacyOwner(t, "bob", "conversation"), installation.Revision, FP32); err == nil {
 		t.Fatal("non-admin removed a shared model")
 	}
-	if _, err := manager.Configure(admin, true, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(admin, true, FP32, installation.Revision); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.Remove(admin, installation.Revision, INT8); err == nil {
+	if _, err := manager.Remove(admin, installation.Revision, FP32); err == nil {
 		t.Fatal("removed the model protection is using")
 	}
-	if _, err := manager.Configure(admin, false, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(admin, false, FP32, installation.Revision); err != nil {
 		t.Fatal(err)
 	}
-	status, err := manager.Remove(admin, installation.Revision, INT8)
+	status, err := manager.Remove(admin, installation.Revision, FP32)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +130,7 @@ func TestManagerServerAccountsCannotManageModels(t *testing.T) {
 		t.Fatal("server account allowed to manage models")
 	}
 	for name, run := range map[string]func() error{
-		"download": func() error { _, err := manager.StartDownload(ctx, INT8); return err },
+		"download": func() error { _, err := manager.StartDownload(ctx, FP32); return err },
 		"check":    func() error { _, err := manager.CheckUpdates(ctx); return err },
 	} {
 		if err := run(); err == nil {
@@ -147,7 +165,7 @@ func (e *blockingEngine) Detect(ctx context.Context, text string) ([]Span, error
 func TestManagerConfigureLoadDoesNotBlockStatusOrRequests(t *testing.T) {
 	settings := newPrivacySettings()
 	root := t.TempDir()
-	installation, files := fixtureInstallation(t, INT8)
+	installation, files := fixtureInstallation(t, FP32)
 	writeFixtureInstallation(t, root, installation, files)
 	loading := make(chan struct{})
 	unblock := make(chan struct{})
@@ -156,11 +174,10 @@ func TestManagerConfigureLoadDoesNotBlockStatusOrRequests(t *testing.T) {
 		<-unblock
 		return &fixtureEngine{}, nil
 	})
-	manager.runtime = nil
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
 	ctx := privacyOwner(t, "alice", "conversation")
 	done := make(chan error, 1)
-	go func() { _, err := manager.Configure(ctx, true, INT8, installation.Revision); done <- err }()
+	go func() { _, err := manager.Configure(ctx, true, FP32, installation.Revision); done <- err }()
 	<-loading
 	status, err := manager.Status(ctx)
 	if err != nil || status.Config.Enabled {
@@ -181,7 +198,7 @@ func TestManagerConfigureLoadDoesNotBlockStatusOrRequests(t *testing.T) {
 func TestManagerDetectHonorsContextAndReloadsAfterNativeFailure(t *testing.T) {
 	settings := newPrivacySettings()
 	root := t.TempDir()
-	installation, files := fixtureInstallation(t, INT8)
+	installation, files := fixtureInstallation(t, FP32)
 	writeFixtureInstallation(t, root, installation, files)
 	var loads atomic.Int64
 	engines := make(chan *blockingEngine, 4)
@@ -191,14 +208,13 @@ func TestManagerDetectHonorsContextAndReloadsAfterNativeFailure(t *testing.T) {
 		engines <- engine
 		return engine, nil
 	})
-	manager.runtime = nil
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
 	ctx := privacyOwner(t, "alice", "conversation")
-	if _, err := manager.Configure(ctx, true, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(ctx, true, FP32, installation.Revision); err != nil {
 		t.Fatal(err)
 	}
 	first := <-engines
-	detector := managedDetector{manager: manager, config: Config{Enabled: true, Precision: INT8, Revision: installation.Revision}}
+	detector := managedDetector{manager: manager, config: Config{Enabled: true, Precision: FP32, Revision: installation.Revision}}
 	busy := make(chan error, 1)
 	go func() { _, err := detector.Detect(ctx, "secret"); busy <- err }()
 	// Wait until the first request holds the engine.
@@ -242,9 +258,9 @@ func TestManagerCancellationNoticeClearsOnNextAction(t *testing.T) {
 	manager, _, installation, _ := managedFixture(t)
 	ctx := privacyAdmin(t, "alice")
 	manager.mu.Lock()
-	manager.downloads["alice"] = DownloadState{Precision: INT8, Error: "下载已取消", Canceled: true}
+	manager.downloads["alice"] = DownloadState{Precision: FP32, Error: "下载已取消", Canceled: true}
 	manager.mu.Unlock()
-	status, err := manager.Configure(ctx, false, INT8, installation.Revision)
+	status, err := manager.Configure(ctx, false, FP32, installation.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +272,7 @@ func TestManagerCancellationNoticeClearsOnNextAction(t *testing.T) {
 func TestManagerStartSweepsStaleDirectoriesAndWarmsEngine(t *testing.T) {
 	settings := newPrivacySettings()
 	root := t.TempDir()
-	installation, files := fixtureInstallation(t, INT8)
+	installation, files := fixtureInstallation(t, FP32)
 	writeFixtureInstallation(t, root, installation, files)
 	for _, name := range []string{".download-123", ".replaced-456"} {
 		if err := os.MkdirAll(filepath.Join(root, name, "partial"), 0700); err != nil {
@@ -269,15 +285,13 @@ func TestManagerStartSweepsStaleDirectoriesAndWarmsEngine(t *testing.T) {
 		return &fixtureEngine{}, nil
 	}
 	first := NewManager(settings, root, true, loader)
-	first.runtime = nil
-	if _, err := first.Configure(t.Context(), true, INT8, installation.Revision); err != nil {
+	if _, err := first.Configure(t.Context(), true, FP32, installation.Revision); err != nil {
 		t.Fatal(err)
 	}
 	if err := first.Shutdown(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	manager := NewManager(settings, root, true, loader)
-	manager.runtime = nil
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
 	if err := manager.Start(t.Context()); err != nil {
 		t.Fatal(err)
@@ -298,7 +312,7 @@ func TestManagerStartSweepsStaleDirectoriesAndWarmsEngine(t *testing.T) {
 }
 
 func TestCatalogStalledTransferFailsAndShortCircuitsInstalledModel(t *testing.T) {
-	installation, files := fixtureInstallation(t, INT8)
+	installation, files := fixtureInstallation(t, FP32)
 	var fileRequests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fileRequests.Add(1)
@@ -347,18 +361,3 @@ type netError struct{}
 func (*netError) Error() string   { return "dial tcp: connection refused" }
 func (*netError) Timeout() bool   { return false }
 func (*netError) Temporary() bool { return false }
-
-func TestManagerMissingRuntimeReasonGuidesLinuxReinstall(t *testing.T) {
-	manager, _, _, _ := managedFixture(t)
-	manager.runtime = func() error { return inference.ErrUnavailable }
-	status, err := manager.Status(privacyAdmin(t, "alice"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.Runtime.Supported || status.Runtime.Reason != RuntimeUnavailableMessage() {
-		t.Fatalf("runtime = %+v", status.Runtime)
-	}
-	if runtime.GOOS == "linux" && !strings.Contains(status.Runtime.Reason, "apt install ./nexterm-*.deb") {
-		t.Fatalf("reason lacks the Linux reinstall hint: %q", status.Runtime.Reason)
-	}
-}

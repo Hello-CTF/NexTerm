@@ -30,7 +30,7 @@ func TestProductionPrivacyCommandsAreOwnerScopedAndDefaultOff(t *testing.T) {
 	t.Cleanup(func() { _ = production.Shutdown(context.Background()) })
 	commands := map[string]string{
 		"ai_privacy_status":          "{}",
-		"ai_privacy_configure":       `{"enabled":false,"precision":"fp32","revision":""}`,
+		"ai_privacy_configure":       `{"enabled":false,"precision":"int8","revision":""}`,
 		"ai_privacy_check_updates":   "{}",
 		"ai_privacy_download":        `{"precision":"int8"}`,
 		"ai_privacy_cancel_download": "{}",
@@ -44,15 +44,15 @@ func TestProductionPrivacyCommandsAreOwnerScopedAndDefaultOff(t *testing.T) {
 	}
 	var status privacy.Status
 	requireStoreTestResponse(t, dispatchWithOwner(production.Dispatcher, "alice", "ai_privacy_status", "{}"), &status)
-	if status.Config.Enabled || status.Config.Precision != privacy.INT8 || status.Download.Running || len(status.Installed) != 0 {
+	if status.Config.Enabled || status.Config.Precision != privacy.FP32 || status.Download.Running || len(status.Installed) != 0 {
 		t.Fatalf("initial status = %+v", status)
 	}
 	requireStoreTestResponse(t, dispatchWithOwner(production.Dispatcher, "alice", "ai_privacy_configure", commands["ai_privacy_configure"]), &status)
-	if status.Config.Precision != privacy.FP32 || status.Config.Enabled {
+	if status.Config.Precision != privacy.INT8 || status.Config.Enabled {
 		t.Fatalf("alice status = %+v", status)
 	}
 	requireStoreTestResponse(t, dispatchWithOwner(production.Dispatcher, "bob", "ai_privacy_status", "{}"), &status)
-	if status.Config.Precision != privacy.INT8 || status.Config.Enabled {
+	if status.Config.Precision != privacy.FP32 || status.Config.Enabled {
 		t.Fatalf("bob inherited alice preferences: %+v", status)
 	}
 	response := dispatchWithOwner(production.Dispatcher, "alice", "ai_privacy_configure", `{"enabled":true,"precision":"int8","revision":""}`)
@@ -60,7 +60,7 @@ func TestProductionPrivacyCommandsAreOwnerScopedAndDefaultOff(t *testing.T) {
 		t.Fatalf("missing-model remediation hidden: %+v", response)
 	}
 	requireStoreTestResponse(t, dispatchWithOwner(production.Dispatcher, "alice", "ai_privacy_status", "{}"), &status)
-	if status.Config.Enabled || status.Config.Precision != privacy.FP32 {
+	if status.Config.Enabled || status.Config.Precision != privacy.INT8 {
 		t.Fatal("failed activation modified saved selection")
 	}
 	response = dispatchWithOwner(production.Dispatcher, "alice", "ai_privacy_configure", `{"enabled":false,"precision":"int8","revision":"../outside"}`)
@@ -116,7 +116,7 @@ func TestProductionAllProfileChatPathsFailClosedForMissingPrivacyModel(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, _ := json.Marshal(map[string]any{"enabled": true, "precision": "int8", "revision": strings.Repeat("a", 40), "seed": seed})
+	saved, _ := json.Marshal(map[string]any{"enabled": true, "precision": "fp32", "revision": strings.Repeat("a", 40), "seed": seed})
 	if err := production.Services.Store.SettingSet(alice, "user.ai.privacy.alice", string(saved)); err != nil {
 		t.Fatal(err)
 	}
@@ -174,8 +174,7 @@ func TestPrivacyCommandErrorsExposeOnlySafeRemediation(t *testing.T) {
 		message string
 	}{
 		{"configuration", &privacy.UserError{Message: "请先下载并选择本地隐私模型"}, ipc.CodeBadParam, "请先下载"},
-		{"platform", fmt.Errorf("load engine: %w", &inference.PlatformError{Message: "本地 AI 脱敏需要 iOS / iPadOS 15.1 或更新版本"}), ipc.CodeUnsupported, "15.1"},
-		{"runtime", fmt.Errorf("private runtime path: %w", inference.ErrUnavailable), ipc.CodeUnsupported, "完整 NexTerm"},
+		{"precision", fmt.Errorf("private runtime path: %w", inference.ErrUnsupportedPrecision), ipc.CodeUnsupported, "FP32"},
 		{"filesystem", &os.PathError{Op: "open", Path: "/private/secret-location", Err: os.ErrPermission}, ipc.CodeInternal, "内部错误"},
 		{"database", errors.New("database secret-connection-string"), ipc.CodeInternal, "内部错误"},
 	} {

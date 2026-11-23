@@ -23,13 +23,12 @@ import { PrivacyIndicator, privacyGuardFor, useChatPrivacy, usePrivacyGuard } fr
 import { chatPrivacyChoice, setChatPrivacyChoice } from "../../features/ai/chatPrivacyChoice";
 
 const status = (patch: Partial<PrivacyStatus>): PrivacyStatus => ({
-  config: { enabled: true, precision: "int8", revision: "a".repeat(40), version: "v0.1.3" },
+  config: { enabled: true, precision: "fp32", revision: "a".repeat(40), version: "v0.1.3" },
   installed: [],
-  runtime: { supported: true },
   selection: { available: true },
   diskUsage: 0,
   canManage: true,
-  download: { running: false, precision: "int8", progress: { file: "", downloaded: 0, total: 0 } },
+  download: { running: false, precision: "fp32", progress: { file: "", downloaded: 0, total: 0 } },
   ...patch,
 });
 function Probe() {
@@ -80,7 +79,7 @@ describe("AI chat privacy indicator", () => {
 });
 
 describe("model profile redaction override", () => {
-  const off = (patch: Partial<PrivacyStatus> = {}) => status({ config: { enabled: false, precision: "int8", revision: "a".repeat(40), version: "v0.1.3" }, ...patch });
+  const off = (patch: Partial<PrivacyStatus> = {}) => status({ config: { enabled: false, precision: "fp32", revision: "a".repeat(40), version: "v0.1.3" }, ...patch });
 
   it("follows the global switch without an override", () => {
     expect(privacyGuardFor(status({}))).toEqual({ enabled: true, broken: false });
@@ -93,13 +92,13 @@ describe("model profile redaction override", () => {
   });
 
   it("reports a forced guard without a chosen local model as broken, since requests are blocked", () => {
-    const unchosen = off({ config: { enabled: false, precision: "int8", revision: "", version: "" } });
+    const unchosen = off({ config: { enabled: false, precision: "fp32", revision: "", version: "" } });
     expect(privacyGuardFor(unchosen, "on")).toEqual({ enabled: true, broken: true });
   });
 });
 
 describe("chat redaction switch", () => {
-  const off = (patch: Partial<PrivacyStatus> = {}) => status({ config: { enabled: false, precision: "int8", revision: "a".repeat(40), version: "v0.1.3" }, ...patch });
+  const off = (patch: Partial<PrivacyStatus> = {}) => status({ config: { enabled: false, precision: "fp32", revision: "a".repeat(40), version: "v0.1.3" }, ...patch });
   const shield = () => mounted!.container.querySelector<HTMLButtonElement>("button.nx-privacy-icon")!;
 
   it("turns redaction off for the chat and back to following the global setting", async () => {
@@ -127,7 +126,7 @@ describe("chat redaction switch", () => {
   });
 
   it("sends the user to the settings instead of turning on redaction without a local model", async () => {
-    mocks.status.mockResolvedValue(off({ config: { enabled: false, precision: "int8", revision: "", version: "" } }));
+    mocks.status.mockResolvedValue(off({ config: { enabled: false, precision: "fp32", revision: "", version: "" } }));
     mounted = mount(createElement(ChatProbe));
     await waitForRendered(() => expect(shield()).not.toBeNull());
     expect(shield().title).toContain("脱敏未配置");

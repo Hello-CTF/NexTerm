@@ -13,25 +13,24 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
-// multiModelFixture installs every precision of one revision in a server-mode manager.
-func multiModelFixture(t *testing.T) (*Manager, Installation, *atomic.Int64, *atomic.Int64) {
+// multiModelFixture installs three FP32 revisions in a server-mode manager.
+func multiModelFixture(t *testing.T) (*Manager, [3]string, *atomic.Int64, *atomic.Int64) {
 	t.Helper()
 	settings := newPrivacySettings()
 	root := t.TempDir()
-	var installation Installation
-	for _, precision := range []Precision{INT8, FP32, FP16} {
-		fixture, files := fixtureInstallation(t, precision)
+	revisions := [3]string{strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40)}
+	for _, revision := range revisions {
+		fixture, files := fixtureInstallation(t, FP32)
+		fixture.Revision = revision
 		writeFixtureInstallation(t, root, fixture, files)
-		installation = fixture
 	}
 	loads, closes := &atomic.Int64{}, &atomic.Int64{}
 	manager := NewManager(settings, root, false, func(context.Context, string, Installation) (Engine, error) {
 		loads.Add(1)
 		return &countingEngine{closes: closes}, nil
 	})
-	manager.runtime = nil
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
-	return manager, installation, loads, closes
+	return manager, revisions, loads, closes
 }
 
 type countingEngine struct {
@@ -52,13 +51,13 @@ func protectOnce(t *testing.T, manager *Manager, ctx context.Context, text strin
 }
 
 func TestManagerKeepsEnginesForAlternatingAccountModels(t *testing.T) {
-	manager, installation, loads, closes := multiModelFixture(t)
+	manager, revisions, loads, closes := multiModelFixture(t)
 	alice := privacyOwner(t, "alice", "conversation")
 	bob := privacyOwner(t, "bob", "conversation")
-	if _, err := manager.Configure(alice, true, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(alice, true, FP32, revisions[0]); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.Configure(bob, true, FP32, installation.Revision); err != nil {
+	if _, err := manager.Configure(bob, true, FP32, revisions[1]); err != nil {
 		t.Fatal(err)
 	}
 	for i := range 4 {
@@ -72,7 +71,7 @@ func TestManagerKeepsEnginesForAlternatingAccountModels(t *testing.T) {
 		t.Fatalf("alternation reloaded engines: loads=%d closes=%d", loads.Load(), closes.Load())
 	}
 	// Another account enabling a model already loaded must not drop either engine.
-	if _, err := manager.Configure(privacyOwner(t, "carol", "conversation"), true, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(privacyOwner(t, "carol", "conversation"), true, FP32, revisions[0]); err != nil {
 		t.Fatal(err)
 	}
 	if err := protectOnce(t, manager, bob, "secret again"); err != nil {
@@ -82,7 +81,7 @@ func TestManagerKeepsEnginesForAlternatingAccountModels(t *testing.T) {
 		t.Fatalf("configure dropped a shared engine: loads=%d closes=%d", loads.Load(), closes.Load())
 	}
 	// A third model evicts only the least recently used engine.
-	if _, err := manager.Configure(privacyOwner(t, "dave", "conversation"), true, FP16, installation.Revision); err != nil {
+	if _, err := manager.Configure(privacyOwner(t, "dave", "conversation"), true, FP32, revisions[2]); err != nil {
 		t.Fatal(err)
 	}
 	if loads.Load() != 3 || closes.Load() != 1 {
@@ -97,12 +96,12 @@ func TestManagerKeepsEnginesForAlternatingAccountModels(t *testing.T) {
 }
 
 func TestManagerReusesVerificationUntilFilesChangeOrDirectoryIsReleased(t *testing.T) {
-	manager, installation, _, _ := multiModelFixture(t)
+	manager, revisions, _, _ := multiModelFixture(t)
 	alice := privacyOwner(t, "alice", "conversation")
-	if _, err := manager.Configure(alice, true, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(alice, true, FP32, revisions[0]); err != nil {
 		t.Fatal(err)
 	}
-	directory := manager.modelDir(Config{Revision: installation.Revision, Precision: INT8})
+	directory := manager.modelDir(Config{Revision: revisions[0], Precision: FP32})
 	path := filepath.Join(directory, "config.json")
 	info, err := os.Stat(path)
 	if err != nil {
@@ -114,8 +113,8 @@ func TestManagerReusesVerificationUntilFilesChangeOrDirectoryIsReleased(t *testi
 	}
 	evict := func() {
 		t.Helper()
-		for _, precision := range []Precision{FP32, FP16} {
-			if _, err := manager.Configure(privacyOwner(t, "other-"+string(precision), "conversation"), true, precision, installation.Revision); err != nil {
+		for _, revision := range revisions[1:] {
+			if _, err := manager.Configure(privacyOwner(t, "other-"+revision[:1], "conversation"), true, FP32, revision); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -160,26 +159,26 @@ func TestManagerReusesVerificationUntilFilesChangeOrDirectoryIsReleased(t *testi
 }
 
 func TestManagerRemoveRefusesModelEnabledByOtherAccounts(t *testing.T) {
-	manager, installation, _, _ := multiModelFixture(t)
+	manager, revisions, _, _ := multiModelFixture(t)
 	for _, id := range []string{"bob", "carol"} {
-		if _, err := manager.Configure(privacyOwner(t, id, "conversation"), true, FP32, installation.Revision); err != nil {
+		if _, err := manager.Configure(privacyOwner(t, id, "conversation"), true, FP32, revisions[1]); err != nil {
 			t.Fatal(err)
 		}
 	}
 	admin := privacyAdmin(t, "alice")
-	_, err := manager.Remove(admin, installation.Revision, FP32)
+	_, err := manager.Remove(admin, revisions[1], FP32)
 	if err == nil || !strings.Contains(err.Error(), "2 个账号") {
 		t.Fatalf("remove of a model other accounts use: %v", err)
 	}
-	if _, err := manager.Remove(admin, installation.Revision, INT8); err != nil {
+	if _, err := manager.Remove(admin, revisions[0], FP32); err != nil {
 		t.Fatalf("remove of an unused model: %v", err)
 	}
 }
 
 func TestUnscopedExchangeDoesNotFillSharedDetectionCache(t *testing.T) {
-	manager, installation, _, _ := multiModelFixture(t)
+	manager, revisions, _, _ := multiModelFixture(t)
 	ctx := ipc.WithUserID(t.Context(), "alice")
-	if _, err := manager.Configure(ctx, true, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(ctx, true, FP32, revisions[0]); err != nil {
 		t.Fatal(err)
 	}
 	cached := func() int {
@@ -203,12 +202,12 @@ func TestUnscopedExchangeDoesNotFillSharedDetectionCache(t *testing.T) {
 }
 
 func TestModelFailuresAreClassified(t *testing.T) {
-	manager, installation, _, _ := multiModelFixture(t)
+	manager, revisions, _, _ := multiModelFixture(t)
 	ctx := privacyOwner(t, "alice", "conversation")
-	if _, err := manager.Configure(ctx, true, INT8, installation.Revision); err != nil {
+	if _, err := manager.Configure(ctx, true, FP32, revisions[0]); err != nil {
 		t.Fatal(err)
 	}
-	directory := manager.modelDir(Config{Revision: installation.Revision, Precision: INT8})
+	directory := manager.modelDir(Config{Revision: revisions[0], Precision: FP32})
 	if err := manager.releaseDirectory(t.Context(), directory); err != nil {
 		t.Fatal(err)
 	}

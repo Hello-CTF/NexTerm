@@ -99,7 +99,7 @@ func newCatalogFixture(t *testing.T, installation Installation, files map[string
 }
 
 func TestCatalogUsesLatestStableImmutableRevisionAndChecksums(t *testing.T) {
-	installation, files := fixtureInstallation(t, INT8)
+	installation, files := fixtureInstallation(t, FP32)
 	fixture := newCatalogFixture(t, installation, files)
 	release, err := fixture.catalog.Latest(t.Context())
 	if err != nil {
@@ -108,7 +108,7 @@ func TestCatalogUsesLatestStableImmutableRevisionAndChecksums(t *testing.T) {
 	if release != installation.ModelRelease {
 		t.Fatalf("release=%+v", release)
 	}
-	manifest, err := fixture.catalog.Manifest(t.Context(), release, INT8)
+	manifest, err := fixture.catalog.Manifest(t.Context(), release, FP32)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,13 +223,15 @@ func TestCatalogChoosesByContentNotVersionNumber(t *testing.T) {
 	type release struct {
 		version, revision, config string
 	}
-	build := func(releases []release) *Catalog {
+	var buildServing func([]release, Precision) *Catalog
+	build := func(releases []release) *Catalog { return buildServing(releases, FP32) }
+	buildServing = func(releases []release, served Precision) *Catalog {
 		files := map[string]map[string][]byte{}
 		sums := map[string]map[string]ModelFile{}
 		var tags []string
 		for _, r := range releases {
 			tags = append(tags, fmt.Sprintf(`{"name":%q,"targetCommit":%q}`, r.version, r.revision))
-			installation, data := fixtureInstallation(t, INT8)
+			installation, data := fixtureInstallation(t, served)
 			data["config.json"] = []byte(r.config)
 			hash := sha256.Sum256(data["config.json"])
 			installation.Files["config.json"] = ModelFile{Size: int64(len(data["config.json"])), SHA256: hex.EncodeToString(hash[:])}
@@ -242,7 +244,7 @@ func TestCatalogChoosesByContentNotVersionNumber(t *testing.T) {
 				return
 			}
 			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"+modelRepository+"/resolve/"), "/")
-			if len(parts) != 3 || parts[1] != "int8" || sums[parts[0]] == nil {
+			if len(parts) != 3 || parts[1] != string(served) || sums[parts[0]] == nil {
 				http.NotFound(w, r)
 				return
 			}
@@ -256,6 +258,11 @@ func TestCatalogChoosesByContentNotVersionNumber(t *testing.T) {
 		return &Catalog{baseURL: server.URL, client: server.Client(), validate: fixtureValidate}
 	}
 	a, b, c := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40)
+
+	// A release that publishes no FP32 files cannot run on the local engine.
+	if got, err := buildServing([]release{{"v1.0.0", a, "ok"}}, INT8).Resolve(t.Context()); err == nil {
+		t.Fatalf("INT8-only release chosen: %+v", got)
+	}
 
 	got, err := build([]release{{"v0.9.0", a, "ok"}, {"v1.2.0", b, "ok"}, {"v2.0.0-rc.1", c, "incompatible"}}).Resolve(t.Context())
 	if err != nil || got.Release.Version != "v1.2.0" || got.NewerIncompatible != nil {

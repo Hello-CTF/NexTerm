@@ -26,7 +26,7 @@ func loadPrivacyEngine(ctx context.Context, directory string, installation priva
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	engine, err := inference.Open(directory, privacy.RuntimeDirectory(), string(installation.Precision))
+	engine, err := inference.Open(directory, string(installation.Precision))
 	if err != nil {
 		return nil, err
 	}
@@ -92,12 +92,8 @@ func privacyCommandResult[T any](value T, err error) (T, error) {
 	if errors.As(err, &userError) {
 		return value, ipc.WrapError(ipc.CodeBadParam, userError.Message, err)
 	}
-	var platformError *inference.PlatformError
-	if errors.As(err, &platformError) {
-		return value, ipc.WrapError(ipc.CodeUnsupported, platformError.Message, err)
-	}
-	if errors.Is(err, inference.ErrUnavailable) {
-		return value, ipc.WrapError(ipc.CodeUnsupported, privacy.UnavailableMessage(err), err)
+	if errors.Is(err, inference.ErrUnsupportedPrecision) {
+		return value, ipc.WrapError(ipc.CodeUnsupported, inference.ErrUnsupportedPrecision.Error(), err)
 	}
 	return value, err
 }
