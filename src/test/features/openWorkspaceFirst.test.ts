@@ -344,6 +344,30 @@ describe("connecting a non-SSH host whose workspace lost its session", () => {
     expectReboundWorkspace();
   });
 
+  it("lets dead terminals reopen and holds container shells for an explicit restart", async () => {
+    mocks.sessionConnect.mockResolvedValue({ ...FRESH, assetId: "docker-1", kind: "docker" });
+    mocks.assetGet.mockResolvedValue({ ...DOCKER_ASSET, credId: null });
+    const shell: AppTab = { id: "tab-shell", kind: "terminal", title: "sh", sessionId: "s-old", tabId: "t-exec", containerId: "c1", dead: true, closable: true };
+    const host: AppTab = { id: "tab-host", kind: "terminal", title: "host", sessionId: "s-old", tabId: "t-host", dead: true, closable: true };
+    const list: AppTab = { id: "tab-list", kind: "docker", title: "容器", sessionId: "s-old", closable: true };
+    useUi.setState({
+      workspaces: [deadWorkspace({
+        assetId: "docker-1",
+        assetKind: "docker",
+        panes: [{ id: "pane-1", tabs: [list, shell, host], activeTabId: list.id }],
+      })],
+    });
+
+    expect(await connectAsset(DOCKER_ASSET)).toEqual({ ok: true });
+
+    expect(allTabs()).toEqual([
+      expect.objectContaining({ id: "tab-list", sessionId: "s-new" }),
+      expect.objectContaining({ id: "tab-shell", sessionId: "s-new", tabId: undefined, restorePending: true, exited: true }),
+      expect.objectContaining({ id: "tab-host", sessionId: "s-new", tabId: "t-host", dead: false }),
+    ]);
+    expect(allTabs()[1]?.dead).toBeUndefined();
+  });
+
   it("gives a reconnected container workspace its container list back", async () => {
     mocks.sessionConnect.mockResolvedValue({ ...FRESH, assetId: "docker-1", kind: "docker" });
     mocks.assetGet.mockResolvedValue({ ...DOCKER_ASSET, credId: null });
