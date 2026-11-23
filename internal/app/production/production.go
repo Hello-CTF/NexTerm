@@ -488,7 +488,7 @@ func productionModules(services ProductionServices) []Module {
 				return err
 			}
 			if services.updateChannels != nil {
-				return registerUpdateChannelCommands(dispatcher, services.updateChannels)
+				return registerUpdateChannelCommands(dispatcher, services.updateChannels, services.Update.ChannelChanged)
 			}
 			return nil
 		}})

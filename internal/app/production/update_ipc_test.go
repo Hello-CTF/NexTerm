@@ -490,9 +490,19 @@ func TestUpdateChannelIPCStoresLocallyAndValidates(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	dispatcher := ipc.NewDispatcher()
-	if err := registerUpdateChannelCommands(dispatcher, database); err != nil {
+	var changes []update.ReleaseChannel
+	if err := registerUpdateChannelCommands(dispatcher, database, func(_ context.Context, channel update.ReleaseChannel) bool {
+		changes = append(changes, channel)
+		return false
+	}); err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		// Only saved changes reach the update manager, which discards a staged candidate on stable.
+		if len(changes) != 1 || changes[0] != update.ChannelRC {
+			t.Errorf("channel changes = %v, want the one saved change", changes)
+		}
+	}()
 	var state struct {
 		Channel string `json:"channel"`
 	}

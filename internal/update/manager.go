@@ -104,6 +104,9 @@ type InstallState struct {
 // errors are always emitted.
 const progressInterval = 200 * time.Millisecond
 
+// applyTimeout bounds applying a staged package (deb extraction, hdiutil and ditto, NSIS) at restart.
+var applyTimeout = 10 * time.Minute
+
 // pendingWindow is how long after publishing a release missing this platform's assets counts as still uploading.
 const pendingWindow = 6 * time.Hour
 
@@ -126,6 +129,9 @@ type Manager struct {
 	// ChannelProvider supplies the release channel on every Check and Install, so a change applies at once.
 	// Nil means stable.
 	ChannelProvider func(context.Context) ReleaseChannel
+	// ChannelLookup reads the channel and reports a read failure, for the decisions that discard a staged
+	// release candidate; nil falls back to ChannelProvider.
+	ChannelLookup func(context.Context) (ReleaseChannel, error)
 	// StageDir keeps the verified package between Install and the Restart that applies it, so it survives the
 	// process; it must not be a directory removed on exit. Install refuses to run without one.
 	StageDir string
@@ -177,7 +183,6 @@ func (m *Manager) emit(ctx context.Context, progress Progress) {
 // earlier run that was never restarted is reported as ready.
 func (m *Manager) State() InstallState {
 	m.loadStaged()
-	m.dropOffChannel(context.Background())
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	state := m.state
@@ -370,7 +375,6 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 		restore()
 		return Result{}, userErrorf(UserErrorIO, "安装包 %s 的名称与版本 %s 不符", asset.Name, status.Version)
 	}
-	m.dropOffChannel(ctx)
 	if staged, ok := m.stagedPackage(); ok && staged.Version == status.Version && staged.AssetName == asset.Name {
 		if digest, err := m.stagedDigest(staged); err == nil && digest == found.sums[asset.Name] &&
 			hashMatches(staged.path(m.stageDir()), digest) == nil {
@@ -485,11 +489,11 @@ func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string
 // failed apply leaves the app as it was and keeps the package; a successful one removes it.
 func (m *Manager) Restart(ctx context.Context) Result {
 	if m.RestartFunc == nil {
-		return Result{UnavailableReason: "服务端模式不支持应用内重启"}
+		return Result{Failure: FailureApply, UnavailableReason: "服务端模式不支持应用内重启"}
 	}
 	ctx = context.WithoutCancel(ctx)
 	if !m.installing.CompareAndSwap(false, true) {
-		return Result{UnavailableReason: "正在安装更新，请等待安装完成后再重启"}
+		return Result{Failure: FailureApply, UnavailableReason: "正在安装更新，请等待安装完成后再重启"}
 	}
 	defer m.installing.Store(false)
 	m.loadStaged()
@@ -508,6 +512,11 @@ func (m *Manager) Restart(ctx context.Context) Result {
 		if problem := m.stagedProblem(ctx, staged); problem != "" {
 			m.discardStaged()
 			return applyFailed(problem)
+		}
+		// Only the version the interface offered is installed; anything else in its place is refused.
+		if expected != "" && staged.Version != expected {
+			m.discardStaged()
+			return applyFailed(fmt.Sprintf("已下载的更新 %s 不是待安装的 %s，已丢弃", staged.Version, expected))
 		}
 	} else if expected != "" {
 		// The interface offered an install that is no longer staged: relaunching would report an update that
@@ -550,23 +559,28 @@ func (m *Manager) Restart(ctx context.Context) Result {
 
 func (m *Manager) applyStaged(ctx context.Context, staged stagedPackage) (string, error) {
 	directory := m.stageDir()
-	digest, err := m.stagedDigest(staged)
-	if err != nil {
-		m.discardStaged()
-		return "", userErrorf(UserErrorIO, "已下载的更新包校验失败，已丢弃，请重新下载: %w", err)
-	}
-	archive, cleanup, err := copyVerified(staged.path(directory), directory, digest)
-	if err != nil {
+	refuse := func(err error) (string, error) {
 		if errors.Is(err, errStagedTampered) {
 			m.discardStaged()
 			return "", userErrorf(UserErrorIO, "已下载的更新包校验失败，已丢弃，请重新下载: %w", err)
 		}
-		return "", userErrorf(UserErrorIO, "读取已下载的更新包失败: %w", err)
+		return "", userErrorf(UserErrorIO, "读取已下载的更新包失败，可稍后重试: %w", err)
+	}
+	digest, err := m.stagedDigest(staged)
+	if err != nil {
+		return refuse(err)
+	}
+	verified, cleanup, err := copyVerified(staged.path(directory), directory, digest)
+	if err != nil {
+		return refuse(err)
 	}
 	defer cleanup()
+	// The restart is detached from its caller; a hung installer must still release the install lock.
+	ctx, cancel := context.WithTimeout(ctx, applyTimeout)
+	defer cancel()
 	taskID := ids.New()
 	m.report(ctx, Progress{TaskID: taskID, Phase: PhaseInstall}, false)
-	target, err := m.applyInstall(ctx, archive)
+	target, err := m.applyInstall(ctx, verified.Name(), verified)
 	if err != nil {
 		m.report(ctx, Progress{TaskID: taskID, Phase: PhaseInstall, Done: true, Error: err.Error()}, false)
 		return "", err

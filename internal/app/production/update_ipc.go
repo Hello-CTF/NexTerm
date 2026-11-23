@@ -89,7 +89,9 @@ type updateChannelResponse struct {
 
 // registerUpdateChannelCommands exposes the per-machine release channel. The value lives in the local Setting
 // table only; it is never part of the synced preferences.
-func registerUpdateChannelCommands(dispatcher *ipc.Dispatcher, store update.ChannelStore) error {
+// onChange (optional) runs after a channel is saved; the update manager uses it to discard a staged release
+// candidate when the stable channel is selected.
+func registerUpdateChannelCommands(dispatcher *ipc.Dispatcher, store update.ChannelStore, onChange func(context.Context, update.ReleaseChannel) bool) error {
 	if err := ipc.Register(dispatcher, "app_update_channel_get", func(ctx context.Context, _ *ipc.Call, _ struct{}) (updateChannelResponse, error) {
 		return updateChannelResponse{Channel: update.StoredChannel(ctx, store)}, nil
 	}); err != nil {
@@ -102,6 +104,9 @@ func registerUpdateChannelCommands(dispatcher *ipc.Dispatcher, store update.Chan
 		}
 		if err := update.StoreChannel(ctx, store, channel); err != nil {
 			return updateChannelResponse{}, ipc.WrapError(ipc.CodeDB, "保存更新通道失败: "+err.Error(), err)
+		}
+		if onChange != nil {
+			onChange(ctx, channel)
 		}
 		return updateChannelResponse{Channel: channel}, nil
 	})

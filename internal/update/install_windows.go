@@ -16,7 +16,10 @@ import (
 // When the currently running exe is the install target, NSIS cannot overwrite the running executable,
 // so loaded executable/runtime images are moved aside and restored on failure.
 // Loose copies leave the original file alone and restart into the installed version.
-func (m *Manager) applyInstall(ctx context.Context, archive string) (string, error) {
+//
+// NSIS runs the verified copy by path; the copy sits in a private directory of the stage directory, but a process
+// of the same user could still replace it between the hash and the launch.
+func (m *Manager) applyInstall(ctx context.Context, archive string, _ *os.File) (string, error) {
 	target, inPlace := installTargetFor(m.ExePath, registeredInstallTarget(), defaultInstallDir(), canonicalExeName())
 	if !inPlace {
 		if err := runInstaller(ctx, archive); err != nil {

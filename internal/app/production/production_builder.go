@@ -447,6 +447,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 			// remote server, and it is never synced.
 			services.updateChannels = database
 			services.Update.ChannelProvider = update.ChannelProviderFor(database)
+			services.Update.ChannelLookup = update.ChannelLookupFor(database)
 		}
 	}
 	// The skills manager is built before the AI runtime so composeAIRuntime

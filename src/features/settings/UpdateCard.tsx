@@ -280,7 +280,7 @@ export function UpdateCard() {
             <button
               type="button"
               className="nx-btn nx-btn-success nx-btn-sm shrink-0"
-              disabled={restarting}
+              disabled={restarting || install.active}
               aria-busy={restarting}
               onClick={() => void update.restart()}
             >

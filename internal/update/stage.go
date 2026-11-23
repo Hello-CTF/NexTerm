@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,8 +31,21 @@ const (
 	stagedPackageDir   = "package"
 )
 
-// errStagedTampered marks a staged package whose files no longer match their signed checksums.
+// errStagedTampered marks a staged package whose files no longer match their signed checksums: a file that is
+// missing, not a regular file, replaced while opened, or whose content fails verification. Only such a package is
+// discarded; any other error (permissions, file handles, a Windows sharing violation) is retryable and keeps it.
 var errStagedTampered = errors.New("staged package does not match its signed checksums")
+
+// tampered classifies an error reading a staged file.
+func tampered(err error) error {
+	if errors.Is(err, errStagedTampered) {
+		return err
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%w: %v", errStagedTampered, err)
+	}
+	return err
+}
 
 type stagedPackage struct {
 	Version   string `json:"version"`
@@ -80,13 +94,13 @@ func (m *Manager) stagedDigest(staged stagedPackage) (string, error) {
 	directory := filepath.Join(m.stageDir(), stagedPackageDir)
 	manifest, err := readRegular(filepath.Join(directory, checksumsAssetName), maxChecksumManifestSize)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", errStagedTampered, err)
+		return "", tampered(err)
 	}
 	var signature []byte
 	if required {
 		signature, err = readRegular(filepath.Join(directory, checksumSignatureAssetName), maxMinisignSignatureSize)
 		if err != nil {
-			return "", fmt.Errorf("%w: %v", errStagedTampered, err)
+			return "", tampered(err)
 		}
 	}
 	sums, err := verifyChecksums(manifest, signature, trust, required, staged.Version)
@@ -103,7 +117,7 @@ func (m *Manager) stagedDigest(staged stagedPackage) (string, error) {
 // stagedProblem reports why a staged package must not be offered or applied, or "" when it may.
 func (m *Manager) stagedProblem(ctx context.Context, staged stagedPackage) string {
 	switch {
-	case !staged.validFor(m.GOOS, m.GOARCH):
+	case !staged.validFor(m.GOOS, m.GOARCH) || !releaseVersionForm(staged.Version):
 		return "已下载的更新包不属于当前平台，已丢弃"
 	case !isNewerVersion(staged.Version, m.CurrentVersion):
 		return fmt.Sprintf("已下载的更新 %s 不比当前版本新，已丢弃", staged.Version)
@@ -113,10 +127,25 @@ func (m *Manager) stagedProblem(ctx context.Context, staged stagedPackage) strin
 	return ""
 }
 
-// offChannel reports a release candidate staged while the RC channel was selected, now that the stable channel
-// is, unless the running build is itself a release candidate.
+// releaseVersionForm accepts a stable version or a release candidate in the rc.N form, the only prereleases
+// the release check offers.
+func releaseVersionForm(version string) bool {
+	parsed, ok := parseVersion(version)
+	return ok && (!parsed.hasPre || isRCPrerelease(parsed.pre))
+}
+
+// offChannel reports a release candidate while the stable channel is known to be selected and the running build
+// is stable. A channel that cannot be read counts as not off channel: discarding a download is not worth a
+// transient settings error.
 func (m *Manager) offChannel(ctx context.Context, version string) bool {
-	return runningPrerelease(version) && m.releaseChannel(ctx) == ChannelStable && !runningPrerelease(m.CurrentVersion)
+	if !runningPrerelease(version) || runningPrerelease(m.CurrentVersion) {
+		return false
+	}
+	if m.ChannelLookup != nil {
+		channel, err := m.ChannelLookup(ctx)
+		return err == nil && channel == ChannelStable
+	}
+	return m.releaseChannel(ctx) == ChannelStable
 }
 
 // loadStaged adopts a package staged by an earlier run once per process, sweeping leftovers of interrupted
@@ -137,7 +166,11 @@ func (m *Manager) loadStaged() {
 			err = hashMatches(staged.path(m.stageDir()), digest)
 		}
 		if err != nil {
-			_ = removeStaged(m.stageDir())
+			// A package that fails verification is removed; one that could not be read right now is kept for
+			// the next launch, but not offered.
+			if errors.Is(err, errStagedTampered) {
+				_ = removeStaged(m.stageDir())
+			}
 			return
 		}
 		m.mu.Lock()
@@ -148,10 +181,20 @@ func (m *Manager) loadStaged() {
 	})
 }
 
-// dropOffChannel discards a staged release candidate once the stable channel is selected; it reports whether it did.
-func (m *Manager) dropOffChannel(ctx context.Context) bool {
+// ChannelChanged discards a staged release candidate after the user selected the stable channel. It runs only on
+// that explicit change (and the launch check in loadStaged), never while a download or an apply holds the stage;
+// a restart still refuses the candidate then. It reports whether it discarded the package.
+func (m *Manager) ChannelChanged(ctx context.Context, channel ReleaseChannel) bool {
+	if channel != ChannelStable || m.StageDir == "" {
+		return false
+	}
+	if !m.installing.CompareAndSwap(false, true) {
+		return false
+	}
+	defer m.installing.Store(false)
+	m.loadStaged()
 	staged, ok := m.stagedPackage()
-	if !ok || !m.offChannel(ctx, staged.Version) {
+	if !ok || !runningPrerelease(staged.Version) || runningPrerelease(m.CurrentVersion) {
 		return false
 	}
 	m.discardStaged()
@@ -269,23 +312,30 @@ func syncDir(directory string) {
 }
 
 // openRegular opens path only when it is a regular file reached without following a symbolic link, and checks the
-// opened file is the one that was inspected.
+// opened file is the one that was inspected. A file that is not regular or was replaced is errStagedTampered.
 func openRegular(path string) (*os.File, error) {
 	inspected, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
 	if !inspected.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s 不是普通文件", filepath.Base(path))
+		return nil, fmt.Errorf("%w: %s 不是普通文件", errStagedTampered, filepath.Base(path))
 	}
 	file, err := openNoFollow(path)
 	if err != nil {
+		if errors.Is(err, syscallELOOP) {
+			return nil, fmt.Errorf("%w: %s 是符号链接", errStagedTampered, filepath.Base(path))
+		}
 		return nil, err
 	}
 	opened, err := file.Stat()
-	if err != nil || !os.SameFile(inspected, opened) {
+	if err != nil {
 		_ = file.Close()
-		return nil, fmt.Errorf("%s 在打开时被替换", filepath.Base(path))
+		return nil, err
+	}
+	if !os.SameFile(inspected, opened) {
+		_ = file.Close()
+		return nil, fmt.Errorf("%w: %s 在打开时被替换", errStagedTampered, filepath.Base(path))
 	}
 	return file, nil
 }
@@ -303,7 +353,7 @@ func readRegular(path string, limit int64) ([]byte, error) {
 func hashMatches(path, digest string) error {
 	file, err := openRegular(path)
 	if err != nil {
-		return fmt.Errorf("%w: %v", errStagedTampered, err)
+		return tampered(err)
 	}
 	defer file.Close()
 	hash := sha256.New()
@@ -317,36 +367,46 @@ func hashMatches(path, digest string) error {
 }
 
 // copyVerified opens the staged package once, copies it into a fresh private directory under parent while hashing
-// it, and returns the copy only when the hash matches digest; the installer then runs on a file nobody else can
-// swap between the check and its use. cleanup removes the copy.
-func copyVerified(path, parent, digest string) (string, func(), error) {
+// it, and returns the copy, still open and rewound, only when the hash matches digest. The Linux installer reads
+// that handle, so nothing can swap the file between the check and its use; the macOS and Windows installers open
+// the copy by path (hdiutil, NSIS), which narrows the window to the private directory but does not close it
+// against a process of the same user. cleanup closes and removes the copy.
+func copyVerified(path, parent, digest string) (*os.File, func(), error) {
 	source, err := openRegular(path)
 	if err != nil {
-		return "", nil, fmt.Errorf("%w: %v", errStagedTampered, err)
+		return nil, nil, tampered(err)
 	}
 	defer source.Close()
 	directory, err := os.MkdirTemp(parent, ".apply-")
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
-	cleanup := func() { _ = os.RemoveAll(directory) }
 	copyPath := filepath.Join(directory, filepath.Base(path))
-	target, err := os.OpenFile(copyPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	target, err := os.OpenFile(copyPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		cleanup()
-		return "", nil, err
+		_ = os.RemoveAll(directory)
+		return nil, nil, err
+	}
+	cleanup := func() {
+		_ = target.Close()
+		_ = os.RemoveAll(directory)
 	}
 	hash := sha256.New()
-	_, copyErr := io.Copy(io.MultiWriter(target, hash), source)
-	syncErr := target.Sync()
-	closeErr := target.Close()
-	if err := errors.Join(copyErr, syncErr, closeErr); err != nil {
+	if _, err := io.Copy(io.MultiWriter(target, hash), source); err != nil {
 		cleanup()
-		return "", nil, err
+		return nil, nil, err
+	}
+	if err := target.Sync(); err != nil {
+		cleanup()
+		return nil, nil, err
 	}
 	if hex.EncodeToString(hash.Sum(nil)) != digest {
 		cleanup()
-		return "", nil, fmt.Errorf("%w: %s 的 SHA-256 与签名的校验和不一致", errStagedTampered, filepath.Base(path))
+		return nil, nil, fmt.Errorf("%w: %s 的 SHA-256 与签名的校验和不一致", errStagedTampered, filepath.Base(path))
 	}
-	return copyPath, cleanup, nil
+	if _, err := target.Seek(0, io.SeekStart); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	return target, cleanup, nil
 }

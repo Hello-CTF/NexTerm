@@ -207,11 +207,12 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
       set({
         restarting: false,
         restartError: result.unavailableReason ? translateMessage(result.unavailableReason) : t("重启失败"),
-        restartFailure: result.failure === "apply" ? "apply" : "relaunch",
+        // Only an explicit relaunch failure means the update is installed; anything else installed nothing.
+        restartFailure: result.failure === "relaunch" ? "relaunch" : "apply",
         readyApplied: get().readyApplied || result.installed,
       });
     } catch (e) {
-      set({ restarting: false, restartError: describeError(e), restartFailure: "relaunch" });
+      set({ restarting: false, restartError: describeError(e), restartFailure: "apply" });
     } finally {
       // A refused or failed install at restart may have discarded the package or applied it without relaunching;
       // the failure is already shown as restartError, so the sync does not report it a second time.
