@@ -52,10 +52,14 @@ both `ID` and `ID_LIKE`. An unrecognized or missing os-release prints a
 warning and continues: the installed layout is identical across systemd
 distributions.
 
-The server binary is built with `CGO_ENABLED=0` and loads ONNX Runtime through purego, so it is dynamically linked against glibc only (no minimum glibc version) and runs on any glibc-based Linux; musl distributions such as Alpine are not supported. The optional ONNX Runtime library (`ai-runtime/`) additionally needs glibc 2.27 or newer. Before changing anything, `install.sh` runs
-the payload's `nexterm-server --version` and stops if it cannot execute on
-this host. ONNX Runtime also needs `libstdc++.so.6`; when it is missing the
-installer warns and only optional local AI redaction is unavailable.
+The server binary is built with `CGO_ENABLED=0`; the build requires it to be
+static or linked against glibc only (no minimum glibc version), and musl
+distributions such as Alpine are not supported. Local AI redaction is built
+into the binary and needs no extra library. Before changing anything,
+`install.sh` runs the payload's `nexterm-server --version` and stops if it
+cannot execute on this host. Upgrading from a release before 1.4.6-rc.4
+removes the old `ai-runtime/` directory (ONNX Runtime); a rollback restores
+it with the old binary.
 
 The automated suite (`go test ./scripts/installer`) exercises detection
 against staged roots with stubbed `uname` and `systemctl`; live systemd and
@@ -487,8 +491,8 @@ RestrictRealtime=yes
 CapabilityBoundingSet=
 ```
 
-`MemoryDenyWriteExecute=yes` is left out of that list because the optional
-local AI redaction loads the ONNX Runtime library into the server process.
+`MemoryDenyWriteExecute=yes` is left out of that list because it has not
+been verified with every feature of the full server.
 Both units allow 60 seconds for a stop: on shutdown the server sends open
 WebSockets a going-away close (code 1001) and drops connections that have
 not closed after a short grace period (10 seconds at most).

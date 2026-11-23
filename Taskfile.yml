@@ -2,6 +2,9 @@ version: '3'
 
 env:
   GOTOOLCHAIN: go1.27.3
+  # The pure-Go privacy engine needs gomlx's SIMD kernels. A GOEXPERIMENT already
+  # set in the environment wins here; scripts/build.mjs always appends simd.
+  GOEXPERIMENT: simd
 
 vars:
   GOFLAGS: '-mod=readonly'
@@ -160,7 +163,7 @@ tasks:
     cmds:
       - go run ./scripts/test-database --check
       - node scripts/check-placeholders.mjs
-      - node --test .github/scripts/go-shards.test.mjs .github/scripts/ci-plan.test.mjs .github/scripts/release-retention.test.mjs scripts/check-semver.test.mjs scripts/i18n.test.mjs scripts/lib/mobile.test.mjs scripts/lib/retry-busy.test.mjs scripts/lib/release-signing.test.mjs scripts/ai-privacy-runtime.test.mjs .github/scripts/windows-installer.test.mjs
+      - node --test .github/scripts/go-shards.test.mjs .github/scripts/ci-plan.test.mjs .github/scripts/release-retention.test.mjs scripts/check-semver.test.mjs scripts/i18n.test.mjs scripts/lib/mobile.test.mjs scripts/lib/retry-busy.test.mjs scripts/lib/release-signing.test.mjs .github/scripts/windows-installer.test.mjs
 
   check:ci-quality:
     summary: Run shared static Go, generated artifact, bindings and script quality gates
@@ -241,7 +244,7 @@ tasks:
       - node scripts/build.mjs frontend --repro-check
 
   server:build:
-    summary: Build a stripped static CGO_ENABLED=0 Linux server with the ONNX Runtime privacy runtime staged beside it; amd64/arm64 build from any host
+    summary: Build a stripped CGO_ENABLED=0 Linux server with the built-in privacy engine; amd64/arm64 build from any host
     cmds:
       - node scripts/build.mjs server --release --repro-check --os={{.GOOS | default "linux"}} --arch={{.GOARCH | default "amd64"}}
 
@@ -251,7 +254,7 @@ tasks:
       - node scripts/build.mjs desktop --release --repro-check
 
   windows:desktop:
-    summary: Build the Windows amd64/arm64 Wails desktop (CGO_ENABLED=0) with the ONNX Runtime privacy runtime
+    summary: Build the Windows amd64/arm64 Wails desktop (CGO_ENABLED=0) with the built-in privacy engine
     cmds:
       - node scripts/build.mjs desktop --release --repro-check --os=windows --arch={{.GOARCH | default "amd64"}}
 

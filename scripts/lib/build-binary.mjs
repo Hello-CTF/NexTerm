@@ -7,7 +7,6 @@ import { assertTarget, buildEnvironment, compileEnvironment, defaultBinaryPath }
 import { buildFrontend, consumeDist, distManifest, treeHashOrDie } from "./build-frontend.mjs";
 import { desktopReuseEvidence, ldflags } from "./build-ldflags.mjs";
 import { reproduceBinary, validateBinaryForPackaging, writeBinaryManifest } from "./build-evidence.mjs";
-import { preparePrivacyRuntime } from "./build-privacy.mjs";
 import { requireReportPassed, writeArtifactReport } from "./build-report.mjs";
 import { packageDesktop } from "./build-package.mjs";
 
@@ -68,7 +67,6 @@ export function buildBinary(kind) {
     if (kind === "desktop" && release) fs.rmSync(embeddedRoot, { recursive: true, force: true });
     if (windowsResource) fs.rmSync(windowsResource, { force: true });
   }
-  if (kind === "desktop" || kind === "server") preparePrivacyRuntime(outputPath, goos, goarch, packageOnly);
   if (!fs.existsSync(outputPath)) die(`Go linker did not produce ${outputPath}`);
   if (goos !== "windows") fs.chmodSync(outputPath, 0o755);
   if (!packageOnly) {

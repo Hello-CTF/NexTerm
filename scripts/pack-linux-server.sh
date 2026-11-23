@@ -28,7 +28,7 @@ Usage: scripts/pack-linux-server.sh [options]
 
 Package one full glibc-portable CGO_ENABLED=0 Go server tar.gz with both runtime units and
 all nine SSH target helpers. The server binary may be dynamically linked only
-against glibc (libc, libdl, libpthread; the purego ONNX Runtime loader) with no
+against glibc (libc, libdl, libpthread) with no
 GLIBC_ symbol version above 2.17, so it runs on any glibc Linux but not musl. scripts/build.mjs owns compilation/versioning;
 scripts/e2e-harness retains --sync-only acceptance.
 
@@ -93,8 +93,6 @@ case "$FILE_INFO" in
 esac
 export NEXTERM_RELEASE_VERSION="$VERSION"
 node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$BIN" "server-linux-$ARCH" linux "$ARCH" 0
-RUNTIME_DIR="$(dirname "$BIN")/ai-runtime-linux-$ARCH"
-node "$ROOT/scripts/lib/privacy-runtime.mjs" "$RUNTIME_DIR" linux "$ARCH" "$BIN.manifest.json"
 
 for unit in nexterm-server.service nexterm-onlyserver.service; do
   [ -f "$ROOT/deploy/systemd/$unit" ] || { echo "missing systemd unit: deploy/systemd/$unit" >&2; exit 1; }
@@ -123,7 +121,6 @@ package_full() {
   local unit env_file member helper_os helper_arch helper_name
   mkdir -p "$dir"
   install -m 0755 "$BIN" "$dir/nexterm-server"
-  "$ARCHIVE_TOOL" copy-tree "$RUNTIME_DIR" "$dir/ai-runtime"
   while IFS='|' read -r helper_os helper_arch helper_name; do
     install -m 0755 "$HELPERS_DIR/$helper_name" "$dir/$helper_name"
   done < <(node "$ROOT/.github/scripts/helper-matrix.mjs" --shell)
@@ -141,14 +138,9 @@ package_full() {
   chmod 0644 "$OUT/$name.tar.gz"
 
   local archive_members
-  # Targets whose ONNX Runtime release has no library ship only the unavailable manifest.
-  local RUNTIME_LIBRARY_MEMBER=ai-runtime/libonnxruntime.so
-  if grep -q '"unavailable"' "$RUNTIME_DIR/runtime.json"; then RUNTIME_LIBRARY_MEMBER=ai-runtime/runtime.json; fi
   archive_members="$(tar -tzf "$OUT/$name.tar.gz")"
   for member in \
     nexterm-server \
-    ai-runtime/runtime.json \
-    ${RUNTIME_LIBRARY_MEMBER} \
     nexterm-server.service \
     nexterm-onlyserver.service \
     install.sh \

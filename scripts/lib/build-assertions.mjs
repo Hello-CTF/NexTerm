@@ -9,7 +9,7 @@ import { HOST_ARCH, HOST_OS, LINUX_DESKTOP_ENTRY, ROOT, VERSION, archiveTool, op
 import { defaultBinaryPath } from "./build-targets.mjs";
 import { distManifest } from "./build-frontend.mjs";
 import { helperBinaryMetadata, helperProtocolMetadata } from "./build-evidence.mjs";
-import { privacyRuntimeAssertions, privacyRuntimeDirectory } from "./build-privacy.mjs";
+import { legacyRuntimeMarkerAssertions } from "./legacy-runtime-marker.mjs";
 import { glibcPortableProblems, inspectBinary } from "./build-inspect.mjs";
 import { sha256, zipMembers } from "./build-report.mjs";
 import { debVersion, linuxDesktopDepends } from "./build-package.mjs";
@@ -55,9 +55,12 @@ export function binaryAssertions({ kind, goos, goarch, file, cgo, stripped, requ
       });
     }
   }
-  if (kind === "desktop" || kind === "server") result.push(...privacyRuntimeAssertions(privacyRuntimeDirectory(file, goos, goarch), goos, goarch));
   const moduleInfo = output("go", ["version", "-m", file], { allowFailure: true });
   result.push(assertion("cgo-boundary", Boolean(moduleInfo?.includes(`CGO_ENABLED=${cgo}`)), `expected CGO_ENABLED=${cgo} in go version -m`));
+  if (kind === "desktop" || kind === "server") {
+    const experiment = moduleInfo?.match(/^\s*build\s+GOEXPERIMENT=(\S*)/m)?.[1] ?? "";
+    result.push(assertion("goexperiment-simd", experiment.split(",").includes("simd"), `the privacy engine needs GOEXPERIMENT=simd; go version -m reports GOEXPERIMENT=${experiment || "(unset)"}`));
+  }
   if (target?.goarm) result.push(assertion("goarm", moduleInfo?.includes(`GOARM=${target.goarm}`) === true, `expected GOARM=${target.goarm} in go version -m`));
   if (stripped) {
     const binary = fs.readFileSync(file);
@@ -191,7 +194,7 @@ export function packageAssertions(kind, file, goos, goarch) {
       checks.push(assertion("nsis-extract", extracted !== null, "7-Zip must extract the NSIS installer"));
       if (extracted !== null) {
         checks.push(...packagedHelperAssertions(work, "", false));
-        checks.push(...privacyRuntimeAssertions(path.join(work, "ai-runtime"), goos, goarch));
+        checks.push(...legacyRuntimeMarkerAssertions(path.join(work, "ai-runtime")));
       }
     } finally {
       fs.rmSync(work, { recursive: true, force: true });
@@ -225,7 +228,7 @@ export function packageAssertions(kind, file, goos, goarch) {
         const depends = linuxDesktopDepends(path.join(work, "usr/bin/nexterm-desktop"));
         checks.push(assertion("linux-desktop-deb-depends", control.includes(`\nDepends: ${depends}\n`), `control Depends must match the packaged binary: ${depends}`));
         checks.push(...packagedHelperAssertions(work, "usr/bin", true));
-        checks.push(...privacyRuntimeAssertions(path.join(work, "usr/bin/ai-runtime"), goos, goarch));
+        checks.push(...legacyRuntimeMarkerAssertions(path.join(work, "usr/bin/ai-runtime")));
       }
     } finally {
       fs.rmSync(work, { recursive: true, force: true });
@@ -250,11 +253,10 @@ export function packageAssertions(kind, file, goos, goarch) {
     const work = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-server-assert-"));
     try {
       const extracted = output(resolveTar(), ["-xzf", path.resolve(file), "-C", work,
-        ...helperArchiveMembers(`${root}/`), `${root}/ai-runtime`], { allowFailure: true });
+        ...helperArchiveMembers(`${root}/`)], { allowFailure: true });
       checks.push(assertion("server-archive-helper-extract", extracted !== null, "all nine helpers must extract from the server archive"));
       if (extracted !== null) {
         checks.push(...packagedHelperAssertions(work, root, true));
-        checks.push(...privacyRuntimeAssertions(path.join(work, root, "ai-runtime"), goos, goarch));
       }
     } finally {
       fs.rmSync(work, { recursive: true, force: true });
@@ -274,7 +276,6 @@ export function packageAssertions(kind, file, goos, goarch) {
       if (mounted) {
         checks.push(...packagedHelperAssertions(mountpoint, "NexTerm.app/Contents/Resources/helpers", true));
         checks.push(...packagedDarwinHelperLinkAssertions(mountpoint));
-        checks.push(...privacyRuntimeAssertions(path.join(mountpoint, "NexTerm.app/Contents/Resources/ai-runtime"), goos, goarch, path.join(mountpoint, "NexTerm.app/Contents/Frameworks/ai-runtime")));
       }
     } finally {
       if (mounted) {

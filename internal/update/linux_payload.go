@@ -3,9 +3,7 @@ package update
 import (
 	"archive/tar"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path"
@@ -13,14 +11,13 @@ import (
 	"strings"
 )
 
-// errPayloadMissingRuntime reports an update archive that lacks the AI runtime directory.
-var errPayloadMissingRuntime = errors.New("更新包缺少 AI 运行时目录 ai-runtime")
-
 // errPayloadMissingExecutable lets callers name the archive that lacked the executable.
 var errPayloadMissingExecutable = errors.New("更新包中没有 nexterm-desktop")
 
-// installLinuxPayload stages the executable and its optional native runtime
-// together. An interrupted extraction cannot publish a half-written library.
+// installLinuxPayload stages the executable and the optional ai-runtime
+// directory together. Current packages carry only ai-runtime/runtime.json, a
+// marker for updaters from 1.4.6-rc.3 and earlier; installing it replaces the
+// ONNX Runtime an older release left beside the executable.
 func installLinuxPayload(ctx context.Context, reader *tar.Reader, executable string) error {
 	directory := filepath.Dir(executable)
 	temporary, err := os.MkdirTemp(directory, ".nexterm-update-")
@@ -103,18 +100,6 @@ func installLinuxPayload(ctx context.Context, reader *tar.Reader, executable str
 	if !found {
 		return errPayloadMissingExecutable
 	}
-	// Every release deb ships ai-runtime (a real library, or a manifest declaring
-	// it unavailable). A payload without it would leave the new executable next
-	// to a stale or missing runtime, so it is rejected before anything is replaced.
-	if !hasRuntime {
-		return errPayloadMissingRuntime
-	}
-	if !runtimeUnavailable(runtimeStage) {
-		const name = "libonnxruntime.so"
-		if info, err := os.Stat(filepath.Join(runtimeStage, name)); err != nil || !info.Mode().IsRegular() {
-			return fmt.Errorf("更新包缺少 AI 运行时 %s", name)
-		}
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -151,18 +136,4 @@ func installLinuxPayload(ctx context.Context, reader *tar.Reader, executable str
 		return err
 	}
 	return nil
-}
-
-// runtimeUnavailable reports whether runtime.json in directory declares that no
-// ONNX Runtime library exists for this target. Such a payload ships only that
-// manifest, so the library must not be required.
-func runtimeUnavailable(directory string) bool {
-	data, err := os.ReadFile(filepath.Join(directory, "runtime.json"))
-	if err != nil {
-		return false
-	}
-	var manifest struct {
-		Unavailable string `json:"unavailable"`
-	}
-	return json.Unmarshal(data, &manifest) == nil && manifest.Unavailable != ""
 }

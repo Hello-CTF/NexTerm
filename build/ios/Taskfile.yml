@@ -49,7 +49,10 @@ tasks:
       - task: common:build:frontend
     cmds:
       - echo "Building iOS app {{.APP_NAME}} ({{.IOS_PLATFORM}})..."
-      - go build -buildmode=c-archive -overlay build/ios/xcode/overlay.json {{.BUILD_FLAGS}} -o {{.OUTPUT}}.a ./cmd/nexterm-desktop
+      - |
+        # The pure-Go privacy engine needs the SIMD kernels for usable speed.
+        case ",${GOEXPERIMENT:-}," in *,simd,*) ;; *) export GOEXPERIMENT="${GOEXPERIMENT:+$GOEXPERIMENT,}simd" ;; esac
+        go build -buildmode=c-archive -overlay build/ios/xcode/overlay.json {{.BUILD_FLAGS}} -o {{.OUTPUT}}.a ./cmd/nexterm-desktop
     vars:
       BUILD_FLAGS:
         sh: 'node scripts/mobile-source.mjs ldflags --platform=ios --production={{.PRODUCTION | default "false"}}'
@@ -73,15 +76,7 @@ tasks:
           PRODUCTION: "true"
     cmds:
       - task: compile:ios:link
-      - task: prepare:privacy:runtime
       - task: create:app:bundle
-
-  prepare:privacy:runtime:
-    internal: true
-    summary: Stage the checksum-pinned ONNX Runtime framework for local AI privacy inference (no model weights)
-    cmds:
-      - rm -rf "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}"
-      - node scripts/ai-privacy-runtime.mjs --os=ios --arch=arm64 --ios-platform={{.IOS_PLATFORM}} --output="{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}"
 
   package:ipa:
     summary: Packages a production build into an .ipa (requires IOS_PLATFORM=device and a real CODESIGN_IDENTITY)
@@ -132,10 +127,6 @@ tasks:
       - chmod 0755 "{{.BIN_DIR}}/{{.APP_NAME}}.app/{{.APP_NAME | lower}}"
       - cp build/ios/Info.plist "{{.BIN_DIR}}/{{.APP_NAME}}.app/"
       - cp -R build/ios/localization/. "{{.BIN_DIR}}/{{.APP_NAME}}.app/"
-      - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.app/Frameworks"
-      - cp -R "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/onnxruntime.framework" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Frameworks/"
-      - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.app/ai-runtime"
-      - cp -R "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/runtime.json" "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/licenses" "{{.BIN_DIR}}/{{.APP_NAME}}.app/ai-runtime/"
       - |
         if [ -n "${NEXTERM_RELEASE_VERSION:-}" ] || [ -n "${IOS_BUILD_NUMBER:-}" ]; then
           version="${NEXTERM_RELEASE_VERSION:-0.0.0}"
@@ -214,9 +205,6 @@ tasks:
         # builds need a real identity (and usually entitlements + profile).
         # Entitlements are only applied to device builds - simulator bundles
         # must not carry them (SpringBoard refuses to launch the app).
-        for framework in "{{.BIN_DIR}}/{{.APP_NAME}}.app/Frameworks/"*.framework; do
-          codesign --force --sign "{{.CODESIGN_IDENTITY}}" "$framework"
-        done
         if [ "{{.IOS_PLATFORM}}" = "device" ] && [ -f "{{.ENTITLEMENTS_FILE}}" ]; then
           codesign --force --sign "{{.CODESIGN_IDENTITY}}" --entitlements "{{.ENTITLEMENTS_FILE}}" "{{.BIN_DIR}}/{{.APP_NAME}}.app"
         else
@@ -364,8 +352,7 @@ tasks:
       - build/appicon.png
       - build/ios/LaunchScreen.storyboard
       - build/ios/LaunchIcon.imageset/Contents.json
-      - build/ios/scripts/privacy-xcode.mjs
-      - build/ios/scripts/privacy-xcode.sh
+      - build/ios/scripts/patch-xcode.mjs
       - build/ios/scripts/archive-xcode.sh
     generates:
       - build/ios/xcode/main/main.m
@@ -374,7 +361,7 @@ tasks:
       - build/ios/xcode/main.xcodeproj/project.pbxproj
     cmds:
       - wails3 ios xcode:gen -outdir build/ios/xcode -config "$(node scripts/mobile-source.mjs config)"
-      - node build/ios/scripts/privacy-xcode.mjs build/ios/xcode/main.xcodeproj/project.pbxproj
+      - node build/ios/scripts/patch-xcode.mjs build/ios/xcode/main.xcodeproj/project.pbxproj
       # The generated launch screen shows the product name as a text label;
       # overlay the icon-only storyboard and its LaunchIcon image set.
       - cp build/ios/LaunchScreen.storyboard build/ios/xcode/main/LaunchScreen.storyboard
@@ -390,16 +377,11 @@ tasks:
       - task: ensure-simulator
       - task: compile:ios
     cmds:
-      - task: prepare:privacy:runtime
       - rm -rf "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app"
       - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app"
       - cp "{{.BIN_DIR}}/{{.APP_NAME | lower}}" "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/{{.APP_NAME | lower}}"
       - cp build/ios/Info.dev.plist "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Info.plist"
       - cp -R build/ios/localization/. "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/"
-      - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Frameworks"
-      - cp -R "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/onnxruntime.framework" "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Frameworks/"
-      - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/ai-runtime"
-      - cp -R "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/runtime.json" "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/licenses" "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/ai-runtime/"
       - |
         # Compile asset catalog and embed icons for dev bundle
         APP_BUNDLE="{{.BIN_DIR}}/{{.APP_NAME}}.dev.app"
@@ -430,9 +412,6 @@ tasks:
           xcrun ibtool --compile "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/LaunchScreen.storyboardc" "$STORYBOARD"
         fi
       - |
-        for framework in "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Frameworks/"*.framework; do
-          codesign --force --sign - "$framework"
-        done
         codesign --force --sign - "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app"
       - |
         # The dev bundle id comes from build/ios/Info.dev.plist (derived from

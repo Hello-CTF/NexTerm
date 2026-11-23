@@ -21,6 +21,14 @@ export function assertTarget(kind, goos, goarch) {
   }
 }
 
+// The pure-Go privacy engine needs gomlx's SIMD kernels (GOEXPERIMENT=simd, Go
+// 1.27) for usable speed; every Go build uses the same experiment so tests,
+// reproducibility checks and shipped binaries compile the same code.
+export function withSimdExperiment(value = "") {
+  const experiments = value.split(",").map((item) => item.trim()).filter(Boolean);
+  return experiments.includes("simd") ? experiments.join(",") : [...experiments, "simd"].join(",");
+}
+
 export function buildEnvironment(goos, goarch, kind) {
   const cgo = kind === "desktop" && (goos === "darwin" || goos === "linux") ? "1" : "0";
   const target = kind === "helper" ? helperTarget(goos, goarch) : null;
@@ -30,6 +38,7 @@ export function buildEnvironment(goos, goarch, kind) {
     GOARCH: target?.goarch || goarch,
     CGO_ENABLED: cgo,
     GOTOOLCHAIN: GO_TOOLCHAIN,
+    GOEXPERIMENT: withSimdExperiment(process.env.GOEXPERIMENT),
   };
   if (target?.goarm) env.GOARM = target.goarm;
   else delete env.GOARM;

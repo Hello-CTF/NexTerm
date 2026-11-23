@@ -6,8 +6,8 @@ SetCompressor /SOLID lzma
 !ifndef NEXTERM_BINARY
   !error "NEXTERM_BINARY is required"
 !endif
-!ifndef NEXTERM_AI_RUNTIME
-  !error "NEXTERM_AI_RUNTIME is required"
+!ifndef NEXTERM_LEGACY_RUNTIME_MARKER
+  !error "NEXTERM_LEGACY_RUNTIME_MARKER is required"
 !endif
 !ifndef NEXTERM_VERSION
   !error "NEXTERM_VERSION is required"
@@ -102,9 +102,13 @@ Section "NexTerm" SEC01
   File /oname=nexterm-helper-windows-amd64.exe "${NEXTERM_HELPER_WINDOWS_AMD64}"
   File /oname=nexterm-helper-windows-arm64.exe "${NEXTERM_HELPER_WINDOWS_ARM64}"
   File /oname=MicrosoftEdgeWebview2Setup.exe "${NEXTERM_WEBVIEW2}"
+  ; Removes the ONNX Runtime an older install left behind. The privacy engine is
+  ; built into the application; ai-runtime\runtime.json only declares the
+  ; runtime unavailable so updaters from 1.4.6-rc.3 and earlier accept this
+  ; install (they require onnxruntime.dll otherwise).
   RMDir /r "$INSTDIR\ai-runtime"
   SetOutPath "$INSTDIR\ai-runtime"
-  File /r "${NEXTERM_AI_RUNTIME}\*"
+  File "${NEXTERM_LEGACY_RUNTIME_MARKER}\runtime.json"
   SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\NexTerm" "InstallDir" "$INSTDIR"

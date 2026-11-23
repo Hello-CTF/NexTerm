@@ -2,14 +2,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileDigest } from "./privacy-runtime.mjs";
 import { readHostHelperProtocolMetadata } from "../../.github/scripts/helper-metadata.mjs";
 import { canExecuteHelperMetadata, helperTarget } from "../../.github/scripts/helper-matrix.mjs";
 import { binaryManifestProblems, createBinaryManifest, helperMetadataManifestProblems, loadManifest } from "./build-manifest.mjs";
 import { COMMIT, HOST_ARCH, HOST_OS, RELEASE_REF, ROOT, SOURCE_DATE_EPOCH, VERSION, die, log, option, output, run } from "./build-context.mjs";
 import { buildEnvironment, compileEnvironment } from "./build-targets.mjs";
 import { desktopMinisignPublicKeyDigest } from "./build-ldflags.mjs";
-import { privacyRuntimeDirectory } from "./build-privacy.mjs";
 import { sha256 } from "./build-report.mjs";
 
 let cachedHelperProtocolMetadata;
@@ -74,7 +72,6 @@ export function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, s
     commit: COMMIT,
     source_date_epoch: Number(SOURCE_DATE_EPOCH),
   });
-  if (kind === "desktop" || kind === "server") manifest.privacy_runtime_sha256 = fileDigest(path.join(privacyRuntimeDirectory(file, goos, goarch), "runtime.json"));
   if (kind === "desktop") {
     manifest.source_ref = RELEASE_REF;
     manifest.updater_public_key_sha256 = desktopMinisignPublicKeyDigest();
