@@ -2,11 +2,16 @@
 import crypto from "node:crypto";
 import { parseReleaseVersion } from "./semver.mjs";
 
+const KEYLESS_RELEASE_PROBLEMS = {
+  agent: "agent release builds require NEXTERM_MINISIGN_PUBLIC_KEY: without it the agent refuses every self-upgrade",
+  desktop: "desktop release builds require NEXTERM_MINISIGN_PUBLIC_KEY: without it the desktop refuses every in-app update",
+};
+
 export function releaseSigningKeyProblem({ kind, releaseVersion, publicKey }) {
-  if (kind !== "agent") return null;
+  if (!Object.hasOwn(KEYLESS_RELEASE_PROBLEMS, kind)) return null;
   if (!releaseVersion || !parseReleaseVersion(releaseVersion)) return null;
   if (publicKey) return null;
-  return "agent release builds require NEXTERM_MINISIGN_PUBLIC_KEY: without it the agent refuses every self-upgrade";
+  return KEYLESS_RELEASE_PROBLEMS[kind];
 }
 
 // Returns { key, problem }; empty input yields an empty key and no problem.

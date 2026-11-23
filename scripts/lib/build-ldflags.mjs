@@ -37,10 +37,8 @@ export function ldflags(kind, goos) {
   ];
   if (kind === "desktop" || kind === "agent") {
     const publicKey = desktopMinisignPublicKey();
-    if (kind === "agent") {
-      const problem = releaseSigningKeyProblem({ kind, releaseVersion: process.env.NEXTERM_RELEASE_VERSION, publicKey });
-      if (problem) die(problem);
-    }
+    const problem = releaseSigningKeyProblem({ kind, releaseVersion: process.env.NEXTERM_RELEASE_VERSION, publicKey });
+    if (problem) die(problem);
     if (publicKey) flags.push(`-X github.com/Hello-CTF/NexTerm/internal/releasesig.EmbeddedPublicKey=${publicKey}`);
   }
   if (kind === "desktop" && goos === "windows") flags.push("-H windowsgui");
