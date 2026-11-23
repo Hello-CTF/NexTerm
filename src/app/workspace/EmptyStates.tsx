@@ -20,6 +20,7 @@ import { formatBinding, useKeybindings } from "../keybindings";
 import { useShell } from "../shell";
 import { sessionApi } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
+import { describeError } from "../../ui/errorText";
 import { assetApi, type Asset } from "../../ipc/commands";
 import { useAssetVisibility } from "../../features/explorer/assetVisibility";
 import { useConnectHistory } from "../../features/explorer/connectHistory";
@@ -75,20 +76,48 @@ function RemoteWorkspaceEmpty({ workspaceId, paneId }: { workspaceId: string; pa
   );
 }
 
+// An empty pane of a database workspace: a terminal here would open on this device, not on the database, so the only
+// action reopens the database view in this pane.
+function DatabaseWorkspaceEmpty({ workspaceId, paneId }: { workspaceId: string; paneId?: string }) {
+  const workspace = useUi((s) => s.workspaces.find((item) => item.id === workspaceId));
+  const [busy, setBusy] = useState(false);
+  if (!workspace) return null;
+  if (workspace.deletedTarget) {
+    return <EmptyCard title={t("此窗格暂无内容")} subtitle={t("「{title}」的资产已删除，无法重新连接。", { title: workspace.title })} />;
+  }
+  const openElsewhere = workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "db"));
+  const assetId = workspace.assetId;
+  if (openElsewhere || !assetId) {
+    return <EmptyCard title={t("此窗格暂无内容")} subtitle={t("从左侧栏或跳转面板打开所需的面板。")} />;
+  }
+  const reopen = () => {
+    setBusy(true);
+    // The reopened view lands in the workspace's focused pane, which is this one.
+    if (paneId) useUi.getState().setActivePane(paneId, workspaceId);
+    void assetApi
+      .get(assetId)
+      // connectAsset reports its own failures.
+      .then((asset) => connectAsset(asset))
+      .catch((error: unknown) => useUi.getState().pushToast("error", describeError(error)))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <EmptyCard title={t("数据库已关闭")} subtitle={t("「{title}」的数据库面板已关闭。", { title: workspace.title })}>
+      <button type="button" className="nx-btn nx-btn-primary" disabled={busy} onClick={reopen}>
+        {busy ? t("正在连接…") : t("重新打开数据库")}
+      </button>
+    </EmptyCard>
+  );
+}
+
 // workspaceId scopes the empty state to a pane of that workspace; without it this is the no-workspace fallback.
 export function WorkspaceEmpty({ onNew, workspaceId, paneId }: { onNew: () => void; workspaceId?: string; paneId?: string }) {
   const kind = useUi((s) => (workspaceId ? s.workspaces.find((item) => item.id === workspaceId)?.kind : undefined));
   if (workspaceId && kind === "remote") return <RemoteWorkspaceEmpty workspaceId={workspaceId} paneId={paneId} />;
-  if (kind === "db" || kind === "tools") {
-    return (
-      <EmptyCard title={t("此窗格暂无内容")} subtitle={t("从左侧栏或跳转面板打开所需的面板。")}>
-        <button className="nx-btn nx-btn-primary" onClick={onNew}>
-          <IconPlus size={14} />
-          {t("新建终端")}
-        </button>
-      </EmptyCard>
-    );
-  }
+  if (workspaceId && kind === "db") return <DatabaseWorkspaceEmpty workspaceId={workspaceId} paneId={paneId} />;
+  // A tools workspace holds several kinds of panels; the sidebar and the jump palette open the one wanted, and a
+  // terminal button here would open a local terminal in another workspace.
+  if (kind === "tools") return <EmptyCard title={t("此窗格暂无内容")} subtitle={t("从左侧栏或跳转面板打开所需的面板。")} />;
   return (
     <EmptyCard title={t("暂无终端")}>
       <button className="nx-btn nx-btn-primary" onClick={onNew}>
