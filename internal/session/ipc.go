@@ -114,7 +114,7 @@ func userMessage(err error) string {
 		return "会话已断开，请重新连接"
 	case errors.Is(err, supervisor.ErrLegacyHelperRunning):
 		return "主机上仍在运行旧版持久终端组件，当前版本无法接入其中的持久终端。它们会继续在旧版组件中运行，不会被自动结束或迁移；" +
-			"可在持久终端组件窗口查看其中的会话数并确认升级，升级会结束这些会话"
+			"可在持久终端组件窗口查看其中的会话数并确认替换，替换会结束这些会话"
 	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
 		return "主机上的持久终端组件或设备代理版本过旧，升级后才能使用持久终端；已有会话不会被结束"
 	case errors.Is(err, supervisor.ErrClientUpgradeRequired):

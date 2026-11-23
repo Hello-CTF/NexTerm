@@ -1178,7 +1178,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						return helperOperationDTO{}, terminalIPCError(session.ErrUnsupported)
 					}
 					if action == "replace_legacy" && input.ConsentToken == "" {
-						return helperOperationDTO{}, ipc.BadParam(errors.New("缺少升级确认"))
+						return helperOperationDTO{}, ipc.BadParam(errors.New("缺少替换确认"))
 					}
 					result, err := s.helpers.ensure(ctx, input.SessionID, action, input.ConsentToken)
 					if err != nil {
