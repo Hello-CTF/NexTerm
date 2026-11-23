@@ -9,12 +9,35 @@ import { selectNativeMatrix } from "./helper-matrix.mjs";
 export const PLAIN_UNIT_SHARDS = 3;
 export const RACE_UNIT_SHARDS = 5;
 
+// Script and workflow files whose change must build every native target: they drive the native jobs or the
+// artifacts those jobs produce. Templates and the Go test weights do not.
+const FULL_NATIVE_FILES = /^(build\/|\.github\/(workflows\/(ci|release)\.yml$|actions\/|native-matrix\.json$|scripts\/(build-native|helper-matrix|helper-metadata|verify-reused-binary|verify-packaged-runtime|stage-server-evidence)\.mjs$|scripts\/windows-real-tests\.ps1$)|scripts\/(build|test-production)\.mjs$|scripts\/lib\/build-|scripts\/pack-)|(^|\/)(go\.mod|go\.sum)$/;
+// Go files compiled only for some operating systems build those systems' native targets (both architectures).
+// Fallback files for other systems (_other, _unsupported, _default, _stub) build every target.
+const OS_FILES = [
+  [/_windows(_test)?\.go$/, ["windows"]],
+  [/_(darwin|apple)(_test)?\.go$/, ["darwin"]],
+  [/_linux(_test)?\.go$/, ["linux"]],
+  [/_(unix|nonwindows)(_test)?\.go$/, ["linux", "darwin"]],
+];
+const FALLBACK_OS_FILE = /_(other|unsupported|default|stub)(_test)?\.go$/;
+// Node and shell tooling: script tests run in the quality job and native builds use the build scripts, so these
+// changes skip the Go, database and frontend test suites. Scripts that feed other suites say so here.
+const SCRIPT_FILE = /^(scripts|\.github\/scripts)\/.*\.(mjs|sh)$/;
+const FRONTEND_SCRIPT = /^scripts\/(i18n\.mjs|lib\/(vite-watch-ignores|store-subscription-rule)\.mjs)$/;
+const MOBILE_SCRIPT = /^scripts\/(mobile-source\.mjs|lib\/(mobile|semver)\.mjs)$/;
+// The iOS compile runs on a macOS runner, so PRs run it only for changes that can break iOS specifically.
+const IOS_FILES = /_(ios|darwin|apple)(_test)?\.go$|^build\/ios\/|(^|\/)(go\.mod|go\.sum)$/;
+
 export function planCI({ isPR, files = [], labels = [] }) {
   const full = isPR && labels.includes("full-ci");
   let go = full;
   let frontend = full;
   let tooling = full;
+  let mobile = full;
+  let ios = full;
   let fullNative = full;
+  const nativeOS = new Set();
   for (const file of files) {
     if (/^[^/]+\.md$|(^|\/)(README(?:_[^/]+)?|AGENTS)\.md$/.test(file)
       || /^(docs\/|website\/|LICENSE$|\.gitignore$|\.github\/workflows\/pages\.yml$)/.test(file)) continue;
@@ -22,12 +45,18 @@ export function planCI({ isPR, files = [], labels = [] }) {
       frontend = true;
       if (file.startsWith("src/ipc/")) tooling = true;
     } else if (/\.go$|(^|\/)(go\.mod|go\.sum)$/.test(file)) {
-      go = true;
+      go = mobile = true;
+    } else if (SCRIPT_FILE.test(file)) {
+      tooling = true;
+      if (FRONTEND_SCRIPT.test(file)) frontend = true;
+      if (MOBILE_SCRIPT.test(file)) mobile = ios = true;
     } else {
       // Unknown configuration and tooling changes get the complete PR gates.
-      go = frontend = tooling = true;
+      go = frontend = tooling = mobile = ios = true;
     }
-    if (/^build\/|^\.github\/|^scripts\/build|(^|\/)(go\.mod|go\.sum)$|_(darwin|linux|unix|windows)\.go$/.test(file)) fullNative = true;
+    if (IOS_FILES.test(file)) ios = true;
+    if (FULL_NATIVE_FILES.test(file) || FALLBACK_OS_FILE.test(file)) fullNative = true;
+    for (const [pattern, systems] of OS_FILES) if (pattern.test(file)) for (const os of systems) nativeOS.add(os);
   }
   const native = !isPR || go || frontend || tooling;
   const scope = {
@@ -39,10 +68,10 @@ export function planCI({ isPR, files = [], labels = [] }) {
     frontend: !isPR || native || frontend,
     frontendTests: isPR && frontend,
     native,
-    mobile: isPR && go,
+    mobile: isPR && mobile,
     repro: !isPR || full,
   };
-  const targets = native ? selectNativeMatrix({ isPR, fullPR: fullNative })
+  const targets = native ? selectNativeMatrix({ isPR, fullPR: fullNative, systems: nativeOS })
     .filter((entry) => !isPR || go || tooling || entry.kind === "desktop") : [];
   const groups = new Map();
   for (const target of targets) {
@@ -55,7 +84,8 @@ export function planCI({ isPR, files = [], labels = [] }) {
   const shardCount = scope.race ? RACE_UNIT_SHARDS : PLAIN_UNIT_SHARDS;
   // number is the 1-based shard shown in the job name: workflow expressions cannot do arithmetic.
   const unitMatrix = { include: Array.from({ length: shardCount }, (_, shard) => ({ shard, number: shard + 1, count: shardCount })) };
-  return { scope, matrix: { include: [...groups.values()] }, unitMatrix };
+  const mobileMatrix = { include: [{ platform: "android", runner: "ubuntu-latest" }, ...(ios ? [{ platform: "ios", runner: "macos-26" }] : [])] };
+  return { scope, matrix: { include: [...groups.values()] }, unitMatrix, mobileMatrix };
 }
 
 function main() {

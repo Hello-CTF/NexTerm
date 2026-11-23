@@ -50,9 +50,10 @@ export function helperTarget(goos, goarch) {
   return helperTargets().find((target) => target.os === goos && target.arch === goarch) || null;
 }
 
-export function selectNativeMatrix({ isPR, fullPR }) {
+// A PR builds the smoke targets, plus every target of the operating systems in systems, or everything with fullPR.
+export function selectNativeMatrix({ isPR, fullPR, systems = new Set() }) {
   helperTargets();
-  return MATRIX.filter((entry) => !isPR || fullPR || entry.smoke === true);
+  return MATRIX.filter((entry) => !isPR || fullPR || entry.smoke === true || systems.has(entry.os));
 }
 
 export function canExecuteHelperMetadata(host, target) {
