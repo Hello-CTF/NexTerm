@@ -213,8 +213,8 @@ func TestNewerReleaseReplacesStagedPackage(t *testing.T) {
 	for _, entry := range entries {
 		names = append(names, entry.Name())
 	}
-	if strings.Join(names, ",") != checksumsAssetName+","+staged.AssetName {
-		t.Fatalf("package directory = %v, want only the newer package and its checksums", names)
+	if strings.Join(names, ",") != checksumsAssetName+","+checksumSignatureAssetName+","+staged.AssetName {
+		t.Fatalf("package directory = %v, want only the newer package, its checksums and their signature", names)
 	}
 }
 

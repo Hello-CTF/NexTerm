@@ -27,12 +27,14 @@ func TestCheckSignedRelease(t *testing.T) {
 
 func TestInstallSignatureFailuresKeepOldBinary(t *testing.T) {
 	tests := []struct {
-		name  string
-		setup func(*releaseFixture, releasesigtest.Key, *Manager)
+		name          string
+		noEmbeddedKey bool
+		setup         func(*releaseFixture, releasesigtest.Key, *Manager)
 	}{
 		{
 			name: "missing signature asset",
-			setup: func(_ *releaseFixture, key releasesigtest.Key, manager *Manager) {
+			setup: func(fixture *releaseFixture, key releasesigtest.Key, manager *Manager) {
+				fixture.unsign()
 				manager.MinisignPublicKey = key.PublicKeyFile()
 				manager.RequireSignedChecksums = true
 			},
@@ -40,7 +42,7 @@ func TestInstallSignatureFailuresKeepOldBinary(t *testing.T) {
 		{
 			name: "signature download missing",
 			setup: func(fixture *releaseFixture, key releasesigtest.Key, manager *Manager) {
-				fixture.releases[0].Assets = append(fixture.releases[0].Assets, Asset{Name: checksumSignatureAssetName})
+				fixture.signature = ""
 				manager.MinisignPublicKey = key.PublicKeyFile()
 			},
 		},
@@ -75,7 +77,8 @@ func TestInstallSignatureFailuresKeepOldBinary(t *testing.T) {
 			},
 		},
 		{
-			name: "required without trusted key",
+			name:          "required without trusted key",
+			noEmbeddedKey: true,
 			setup: func(_ *releaseFixture, _ releasesigtest.Key, manager *Manager) {
 				manager.RequireSignedChecksums = true
 			},
@@ -83,6 +86,9 @@ func TestInstallSignatureFailuresKeepOldBinary(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			if test.noEmbeddedKey {
+				withoutEmbeddedKey(t)
+			}
 			key := releasesigtest.NewKey(10)
 			fixture := linuxFixture(t, "0.3.0", false)
 			executable := filepath.Join(t.TempDir(), "nexterm-desktop")
@@ -176,5 +182,46 @@ func TestInstallSignedReleaseReplacesBinary(t *testing.T) {
 	}
 	if string(content) != "new-binary-0.3.0" {
 		t.Fatalf("executable content = %q", content)
+	}
+}
+
+// A build without a trusted key (a development build: release builds always embed one) still reports a newer
+// release and its download link, but installs nothing, and never applies a package staged without a signature.
+func TestBuildWithoutTrustedKeyInstallsNothing(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux deb install test")
+	}
+	stage := newStageFixture(t, "0.3.0", t.TempDir())
+	staged := stage.install(t)
+	withoutEmbeddedKey(t)
+
+	status := stage.manager.Check(context.Background())
+	if !status.Available || status.Version != "0.3.0" || status.DownloadURL == "" {
+		t.Fatalf("status = %+v, want the newer release reported", status)
+	}
+	if status.CanInstall || status.UnavailableReason == "" {
+		t.Fatalf("status = %+v, want installing refused without a trusted key", status)
+	}
+	result, err := stage.manager.Install(context.Background(), "")
+	if err != nil || result.Ready || result.UnavailableReason == "" {
+		t.Fatalf("install = %+v, %v; want it refused without a trusted key", result, err)
+	}
+
+	// The package staged while the key was trusted is neither offered nor applied once the build has none.
+	relaunched := &Manager{
+		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true, StageDir: stage.stageDir,
+		ExePath: stage.executable, RestartFunc: func(context.Context, string) error { return nil },
+	}
+	if state := relaunched.State(); state.Phase == StateReady || state.ReadyVersion != "" {
+		t.Fatalf("state = %+v, package %+v must not be offered without a trusted key", state, staged)
+	}
+	if result := relaunched.Restart(context.Background()); result.Installed {
+		t.Fatalf("restart = %+v, want nothing installed", result)
+	}
+	if content := stage.content(t); content != "old-binary" {
+		t.Fatalf("executable content = %q, want it untouched", content)
+	}
+	if staged, ok := relaunched.stagedPackage(); ok {
+		t.Fatalf("unverifiable package %+v must be discarded", staged)
 	}
 }
