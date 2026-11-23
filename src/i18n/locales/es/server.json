@@ -2842,7 +2842,7 @@
   "该同步内容开关未开启，已跳过": "El interruptor de este contenido de sincronización está desactivado; se omitió",
   "该同步对象种类不支持通用收集": "Este tipo de objeto de sincronización no admite la recopilación genérica",
   "该同步操作只在桌面端可用": "Esta operación de sincronización solo está disponible en la aplicación de escritorio",
-  "该定时任务在本机运行，请在所属会话中删除": "Esta tarea programada se ejecuta en este equipo; elimínala desde la sesión a la que pertenece",
+  "该定时任务在本机运行，请在所属对话中删除": "Esta tarea programada se ejecuta en este equipo; elimínala desde la conversación a la que pertenece",
   "该定时任务已在本机运行": "Esta tarea programada ya se está ejecutando en este equipo",
   "该对话仍有任务在运行或等待确认，请先停止该任务或等待它结束后再删除": "Esta conversación aún tiene una tarea en curso o pendiente de confirmación; detenla o espera a que termine antes de eliminar",
   "该对话仍有任务在运行或等待确认，请先停止该任务或等待它结束后再发送": "Esta conversación aún tiene una tarea en curso o pendiente de confirmación; detenla o espera a que termine antes de enviar",

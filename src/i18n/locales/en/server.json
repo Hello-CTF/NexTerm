@@ -2842,7 +2842,7 @@
   "该同步内容开关未开启，已跳过": "This sync content switch is off, so it was skipped",
   "该同步对象种类不支持通用收集": "This sync object kind does not support generic collection",
   "该同步操作只在桌面端可用": "This sync operation is only available on the desktop app",
-  "该定时任务在本机运行，请在所属会话中删除": "This scheduled task runs on this device. Delete it from the session that owns it.",
+  "该定时任务在本机运行，请在所属对话中删除": "This scheduled task runs on this device. Delete it from the conversation that owns it.",
   "该定时任务已在本机运行": "This scheduled task is already running on this device",
   "该对话仍有任务在运行或等待确认，请先停止该任务或等待它结束后再删除": "This conversation still has a task running or awaiting confirmation; stop it or wait for it to finish before deleting",
   "该对话仍有任务在运行或等待确认，请先停止该任务或等待它结束后再发送": "This conversation still has a task running or awaiting confirmation; stop it or wait for it to finish before sending",
