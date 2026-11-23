@@ -90,7 +90,8 @@ export async function openConnectedAssetSession(
 ): Promise<void> {
   const { setSessions, sessions, workspaces } = useUi.getState();
   setSessions([...sessions.filter((s) => s.id !== info.id), info]);
-  const restored = asset.id && (asset.kind === "ssh" || asset.kind === "device")
+  // A host workspace whose connection died keeps its panes and tabs: the fresh session is bound into it.
+  const restored = asset.id
     ? workspaces.find((workspace) => workspace.kind === "session" && workspace.assetId === asset.id)
     : undefined;
   // Opening a host only opens its workspace: terminals are created by an explicit "new terminal", and the durable
@@ -99,7 +100,8 @@ export async function openConnectedAssetSession(
   prepareDurableInBackground(info);
   if (restored) {
     useUi.setState((state) => {
-      const rebound = rebindWorkspaceSession(state.workspaces, restored.id, restored.sessionId, info.id);
+      let rebound = rebindWorkspaceSession(state.workspaces, restored.id, restored.sessionId, info.id);
+      if (asset.kind === "docker") rebound = withDockerTab(rebound, restored.id, info.id);
       if (options?.preserveUserFocus) return { workspaces: rebound };
       return {
         activeWorkspaceId: restored.id,
@@ -130,6 +132,21 @@ export async function openConnectedAssetSession(
   if ((quickTarget || options?.openTerminal) && asset.kind !== "docker" && asset.kind !== "device") {
     await openTerminalTab(info, undefined, pane.id);
   }
+}
+
+// withDockerTab gives a reconnected container workspace its container list back when that tab was closed.
+function withDockerTab(workspaces: Workspace[], workspaceId: string, sessionId: string): Workspace[] {
+  return workspaces.map((workspace) => {
+    if (workspace.id !== workspaceId || workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "docker"))) {
+      return workspace;
+    }
+    const tab: AppTab = { id: nextTabId(`docker-${sessionId}`), kind: "docker", title: t("容器"), sessionId, closable: true };
+    const paneId = workspace.panes.some((pane) => pane.id === workspace.activePaneId) ? workspace.activePaneId : workspace.panes[0]?.id;
+    return {
+      ...workspace,
+      panes: workspace.panes.map((pane) => (pane.id === paneId ? { ...pane, tabs: [...pane.tabs, tab], activeTabId: tab.id } : pane)),
+    };
+  });
 }
 
 // focusConnectedWorkspace shows the workspace a host click resolved to. The focus revision also closes an overlay
@@ -490,7 +507,9 @@ async function runConnectAsset(
         }
       }
     }
-    if (!restoreDatabaseWorkspace && asset.kind !== "ssh" && asset.kind !== "device") {
+    // A dead host workspace stays open and the new session is bound into it below; only a workspace of another kind
+    // left over for this asset is replaced.
+    if (!restoreDatabaseWorkspace && existing.kind !== "session" && asset.kind !== "ssh" && asset.kind !== "device") {
       await useUi.getState().closeWorkspace(existing.id);
       if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
       if (useUi.getState().workspaces.some((w) => w.id === existing.id)) {

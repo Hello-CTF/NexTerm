@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => {
   return {
     sessionConnect: vi.fn(),
     sessionDisconnect: vi.fn(),
+    sessionReconnect: vi.fn(),
     prepareDurable: vi.fn(),
     assetGet: vi.fn(),
     dbConnect: vi.fn(),
@@ -22,7 +23,12 @@ const mocks = vi.hoisted(() => {
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const { createCommandsMock } = await import("../helpers/mockCommands");
   return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
-    sessionApi: { connect: mocks.sessionConnect, disconnect: mocks.sessionDisconnect, prepareDurable: mocks.prepareDurable },
+    sessionApi: {
+      connect: mocks.sessionConnect,
+      disconnect: mocks.sessionDisconnect,
+      reconnect: mocks.sessionReconnect,
+      prepareDurable: mocks.prepareDurable,
+    },
     assetApi: { get: mocks.assetGet },
     dbApi: { connect: mocks.dbConnect },
     vaultApi: { status: mocks.vaultStatus },
@@ -276,5 +282,79 @@ describe("explicitly opening a terminal", () => {
     await openTerminalTab(SSH_SESSION);
 
     expect(terminalTabs()[0]?.regularReason).toBeUndefined();
+  });
+});
+
+describe("connecting a non-SSH host whose workspace lost its session", () => {
+  const TELNET_ASSET = { id: "telnet-1", name: "switch", kind: "telnet" };
+  const FRESH: SessionInfo = {
+    id: "s-new", assetId: "telnet-1", name: "switch", kind: "telnet", status: "connected", tabs: [], createdAt: 0,
+  };
+  const DOCKER_ASSET = { id: "docker-1", name: "containers", kind: "docker" };
+
+  function deadWorkspace(patch: Partial<Workspace> = {}): Workspace {
+    const tab: AppTab = { id: "tab-old", kind: "terminal", title: "switch", sessionId: "s-old", tabId: "t-old", closable: true };
+    return {
+      id: "ws-telnet",
+      kind: "session",
+      title: "switch",
+      sessionId: "s-old",
+      assetId: "telnet-1",
+      assetKind: "telnet",
+      panes: [{ id: "pane-1", tabs: [tab], activeTabId: tab.id }],
+      activePaneId: "pane-1",
+      closable: true,
+      ...patch,
+    };
+  }
+
+  function expectReboundWorkspace(): void {
+    const state = useUi.getState();
+    expect(state.workspaces.map((item) => item.id)).toEqual(["ws-telnet"]);
+    expect(state.workspaces[0]?.sessionId).toBe("s-new");
+    expect(allTabs()).toEqual([expect.objectContaining({ id: "tab-old", sessionId: "s-new" })]);
+    expect(state.activeWorkspaceId).toBe("ws-telnet");
+    expect(state.connectFocusRevision).toBeGreaterThan(0);
+  }
+
+  it("keeps the workspace and binds the new session when the old session record is gone", async () => {
+    mocks.sessionConnect.mockResolvedValue(FRESH);
+    mocks.assetGet.mockResolvedValue({ ...TELNET_ASSET, credId: null });
+    useUi.setState({ workspaces: [deadWorkspace()], activeWorkspaceId: null });
+
+    expect(await connectAsset(TELNET_ASSET)).toEqual({ ok: true });
+
+    expect(mocks.sessionConnect).toHaveBeenCalledWith("telnet-1");
+    expectReboundWorkspace();
+  });
+
+  it("keeps the workspace when the backend no longer knows the old session", async () => {
+    mocks.sessionConnect.mockResolvedValue(FRESH);
+    mocks.assetGet.mockResolvedValue({ ...TELNET_ASSET, credId: null });
+    mocks.sessionReconnect.mockRejectedValue(Object.assign(new Error("session not found"), { code: "not_found" }));
+    useUi.setState({
+      sessions: [{ ...FRESH, id: "s-old", status: "disconnected" }],
+      workspaces: [deadWorkspace()],
+      activeWorkspaceId: null,
+    });
+
+    expect(await connectAsset(TELNET_ASSET)).toEqual({ ok: true });
+
+    expect(mocks.sessionReconnect).toHaveBeenCalledWith("s-old");
+    expectReboundWorkspace();
+  });
+
+  it("gives a reconnected container workspace its container list back", async () => {
+    mocks.sessionConnect.mockResolvedValue({ ...FRESH, assetId: "docker-1", kind: "docker" });
+    mocks.assetGet.mockResolvedValue({ ...DOCKER_ASSET, credId: null });
+    useUi.setState({
+      workspaces: [deadWorkspace({ assetId: "docker-1", assetKind: "docker", panes: [{ id: "pane-1", tabs: [], activeTabId: null }] })],
+    });
+
+    expect(await connectAsset(DOCKER_ASSET)).toEqual({ ok: true });
+
+    expect(useUi.getState().workspaces.map((item) => item.id)).toEqual(["ws-telnet"]);
+    expect(allTabs()).toEqual([expect.objectContaining({ kind: "docker", sessionId: "s-new" })]);
+    expect(useUi.getState().workspaces[0]?.panes[0]?.activeTabId).toBe(allTabs()[0]?.id);
   });
 });
