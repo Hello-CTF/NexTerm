@@ -1325,7 +1325,7 @@ describe("Device management view - revocation and autostart", () => {
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("desk-01"));
     await expandDetails(card);
-    expect(card?.textContent).toContain("后台服务");
+    expect(card?.textContent).toContain("设备代理服务");
     expect(card?.querySelector('input[aria-label="随登录自动启动"]')).toBeNull();
   });
 
@@ -1471,9 +1471,9 @@ describe("Device management view - remote terminal switch and version note", () 
 
     expect(cardWith("up-01")?.textContent).toContain(upgrade);
     expect(cardWith("up-01")?.textContent).not.toContain("自动升级失败：");
-    expect(cardWith("up-01")?.textContent).not.toContain("后台服务出错");
-    expect(cardWith("both-01")?.textContent).toContain("后台服务出错：unit failed");
-    expect(cardWith("both-01")?.textContent).not.toContain("后台服务出错：unit failed; ");
+    expect(cardWith("up-01")?.textContent).not.toContain("设备代理服务出错");
+    expect(cardWith("both-01")?.textContent).toContain("设备代理服务出错：unit failed");
+    expect(cardWith("both-01")?.textContent).not.toContain("设备代理服务出错：unit failed; ");
     expect(cardWith("both-01")?.textContent).toContain(upgrade);
   });
 
@@ -1539,7 +1539,7 @@ describe("Device management view - autostart drift from installed/enabled", () =
     expect(card?.querySelector('[role="status"]')).toBeNull();
     await expandDetails(card);
     expect(card?.textContent).toContain("当前已生效");
-    expect(card?.textContent).toContain("后台服务");
+    expect(card?.textContent).toContain("设备代理服务");
     expect(card?.textContent).toContain("未运行");
   });
 

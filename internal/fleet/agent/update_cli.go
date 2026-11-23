@@ -180,7 +180,7 @@ func cliUpdate(args []string, getenv func(string) string, stdout, stderr io.Writ
 			fmt.Fprintln(stderr, "agent update: 非交互环境下需添加 --yes 才能继续")
 			return ExitUsage
 		}
-		fmt.Fprintf(stdout, "将把设备代理从 %s 更新到 %s，并重启后台服务。是否继续？[y/N] ", current, wanted)
+		fmt.Fprintf(stdout, "将把设备代理从 %s 更新到 %s，并重启设备代理服务。是否继续？[y/N] ", current, wanted)
 		line, _ := bufio.NewReader(cliStdin).ReadString('\n')
 		if answer := strings.ToLower(strings.TrimSpace(line)); answer != "y" && answer != "yes" {
 			fmt.Fprintln(stdout, "已取消")
@@ -224,10 +224,10 @@ func cliUpdate(args []string, getenv func(string) string, stdout, stderr io.Writ
 		printCLIError(stderr, "agent update: 无法结束正在运行的计划任务：", stopErr)
 		fmt.Fprintln(stdout, updateNoticeTaskManual)
 	case state.Installed:
-		fmt.Fprintln(stdout, "本命令退出后即替换程序文件并自动重启后台服务")
+		fmt.Fprintln(stdout, "本命令退出后即替换程序文件并自动重启设备代理服务")
 		fmt.Fprintf(stdout, updateNoticeHealth+"\n", replaceHealthTimeoutSeconds)
 	default:
-		fmt.Fprintln(stdout, "本命令退出后即替换程序文件；后台服务未安装，如设备代理正在手动运行，请自行重启")
+		fmt.Fprintln(stdout, "本命令退出后即替换程序文件；设备代理服务未安装，如设备代理正在手动运行，请自行重启")
 	}
 	return ExitOK
 }
