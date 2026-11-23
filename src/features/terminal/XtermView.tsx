@@ -75,7 +75,7 @@ import { pasteUploadFiles } from "./imagePaste";
 import { attachTouchScroll } from "./touchScroll";
 import { attachFollowerGestures } from "./followerGestures";
 import { applyFollowerFont, type FollowerView } from "./followerFont";
-import { FOLLOWER_SETTLE_MS, type FollowerScale, type FollowerZoom } from "./followerScale";
+import { FOLLOWER_SETTLE_MS, type FollowerScale, type FollowerZoomChoice } from "./followerScale";
 import { t as tr } from "../../i18n";
 import { copyModePassesInput, createCopyMode, type CopyModeController } from "./copyMode";
 import { CopyModeOverlay } from "./CopyModeOverlay";
@@ -188,8 +188,9 @@ export interface XtermViewProps {
   }) => void;
   canResize?: boolean;
   remoteGrid?: { cols: number; rows: number; revision: number };
-  // While another device owns the PTY size (canResize false): show the whole grid or fit its rows only.
-  followerZoom?: FollowerZoom;
+  // While another device owns the PTY size (canResize false): show the whole grid, fit its rows only, or let the pane
+  // pick one (auto, followerScale.ts autoFollowerZoom). Defaults to the whole grid.
+  followerZoom?: FollowerZoomChoice;
   // How the PTY grid is scaled while another device owns its size; null while this view sizes the PTY.
   onFollowerScale?: (scale: FollowerScale | null) => void;
   onFollowerPinch?: (direction: "in" | "out") => void;

@@ -20,7 +20,7 @@ import { SessionSidebar } from "./SessionSidebar";
 import { useSessionSidebarHost } from "./sessionSidebarHost";
 import { setSessionSidebarOpen, getCtrlVPaste, useSessionSidebarOpen } from "../../app/preferences";
 import { FollowerSizeBadge } from "./FollowerSizeBadge";
-import type { FollowerScale, FollowerZoom } from "./followerScale";
+import type { FollowerScale, FollowerZoomChoice } from "./followerScale";
 import { SizeOverrideGuard } from "./sizeOverrideGuard";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
@@ -378,7 +378,7 @@ export function TerminalPane({
   const [throttle, setThrottle] = useState<ThrottleState | null>(null);
   // While another device owns the PTY size: how this view scales the grid, and whether it fits the rows only.
   const [followerScale, setFollowerScale] = useState<FollowerScale | null>(null);
-  const [followerZoom, setFollowerZoom] = useState<FollowerZoom>("fit");
+  const [followerZoom, setFollowerZoom] = useState<FollowerZoomChoice>("auto");
   const [streamBacklog, setStreamBacklog] = useState<TerminalStreamBacklog | null>(null);
   const [, setThrottleTick] = useState(0);
   const [switching, setSwitching] = useState(false);
@@ -3117,7 +3117,7 @@ export function TerminalPane({
                   scale={followerScale}
                   ownedElsewhere={control?.sizeOwner != null}
                   contended={sizeContended}
-                  zoom={followerZoom}
+                  zoom={followerScale?.zoom ?? (followerZoom === "height" ? "height" : "fit")}
                   onZoom={setFollowerZoom}
                   onTakeSize={kernelTabId && !containerId ? () => void takeSize(kernelTabId) : undefined}
                 />
