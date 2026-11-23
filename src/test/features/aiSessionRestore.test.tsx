@@ -310,7 +310,7 @@ describe("AiSidebar session restore", () => {
     clickButton(view!.container, "重试");
     await flushReplay();
     expect(textOf(view!)).toContain("旧问题");
-    expect(textOf(view!)).not.toContain("对话加载失败");
+    expect(textOf(view!)).not.toContain("会话加载失败");
   });
 
   it("clears the error state after deleting the current conversation following a restore failure", async () => {
@@ -327,7 +327,7 @@ describe("AiSidebar session restore", () => {
     await flush();
 
     expect(mocks.conversationDelete).toHaveBeenCalledWith("conv-1");
-    expect(textOf(view!)).not.toContain("对话加载失败");
+    expect(textOf(view!)).not.toContain("会话加载失败");
     expect(textOf(view!)).toContain("开始新的对话");
   });
 

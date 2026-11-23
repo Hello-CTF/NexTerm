@@ -27,6 +27,7 @@ and SSH software).
 | 资产 | 資產 | asset | アセット | 자산 | Asset | ressource | recurso | ресурс |
 | 主机 | 主機 | host | ホスト | 호스트 | Host | hôte | host | хост |
 | 会话 | 工作階段 | session | セッション | 세션 | Sitzung | session | sesión | сеанс |
+| 对话（AI） | 對話 | conversation | 会話 | 대화 | Unterhaltung | conversation | conversación | диалог |
 | 后台会话 | 背景工作階段 | background session | バックグラウンドセッション | 백그라운드 세션 | Hintergrundsitzung | session en arrière-plan | sesión en segundo plano | фоновый сеанс |
 | 标签页 | 分頁 | tab | タブ | 탭 | Tab | onglet | pestaña | вкладка |
 | 分屏 | 分割畫面 | split pane | 分割ペイン | 분할 창 | geteilter Bereich | volet divisé | panel dividido | разделённая панель |
@@ -39,6 +40,7 @@ and SSH software).
 | 主机指纹 | 主機指紋 | host fingerprint | ホストフィンガープリント | 호스트 지문 | Host-Fingerabdruck | empreinte de l'hôte | huella del host | отпечаток хоста |
 | 设备 | 裝置 | device | デバイス | 장치 | Gerät | appareil | dispositivo | устройство |
 | 设备代理 | 裝置代理程式 | device agent | デバイスエージェント | 장치 에이전트 | Geräte-Agent | agent d'appareil | agente de dispositivo | агент устройства |
+| 设备代理服务 | 裝置代理程式服務 | device agent service | デバイスエージェントサービス | 장치 에이전트 서비스 | Geräte-Agent-Dienst | service de l'agent d'appareil | servicio del agente de dispositivo | служба агента устройства |
 | 设备管理 | 裝置管理 | Devices | デバイス管理 | 장치 관리 | Geräteverwaltung | Gestion des appareils | Gestión de dispositivos | Управление устройствами |
 | 主机详情 | 主機詳情 | host details | ホストの詳細 | 호스트 세부 정보 | Hostdetails | détails de l'hôte | detalles del host | сведения о хосте |
 | 端口转发 | 連接埠轉送 | port forwarding | ポートフォワーディング | 포트 포워딩 | Portweiterleitung | redirection de port | reenvío de puertos | проброс портов |
