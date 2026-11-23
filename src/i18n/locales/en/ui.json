@@ -2468,7 +2468,7 @@
   "多用户服务端不支持从服务器路径导入：它会读取服务器上的 SSH 配置和私钥": "The multi-user server does not support importing from a server path: it would read SSH config and private keys on the server",
   "多用户服务端不支持从服务器路径导入：它会读取服务器上的 Termius 数据": "The multi-user server does not support importing from a server path: it would read Termius data on the server",
   "多用户服务端不支持引用服务器文件的私钥凭据（会读取服务器上的文件）。{ALTERNATIVES}": "The multi-user server does not support private key credentials that reference server files (it would read files on the server). {ALTERNATIVES}",
-  "多用户服务端不支持本机终端资产（会在服务器上启动 shell），请改用 SSH 资产或设备": "The multi-user server does not support local terminal assets (they would start a shell on the server). Use an SSH asset or a device instead",
+  "多用户服务端不支持本地终端资产（会在服务器上启动 shell），请改用 SSH 资产或设备": "The multi-user server does not support local terminal assets (they would start a shell on the server). Use an SSH asset or a device instead",
   "多用户服务端不支持：{join}，已忽略": "Not supported by the multi-user server and ignored: {join}",
   "多用户服务端的自动清理由服务端统一设置": "On the multi-user server, automatic cleanup is set server-wide",
   "多行": "Multiline",

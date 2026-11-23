@@ -2462,7 +2462,7 @@
   "多用户服务端不支持从服务器路径导入：它会读取服务器上的 SSH 配置和私钥": "Der Mehrbenutzer-Server unterstützt den Import von einem Serverpfad nicht: Dabei würden SSH-Konfiguration und private Schlüssel auf dem Server gelesen",
   "多用户服务端不支持从服务器路径导入：它会读取服务器上的 Termius 数据": "Der Mehrbenutzer-Server unterstützt den Import von einem Serverpfad nicht: Dabei würden Termius-Daten auf dem Server gelesen",
   "多用户服务端不支持引用服务器文件的私钥凭据（会读取服务器上的文件）。{ALTERNATIVES}": "Der Mehrbenutzer-Server unterstützt keine Anmeldedaten mit privatem Schlüssel, die auf Serverdateien verweisen (es würden Dateien auf dem Server gelesen). {ALTERNATIVES}",
-  "多用户服务端不支持本机终端资产（会在服务器上启动 shell），请改用 SSH 资产或设备": "Der Mehrbenutzer-Server unterstützt keine Assets für lokale Terminals (es würde eine Shell auf dem Server gestartet). Verwenden Sie stattdessen SSH-Assets oder Geräte.",
+  "多用户服务端不支持本地终端资产（会在服务器上启动 shell），请改用 SSH 资产或设备": "Der Mehrbenutzer-Server unterstützt keine Assets für lokale Terminals (es würde eine Shell auf dem Server gestartet). Verwenden Sie stattdessen SSH-Assets oder Geräte.",
   "多用户服务端不支持：{join}，已忽略": "Vom Mehrbenutzer-Server nicht unterstützt: {join}, wurde ignoriert",
   "多用户服务端的自动清理由服务端统一设置": "Auf dem Mehrbenutzerserver wird die automatische Bereinigung serverweit festgelegt",
   "多行": "Mehrzeilig",
