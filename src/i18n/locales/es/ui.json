@@ -2471,7 +2471,7 @@
   "多用户服务端不支持从服务器路径导入：它会读取服务器上的 SSH 配置和私钥": "El servidor multiusuario no admite importar desde una ruta del servidor: leería la configuración SSH y las claves privadas del servidor",
   "多用户服务端不支持从服务器路径导入：它会读取服务器上的 Termius 数据": "El servidor multiusuario no admite importar desde una ruta del servidor: leería los datos de Termius del servidor",
   "多用户服务端不支持引用服务器文件的私钥凭据（会读取服务器上的文件）。{ALTERNATIVES}": "El servidor multiusuario no admite credenciales de clave privada que hagan referencia a archivos del servidor (leería archivos del servidor). {ALTERNATIVES}",
-  "多用户服务端不支持本机终端资产（会在服务器上启动 shell），请改用 SSH 资产或设备": "El servidor multiusuario no admite recursos de terminal local (iniciarían un shell en el servidor). Usa en su lugar un recurso SSH o un dispositivo",
+  "多用户服务端不支持本地终端资产（会在服务器上启动 shell），请改用 SSH 资产或设备": "El servidor multiusuario no admite recursos de terminal local (iniciarían un shell en el servidor). Usa en su lugar un recurso SSH o un dispositivo",
   "多用户服务端不支持：{join}，已忽略": "El servidor multiusuario no admite: {join}; se ha omitido",
   "多用户服务端的自动清理由服务端统一设置": "En el servidor multiusuario, la limpieza automática se configura para todo el servidor",
   "多行": "Varias líneas",
