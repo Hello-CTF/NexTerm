@@ -133,6 +133,7 @@ import { resetAppearancePrefs, setTerminalFontSize } from "../app/preferences";
 import {
   FOLLOWER_MIN_FONT_PX,
   FOLLOWER_SETTLE_MS,
+  autoFollowerZoom,
   followerFontSize,
   predictedCell,
   followerGridFits,
@@ -140,6 +141,7 @@ import {
   pinchDirection,
   type FollowerScale,
 } from "../features/terminal/followerScale";
+import { resolveFollowerZoom, type FollowerView } from "../features/terminal/followerFont";
 import { attachFollowerGestures } from "../features/terminal/followerGestures";
 import { FollowerSizeBadge } from "../features/terminal/FollowerSizeBadge";
 
@@ -269,6 +271,53 @@ describe("follower scale", () => {
     expect(pinchDirection(150, 100)).toBe("in");
     expect(pinchDirection(100, 105)).toBeNull();
     expect(pinchDirection(0, 100)).toBeNull();
+  });
+});
+
+describe("follower auto zoom", () => {
+  const cell = { widthPx: 6.5, heightPx: 13 };
+  const phone = { widthPx: 360, heightPx: 700 };
+
+  it("fits the rows of a wide grid on a portrait touch pane, where the whole grid would leave most of it empty", () => {
+    // 200x50 needs 1300 px across: the whole grid would show at 28% and fill a quarter of the pane height.
+    expect(autoFollowerZoom({ cols: 200, rows: 50 }, phone, cell, true)).toBe("height");
+    // A short wide grid fills even less.
+    expect(autoFollowerZoom({ cols: 200, rows: 24 }, phone, cell, true)).toBe("height");
+  });
+
+  it("keeps the whole grid where it is readable, fills the pane, or the pane is not a portrait touch screen", () => {
+    // Readable at fit (69%): the band is left, the whole grid stays.
+    expect(autoFollowerZoom({ cols: 80, rows: 24 }, phone, cell, true)).toBe("fit");
+    // Limited by height rather than width: no band below the rows.
+    expect(autoFollowerZoom({ cols: 60, rows: 200 }, phone, cell, true)).toBe("fit");
+    // Small but filling most of the height (fill 90%).
+    expect(autoFollowerZoom({ cols: 400, rows: 200 }, { widthPx: 360, heightPx: 400 }, cell, true)).toBe("fit");
+    // Landscape and mouse panes keep the whole grid.
+    expect(autoFollowerZoom({ cols: 200, rows: 50 }, { widthPx: 700, heightPx: 360 }, cell, true)).toBe("fit");
+    expect(autoFollowerZoom({ cols: 200, rows: 50 }, phone, cell, false)).toBe("fit");
+    // Unmeasured input falls back to the whole grid.
+    expect(autoFollowerZoom({ cols: 0, rows: 0 }, phone, cell, true)).toBe("fit");
+    expect(autoFollowerZoom({ cols: 200, rows: 50 }, phone, { widthPx: 0, heightPx: 0 }, true)).toBe("fit");
+  });
+
+  it("keeps the resolved zoom while the pane only gets shorter, and re-decides for a new grid or width", () => {
+    const view: FollowerView = { base: 13, following: true, zoom: "auto", scale: null, report: () => {} };
+    const grid = { cols: 200, rows: 50 };
+    expect(resolveFollowerZoom(view, grid, phone, cell, true)).toBe("height");
+    // A soft keyboard halves the height: the decision holds instead of flipping.
+    expect(resolveFollowerZoom(view, grid, { widthPx: 360, heightPx: 300 }, cell, true)).toBe("height");
+    // Rotated to landscape: decided again.
+    expect(resolveFollowerZoom(view, grid, { widthPx: 700, heightPx: 360 }, cell, true)).toBe("fit");
+    // The owner resized the PTY to a grid that fits.
+    expect(resolveFollowerZoom(view, { cols: 50, rows: 40 }, phone, cell, true)).toBe("fit");
+    // A whole grid picked while the keyboard shortened the pane is not kept: once it closes, the rows fit instead.
+    expect(resolveFollowerZoom(view, grid, { widthPx: 360, heightPx: 160 }, cell, true)).toBe("fit");
+    expect(resolveFollowerZoom(view, grid, phone, cell, true)).toBe("height");
+    // An explicit zoom is never replaced.
+    view.zoom = "fit";
+    expect(resolveFollowerZoom(view, grid, phone, cell, true)).toBe("fit");
+    view.zoom = "height";
+    expect(resolveFollowerZoom(view, { cols: 50, rows: 40 }, phone, cell, true)).toBe("height");
   });
 });
 
@@ -427,6 +476,42 @@ describe("terminal view following another device's size", () => {
     expect(term.options.fontSize).toBe(8);
     await render({ canResize: true, remoteGrid: { cols: 90, rows: 30, revision: 1 } });
     expect(term.options.fontSize).toBe(16);
+  });
+
+  it("fits the rows of a wide grid on a portrait touch pane when the zoom is auto, until the user picks one", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query === "(pointer: coarse)",
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+    try {
+      const onFollowerScale = vi.fn<(scale: FollowerScale | null) => void>();
+      await render({ canResize: true, followerZoom: "auto", onFollowerScale });
+      const term = harness.terminals[0];
+      // A 200x24 desktop grid in the 360x400 pane: fitting it whole would show it at 31% in the top 78 px.
+      await render({ canResize: false, remoteGrid: { cols: 200, rows: 24, revision: 1 }, followerZoom: "auto", onFollowerScale });
+      expect(term.options.fontSize).toBe(13);
+      expect(onFollowerScale).toHaveBeenLastCalledWith({ ratio: 1, zoom: "height", panX: true, panY: false });
+      expect(host().style.overflowX).toBe("hidden");
+
+      // The keyboard opens and the pane gets shorter: the rows still fit, the zoom does not flip back.
+      harness.viewport = { widthPx: 360, heightPx: 200 };
+      act(() => {
+        window.dispatchEvent(new Event("nexterm:resize-end"));
+      });
+      await flushWork();
+      expect(onFollowerScale).toHaveBeenLastCalledWith({ ratio: 0.62, zoom: "height", panX: true, panY: false });
+
+      // The user asks for the whole grid.
+      await render({ canResize: false, remoteGrid: { cols: 200, rows: 24, revision: 1 }, followerZoom: "fit", onFollowerScale });
+      expect(term.options.fontSize).toBe(FOLLOWER_MIN_FONT_PX);
+      expect(onFollowerScale).toHaveBeenLastCalledWith({ ratio: 0.31, zoom: "fit", panX: true, panY: false });
+      expect(harness.resize).not.toHaveBeenCalled();
+    } finally {
+      window.matchMedia = original;
+    }
   });
 
   it("leaves the owner's font and resizing alone", async () => {

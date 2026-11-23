@@ -1,6 +1,13 @@
 import type { Terminal } from "@xterm/xterm";
 import { measureTerminalGeometry } from "./terminalGeometry";
-import { followerFontSize, followerGridFits, type FollowerScale, type FollowerZoom } from "./followerScale";
+import {
+  autoFollowerZoom,
+  followerFontSize,
+  followerGridFits,
+  type FollowerScale,
+  type FollowerZoom,
+  type FollowerZoomChoice,
+} from "./followerScale";
 
 // The follower display state of one terminal view, kept in a ref and read when the view measures.
 export interface FollowerView {
@@ -8,10 +15,35 @@ export interface FollowerView {
   base: number;
   // Another device owns the PTY size: the view renders the PTY grid and does not size it.
   following: boolean;
-  zoom: FollowerZoom;
+  zoom: FollowerZoomChoice;
+  // An auto zoom resolved to height, kept while the grid and the pane width stay, so a soft keyboard that shortens the
+  // pane does not flip it back. A fit is resolved again on every measure: a taller pane may then fit the rows.
+  auto?: { cols: number; rows: number; widthPx: number } | null;
   // The last reported scale; null while the view sizes the PTY.
   scale: FollowerScale | null;
   report: (scale: FollowerScale | null) => void;
+}
+
+function coarsePointer(): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+}
+
+// resolveFollowerZoom turns the auto zoom into fit or height; height holds for the grid and pane width it was picked
+// for. An explicit zoom is used as is.
+export function resolveFollowerZoom(
+  view: FollowerView,
+  grid: { cols: number; rows: number },
+  viewport: { widthPx: number; heightPx: number },
+  cellAtBase: { widthPx: number; heightPx: number },
+  touch: boolean,
+): FollowerZoom {
+  if (view.zoom !== "auto") return view.zoom;
+  const widthPx = Math.round(viewport.widthPx);
+  const last = view.auto;
+  if (last && last.cols === grid.cols && last.rows === grid.rows && last.widthPx === widthPx) return "height";
+  const zoom = autoFollowerZoom(grid, viewport, cellAtBase, touch);
+  view.auto = zoom === "height" ? { cols: grid.cols, rows: grid.rows, widthPx } : null;
+  return zoom;
 }
 
 function report(view: FollowerView, scale: FollowerScale | null): void {
@@ -34,6 +66,7 @@ export function applyFollowerFont(term: Terminal | null, host: HTMLElement | nul
   if (!host || !term) return;
   const base = view.base;
   if (!view.following) {
+    view.auto = null;
     if (view.scale === null) return;
     if (term.options.fontSize !== base) term.options.fontSize = base;
     host.style.overflowX = "";
@@ -43,7 +76,6 @@ export function applyFollowerFont(term: Terminal | null, host: HTMLElement | nul
     report(view, null);
     return;
   }
-  const zoom = view.zoom;
   const geometry = measureTerminalGeometry(term, host);
   if (!geometry) return;
   const current = term.options.fontSize || base;
@@ -52,6 +84,7 @@ export function applyFollowerFont(term: Terminal | null, host: HTMLElement | nul
     widthPx: (geometry.metrics.widthPx * base) / current,
     heightPx: (geometry.metrics.heightPx * base) / current,
   };
+  const zoom = resolveFollowerZoom(view, grid, geometry.viewport, cellAtBase, coarsePointer());
   const size = followerFontSize(base, grid, geometry.viewport, cellAtBase, zoom, window.devicePixelRatio || 1);
   if (size !== current) term.options.fontSize = size;
   const measured = size === current ? geometry : measureTerminalGeometry(term, host);

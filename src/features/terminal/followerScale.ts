@@ -17,6 +17,11 @@ export const FOLLOWER_PINCH_FACTOR = 1.2;
 
 // fit shows the whole grid; height fits the rows only, so the text is larger and the columns pan sideways.
 export type FollowerZoom = "fit" | "height";
+// The zoom a view is asked for: auto picks fit or height from the pane (autoFollowerZoom) until the user picks one.
+export type FollowerZoomChoice = FollowerZoom | "auto";
+
+// auto fits the rows instead of the whole grid when the whole grid would fill less than this share of the pane height.
+export const FOLLOWER_AUTO_MIN_HEIGHT_FILL = 0.6;
 
 export interface FollowerScale {
   // The shown font size relative to the user's font size, at most 1.
@@ -80,6 +85,26 @@ export function followerGridFits(
   const widthFits = grid.cols * cell.widthPx <= viewport.widthPx + 0.5;
   const heightFits = grid.rows * cell.heightPx <= viewport.heightPx + 0.5;
   return { fits: heightFits && (zoom === "height" || widthFits), widthFits, heightFits };
+}
+
+// autoFollowerZoom resolves the auto zoom. A wide grid on a portrait touch pane (a desktop terminal followed on a phone)
+// fits by width: the text is too small to read and the rows leave most of the pane empty below them. Fitting the rows
+// instead fills the pane with larger text and pans the columns, as the zoom toggle does. Everywhere else the whole
+// grid stays in view.
+export function autoFollowerZoom(
+  grid: TerminalGrid,
+  viewport: TerminalViewport,
+  cellAtBase: TerminalCellMetrics,
+  touch: boolean,
+): FollowerZoom {
+  if (!touch || !(viewport.heightPx > viewport.widthPx)) return "fit";
+  if (grid.cols <= 0 || grid.rows <= 0 || !(cellAtBase.widthPx > 0) || !(cellAtBase.heightPx > 0)) return "fit";
+  const byWidth = axisRatio(viewport.widthPx, grid.cols, cellAtBase.widthPx);
+  const byHeight = axisRatio(viewport.heightPx, grid.rows, cellAtBase.heightPx);
+  if (byWidth >= byHeight || byWidth >= FOLLOWER_READABLE_RATIO) return "fit";
+  // Share of the pane height the rows fill when the whole grid fits by width.
+  const fill = byWidth / byHeight;
+  return fill < FOLLOWER_AUTO_MIN_HEIGHT_FILL ? "height" : "fit";
 }
 
 export function followerReadable(scale: FollowerScale): boolean {
