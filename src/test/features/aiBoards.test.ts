@@ -86,7 +86,7 @@ describe("AI board store actions", () => {
     st().updateAiTab("ws-1", tabA, { conversationId: "conv-1", title: "Investigate 502" });
     const board = st().aiBoards["ws-1"];
     expect(board.tabs[0]).toMatchObject({ id: tabA, conversationId: "conv-1", title: "Investigate 502" });
-    expect(board.tabs[1]).toMatchObject({ id: tabB, title: "新会话" });
+    expect(board.tabs[1]).toMatchObject({ id: tabB, title: "新对话" });
   });
 
   it("closeWorkspace cleans up the corresponding board without touching other boards", async () => {
@@ -126,9 +126,9 @@ describe("AI board layout persistence", () => {
       workspaces: [workspace("ws-1")],
       activeWorkspaceId: "ws-1",
       aiBoards: {
-        [GLOBAL_AI_BOARD_KEY]: { tabs: [{ id: "ai-g", title: "新会话" }], activeTabId: "ai-g" },
-        "ws-1": { tabs: [{ id: "ai-1", title: "新会话" }], activeTabId: "ai-1" },
-        "ws-ghost": { tabs: [{ id: "ai-x", title: "新会话" }], activeTabId: "ai-x" },
+        [GLOBAL_AI_BOARD_KEY]: { tabs: [{ id: "ai-g", title: "新对话" }], activeTabId: "ai-g" },
+        "ws-1": { tabs: [{ id: "ai-1", title: "新对话" }], activeTabId: "ai-1" },
+        "ws-ghost": { tabs: [{ id: "ai-x", title: "新对话" }], activeTabId: "ai-x" },
       },
     });
     expect(Object.keys(parsed?.aiBoards ?? {}).sort()).toEqual([GLOBAL_AI_BOARD_KEY, "ws-1"].sort());
@@ -170,7 +170,7 @@ describe("AI board layout persistence", () => {
     });
     expect(parsed?.aiBoards?.["ws-1"]).toEqual({
       tabs: [
-        { id: "ai-1", title: "新会话", conversationId: undefined },
+        { id: "ai-1", title: "新对话", conversationId: undefined },
         { id: "ai-2", title: "Normal", conversationId: "conv-1" },
       ],
       activeTabId: "ai-2",

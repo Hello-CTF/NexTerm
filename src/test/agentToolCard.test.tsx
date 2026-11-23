@@ -104,7 +104,7 @@ describe("AgentToolCard", () => {
 
     clickButton(view!.container, "允许一次");
     expect(onApproval).toHaveBeenCalledWith("req-9", "approve_once");
-    clickButton(view!.container, "本会话允许");
+    clickButton(view!.container, "本对话允许");
     expect(onApproval).toHaveBeenCalledWith("req-9", "approve_session");
     clickButton(view!.container, "拒绝");
     expect(onApproval).toHaveBeenCalledWith("req-9", "deny");
@@ -133,7 +133,7 @@ describe("AgentToolCard", () => {
     const text = view!.container.textContent ?? "";
     expect(text).toContain("所有者：bob");
     expect(button("允许一次").disabled).toBe(true);
-    expect(button("本会话允许").disabled).toBe(true);
+    expect(button("本对话允许").disabled).toBe(true);
     expect(button("拒绝").disabled).toBe(true);
   });
 

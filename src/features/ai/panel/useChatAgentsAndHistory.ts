@@ -201,7 +201,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
 
   const openConversation = async (id: string, title?: string) => {
     if (busy || aiRunBlocksStart(activeRunRef.current)) {
-      pushToast("info", t("AI 正在回答，请先停止当前回答再切换会话"));
+      pushToast("info", t("AI 正在回答，请先停止当前回答再切换对话"));
       return;
     }
     const restoreGeneration = ++restoreGenerationRef.current;
@@ -233,14 +233,14 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       void restoreConversationRuns(id, restoreGeneration, runs, !runsFailed);
     } catch (e) {
       if (isRestoreActive(restoreGeneration)) {
-        pushToast("error", t("未能打开会话：{value}", { value: describeError(e) }));
+        pushToast("error", t("未能打开对话：{value}", { value: describeError(e) }));
       }
     }
   };
 
   const newConversation = () => {
     if (busy || aiRunBlocksStart(activeRunRef.current)) {
-      pushToast("info", t("AI 正在回答，请先停止当前回答再新建会话"));
+      pushToast("info", t("AI 正在回答，请先停止当前回答再新建对话"));
       return;
     }
     restoreGenerationRef.current += 1;
@@ -257,12 +257,12 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
     const blocksReset = (id: string) =>
       id === conversationIdRef.current && aiRunBlocksStart(activeRunRef.current);
     if (blocksReset(c.id)) {
-      pushToast("info", t("AI 正在回答，请先停止当前回答再删除当前会话"));
+      pushToast("info", t("AI 正在回答，请先停止当前回答再删除当前对话"));
       return;
     }
     const deleted = await deleteConversationGuarded(c, () => {
       if (!blocksReset(c.id)) return true;
-      pushToast("info", t("AI 正在回答，请先停止当前回答再删除当前会话"));
+      pushToast("info", t("AI 正在回答，请先停止当前回答再删除当前对话"));
       return false;
     });
     if (!deleted) return;
@@ -477,7 +477,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       !banner ||
       banner.jobId !== jobId
     ) {
-      throw new Error(t("接管任务已不在当前会话，请重新打开对应终端后重试"));
+      throw new Error(t("接管任务已不在当前对话中，请重新打开对应终端后重试"));
     }
     const next = createTakeoverChannel(current, () => clearTakeoverForJob(jobId));
     try {

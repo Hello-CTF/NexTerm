@@ -81,7 +81,7 @@ type runHistoryPager interface {
 // the newest page, and a returned cursor fetches the next older one.
 func (r *Runner) RunHistory(ctx context.Context, conversationID, filter, cursor string, limit int) (RunHistoryPage, error) {
 	if r.runs == nil {
-		return RunHistoryPage{}, ipc.NewError(ipc.CodeUnsupported, "AI 会话存储未配置")
+		return RunHistoryPage{}, ipc.NewError(ipc.CodeUnsupported, "AI 对话存储未配置")
 	}
 	if strings.TrimSpace(conversationID) == "" {
 		return RunHistoryPage{}, ipc.NewError(ipc.CodeBadParam, "会话 ID 不能为空")
@@ -160,7 +160,7 @@ func (r *Runner) RunHistory(ctx context.Context, conversationID, filter, cursor 
 // holds no runs and there is nothing to report.
 func (r *Runner) ConversationRecoverySummary(ctx context.Context, conversationID string) (*ConversationRecoverySummary, error) {
 	if r.runs == nil {
-		return nil, ipc.NewError(ipc.CodeUnsupported, "AI 会话存储未配置")
+		return nil, ipc.NewError(ipc.CodeUnsupported, "AI 对话存储未配置")
 	}
 	if strings.TrimSpace(conversationID) == "" {
 		return nil, ipc.NewError(ipc.CodeBadParam, "会话 ID 不能为空")

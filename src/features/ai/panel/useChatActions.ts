@@ -302,7 +302,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     const conversationId = conversationIdRef.current;
     if (!edit || !text || editSubmittingRef.current) return;
     if (!conversationId) {
-      pushToast("error", t("编辑并重新发送需要先打开一个会话"));
+      pushToast("error", t("编辑并重新发送需要先打开一个对话"));
       return;
     }
     editSubmittingRef.current = true;

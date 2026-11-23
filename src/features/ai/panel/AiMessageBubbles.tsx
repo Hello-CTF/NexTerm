@@ -580,7 +580,7 @@ export function ProductionEnvironmentChallenge({
     <div className="mb-2 rounded border border-amber-900/50 bg-amber-950/10 px-2.5 py-2" role="note">
       <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-amber-300">
         <IconAlert size={12} />
-        {t("生产环境写入风险：AI 写入将需要逐次输入实际环境名确认，本会话不会记住授权。")}
+        {t("生产环境写入风险：AI 写入将需要逐次输入实际环境名确认，本对话不会记住授权。")}
       </div>
       {names.some(isManagedDeviceEnvironment) && (
         <p className="mb-1.5 text-[11px] leading-relaxed text-neutral-300">{MANAGED_DEVICE_ENVIRONMENT_HINT}</p>

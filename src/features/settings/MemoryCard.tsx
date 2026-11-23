@@ -274,7 +274,7 @@ export function MemoryCard() {
           {tr("刷新")}
         </button>
       </div>
-      <p className="nx-hint mb-3.5">{tr("让 AI 跨会话记住长期事实，例如「重启安排在 02:00」。")}</p>
+      <p className="nx-hint mb-3.5">{tr("让 AI 跨对话记住长期事实，例如「重启安排在 02:00」。")}</p>
 
       <div className="mb-3 border-b border-neutral-800/60 pb-3">
         <div className="nx-setting-label mb-1.5" data-setting="memory-mode">{tr("AI 使用记忆")}</div>

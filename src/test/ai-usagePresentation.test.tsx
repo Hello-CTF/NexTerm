@@ -153,7 +153,7 @@ describe("UsageRing details", () => {
     await flush();
     const text = view.container.textContent ?? "";
     expect(text).toContain("用量明细");
-    expect(text).toContain("本会话 2 次回答");
+    expect(text).toContain("本对话 2 次回答");
     expect(text).toContain("可重试错误 1");
     expect(text).toContain("失败 1");
     expect(text).toContain("对话 4 次");
@@ -216,7 +216,7 @@ describe("UsageRing details", () => {
     expect(loadSummary).toHaveBeenCalledTimes(2);
     expect(text).not.toContain("未能加载用量汇总");
     expect(text).toContain("对话 4 次");
-    expect(text).toContain("（全部会话）");
+    expect(text).toContain("（全部对话）");
     view.unmount();
   });
 

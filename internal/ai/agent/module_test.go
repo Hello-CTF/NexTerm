@@ -183,7 +183,7 @@ func TestEditResendDispatchParsesWireArgsAndPropagatesErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	unconfigured := bare.Dispatch(context.Background(), ipc.Request{Command: "ai_edit_resend", Args: json.RawMessage(`{"conversationId":"conv-1","messageId":"msg-1"}`)}, ipc.Environment{})
-	if unconfigured.OK || unconfigured.Error == nil || !strings.Contains(unconfigured.Error.Message, "AI 会话存储未配置") {
+	if unconfigured.OK || unconfigured.Error == nil || !strings.Contains(unconfigured.Error.Message, "AI 对话存储未配置") {
 		t.Fatalf("unconfigured store dispatch = %+v", unconfigured)
 	}
 }

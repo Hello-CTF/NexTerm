@@ -28,7 +28,7 @@ const TONE_BADGE: Record<AgentStateTone, string> = {
 
 const APPROVAL_LABEL: Record<AgentApprovalDecision, string> = {
   approve_once: t("已允许一次"),
-  approve_session: t("已在本会话允许"),
+  approve_session: t("已在本对话允许"),
   approve_persistent: t("已永久允许"),
   deny: t("已拒绝"),
 };
@@ -145,7 +145,7 @@ export function AgentToolCard({
                 title={call.isMine ? t("本次对话内不再询问：{sessionScope}", { sessionScope: approval.sessionScope }) : t("仅所有者可审批")}
                 onClick={() => onApproval?.(approval.requestId, "approve_session")}
               >
-                {t("本会话允许")}
+                {t("本对话允许")}
               </button>
             )}
             <button

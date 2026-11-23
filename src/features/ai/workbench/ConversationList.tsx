@@ -23,7 +23,7 @@ export function ConversationList({
     <div className="flex min-h-0 flex-1 flex-col">
       {error ? (
         <div className="px-3 py-3 text-center">
-          <div className="text-[12px] text-red-300" role="alert">{t("未能读取会话列表：{value}", { value: error })}</div>
+          <div className="text-[12px] text-red-300" role="alert">{t("未能读取对话列表：{value}", { value: error })}</div>
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5" onClick={reload}>
             <IconRefresh size={11} />
             {t("重试")}
@@ -31,7 +31,7 @@ export function ConversationList({
         </div>
       ) : null}
       {!error && !loading && items.length === 0 ? <div className="nx-hint px-3 py-6 text-center">{emptyText}</div> : null}
-      <ul className="min-h-0 flex-1 overflow-y-auto p-1" aria-label={t("AI 会话列表")}>
+      <ul className="min-h-0 flex-1 overflow-y-auto p-1" aria-label={t("AI 对话列表")}>
         {items.map((item) => (
           <li key={item.id}>
             <button

@@ -30,11 +30,11 @@ type messageTruncateStore interface {
 
 func (r *Runner) EditResend(ctx context.Context, conversationID, messageID string) error {
 	if r.store == nil {
-		return errors.New("AI 会话存储未配置")
+		return errors.New("AI 对话存储未配置")
 	}
 	truncater, ok := r.store.(messageTruncateStore)
 	if !ok {
-		return errors.New("AI 会话存储不支持消息截断")
+		return errors.New("AI 对话存储不支持消息截断")
 	}
 	unlock := r.lockConversation(conversationID)
 	defer unlock()

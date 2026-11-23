@@ -127,7 +127,7 @@ afterEach(() => {
 
 async function selectConversation(title: string) {
   await waitForRendered(() => expect(text()).toContain(title));
-  const row = [...document.querySelectorAll<HTMLButtonElement>('ul[aria-label="AI 会话列表"] button')].find((button) => button.textContent?.includes(title));
+  const row = [...document.querySelectorAll<HTMLButtonElement>('ul[aria-label="AI 对话列表"] button')].find((button) => button.textContent?.includes(title));
   if (!row) throw new Error(`row not found: ${title}`);
   click(row);
   await waitForRendered(() => expect(text()).toContain("nginx is running again"));
@@ -168,7 +168,7 @@ describe("conversation list width", () => {
     mounted = mount(createElement(HostAiHistoryPanel, { visible: true, assetId: "asset-web" }));
     await waitForRendered(() => expect(text()).toContain("Restart nginx"));
     expect(listWidth()).toBe("280px");
-    const separator = document.querySelector<HTMLElement>('[role="separator"][aria-label="调整会话列表宽度"]');
+    const separator = document.querySelector<HTMLElement>('[role="separator"][aria-label="调整对话列表宽度"]');
     if (!separator) throw new Error("list separator not found");
     act(() => {
       separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", shiftKey: true, bubbles: true }));
@@ -200,7 +200,7 @@ describe("AiWorkbenchView", () => {
     await waitForRendered(() => expect(lastOverview()).toMatchObject({ status: "failed" }));
     await waitForRendered(() => expect(text()).not.toContain("Restart nginx"));
 
-    setInputValue(document.querySelector<HTMLInputElement>('input[aria-label="搜索 AI 会话"]')!, "replication");
+    setInputValue(document.querySelector<HTMLInputElement>('input[aria-label="搜索 AI 对话"]')!, "replication");
     // The search is debounced; its timer and the reload it starts run inside act.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 350));
@@ -264,16 +264,16 @@ describe("AiWorkbenchView", () => {
     mounted = mount(createElement(AiWorkbenchView, { visible: true }));
     await selectConversation("Restart nginx");
     mocks.runs.mockResolvedValueOnce([{ ...RUN, status: "running", finishedAt: undefined }]);
-    click(document.querySelector('button[aria-label="删除会话「Restart nginx」"]')!);
+    click(document.querySelector('button[aria-label="删除对话「Restart nginx」"]')!);
     await flush();
     expect(mocks.remove).not.toHaveBeenCalled();
     expect(mocks.ask).not.toHaveBeenCalled();
 
-    click(document.querySelector('button[aria-label="删除会话「Restart nginx」"]')!);
+    click(document.querySelector('button[aria-label="删除对话「Restart nginx」"]')!);
     await waitForRendered(() => expect(mocks.remove).toHaveBeenCalledWith("conv-web"));
     expect(mocks.ask).toHaveBeenCalledTimes(1);
-    await waitForRendered(() => expect(document.querySelector('ul[aria-label="AI 会话列表"]')?.textContent).not.toContain("Restart nginx"));
-    expect(text()).toContain("选择左侧的会话查看内容");
+    await waitForRendered(() => expect(document.querySelector('ul[aria-label="AI 对话列表"]')?.textContent).not.toContain("Restart nginx"));
+    expect(text()).toContain("选择左侧的对话查看内容");
   });
 
   it("exports the selected conversation as Markdown", async () => {

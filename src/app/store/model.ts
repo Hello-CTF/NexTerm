@@ -150,7 +150,7 @@ export function nextTabId(prefix: string): string {
 }
 
 export function makeAiDockTab(): AiDockTab {
-  return { id: nextTabId("ai"), title: tr("新会话") };
+  return { id: nextTabId("ai"), title: tr("新对话") };
 }
 
 export function makeAiBoard(): AiBoard {

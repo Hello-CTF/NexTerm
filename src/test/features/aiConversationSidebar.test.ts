@@ -428,7 +428,7 @@ describe("AiSidebar conversation stream UX", () => {
     act(runFrames);
     expect(textOf(view!)).not.toContain("残影");
 
-    click(view!.container.querySelector('button[title="新建会话"]')!);
+    click(view!.container.querySelector('button[title="新建对话"]')!);
     await flush();
     expect(textOf(view!)).not.toContain("旧问题");
     expect(textOf(view!)).toContain("开始新的对话");

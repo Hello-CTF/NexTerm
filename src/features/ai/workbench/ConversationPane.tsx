@@ -32,7 +32,7 @@ export function ConversationPane({
         <span className="nx-empty-icon">
           <IconBot size={19} />
         </span>
-        <div className="nx-hint">{t("选择左侧的会话查看内容")}</div>
+        <div className="nx-hint">{t("选择左侧的对话查看内容")}</div>
       </div>
     );
   }
@@ -58,7 +58,7 @@ export function ConversationPane({
         <button
           type="button"
           className="nx-btn nx-btn-primary nx-btn-xs"
-          title={t("在右侧 AI 侧边栏打开此会话，继续对话")}
+          title={t("在右侧 AI 侧边栏打开此对话并继续")}
           onClick={() => openConversationInDock(summary.id, summary.title)}
         >
           <IconPanelRight size={12} />
@@ -67,7 +67,7 @@ export function ConversationPane({
         <button
           type="button"
           className="nx-btn nx-btn-ghost nx-btn-xs"
-          title={t("将此会话导出为 Markdown 文件")}
+          title={t("将此对话导出为 Markdown 文件")}
           onClick={() => void exportConversationMarkdown(summary, hostLabel)}
         >
           <IconDownload size={12} />
@@ -76,8 +76,8 @@ export function ConversationPane({
         <button
           type="button"
           className="nx-icon-btn nx-icon-btn-sm"
-          title={t("删除会话")}
-          aria-label={t("删除会话「{value}」", { value: conversationTitle(summary.title) })}
+          title={t("删除对话")}
+          aria-label={t("删除对话「{value}」", { value: conversationTitle(summary.title) })}
           onClick={() => void remove()}
         >
           <IconTrash size={12} />

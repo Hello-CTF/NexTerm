@@ -71,7 +71,7 @@ function textOf(view: MountedView): string {
 
 function stripTabs(view: MountedView): HTMLElement[] {
   return [
-    ...view.container.querySelectorAll<HTMLElement>('[aria-label="会话标签页"] [role="tab"]'),
+    ...view.container.querySelectorAll<HTMLElement>('[aria-label="对话标签页"] [role="tab"]'),
   ];
 }
 

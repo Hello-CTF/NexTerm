@@ -118,7 +118,7 @@ export function AiWorkbenchView({ visible, assetId }: { visible: boolean; assetI
     <aside
       className={`flex min-h-0 flex-col border-neutral-800/60 ${narrow ? "max-h-[45vh] border-b" : "w-[var(--nx-ai-workbench-list-w)] shrink-0 border-r"}`}
       style={narrow ? undefined : ({ "--nx-ai-workbench-list-w": `${listWidth}px` } as CSSProperties)}
-      aria-label={t("会话筛选和列表")}
+      aria-label={t("对话筛选和列表")}
     >
       <div className="flex shrink-0 flex-col gap-1.5 border-b border-neutral-800/60 p-2">
         <div className="flex items-center gap-1">
@@ -126,7 +126,7 @@ export function AiWorkbenchView({ visible, assetId }: { visible: boolean; assetI
           <input
             className="nx-input nx-input-sm min-w-0 flex-1"
             placeholder={t("搜索标题或对话内容")}
-            aria-label={t("搜索 AI 会话")}
+            aria-label={t("搜索 AI 对话")}
             value={queryInput}
             onChange={(event) => setQueryInput(event.target.value)}
           />
@@ -171,11 +171,11 @@ export function AiWorkbenchView({ visible, assetId }: { visible: boolean; assetI
         ) : null}
         {!bounds.valid ? <div className="text-[11.5px] text-red-300" role="alert">{t("结束日期不能早于开始日期")}</div> : null}
         <div className="flex items-center gap-1">
-          <span className="nx-hint min-w-0 flex-1 truncate" aria-live="polite">{t("共 {count} 个会话", { count: pages.total })}</span>
-          <button type="button" className="nx-icon-btn nx-icon-btn-sm" title={t("刷新")} aria-label={t("刷新会话列表")} onClick={pages.reload}>
+          <span className="nx-hint min-w-0 flex-1 truncate" aria-live="polite">{t("共 {count} 个对话", { count: pages.total })}</span>
+          <button type="button" className="nx-icon-btn nx-icon-btn-sm" title={t("刷新")} aria-label={t("刷新对话列表")} onClick={pages.reload}>
             <IconRefresh size={12} />
           </button>
-          <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" title={t("按当前筛选批量导出会话")} onClick={() => setArchiveOpen(true)}>
+          <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" title={t("按当前筛选批量导出对话")} onClick={() => setArchiveOpen(true)}>
             <IconDownload size={12} />
             {t("批量导出")}
           </button>
@@ -186,7 +186,7 @@ export function AiWorkbenchView({ visible, assetId }: { visible: boolean; assetI
         selectedId={selection.summary?.id ?? null}
         onSelect={(item: AiConversationSummaryDto) => selection.select(item)}
         hostLabel={(item) => hostLabel(item.assetId)}
-        emptyText={filter && Object.keys(filter).length > 0 ? t("没有符合筛选条件的会话") : t("尚无 AI 会话")}
+        emptyText={filter && Object.keys(filter).length > 0 ? t("没有符合筛选条件的对话") : t("尚无 AI 对话")}
       />
     </aside>
   );
@@ -208,7 +208,7 @@ export function AiWorkbenchView({ visible, assetId }: { visible: boolean; assetI
           max={WORKBENCH_LIST_WIDTH.max}
           defaultWidth={WORKBENCH_LIST_WIDTH.default}
           onChange={setListWidth}
-          label={t("调整会话列表宽度")}
+          label={t("调整对话列表宽度")}
         />
       )}
       <div className={`flex min-w-0 flex-col ${narrow ? "min-h-[60vh]" : "min-h-0 flex-1"}`}>
@@ -217,7 +217,7 @@ export function AiWorkbenchView({ visible, assetId }: { visible: boolean; assetI
       {selection.summary ? (
         <aside
           className={`border-neutral-800/60 ${narrow ? "border-t" : "w-[290px] shrink-0 overflow-y-auto border-l"}`}
-          aria-label={t("会话详情")}
+          aria-label={t("对话详情")}
         >
           <ConversationDetails summary={selection.summary} hostLabel={selectedHost} items={selection.record.items} />
         </aside>

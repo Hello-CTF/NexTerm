@@ -743,7 +743,7 @@ func (r *productionScopeResolver) persist(ctx context.Context, conversationID st
 		return ipc.WrapError(ipc.CodeDB, "AI 终端范围持久化失败", err)
 	}
 	if result.RowsAffected != 1 {
-		return ipc.NewError(ipc.CodeNotFound, "AI 会话不存在或无权更新终端范围")
+		return ipc.NewError(ipc.CodeNotFound, "AI 对话不存在或无权更新终端范围")
 	}
 	return nil
 }

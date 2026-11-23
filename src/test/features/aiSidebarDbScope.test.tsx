@@ -93,7 +93,7 @@ function installWorkspaces(specs: WorkspaceSpec[]): string[] {
     aiBoards: Object.fromEntries(
       ids.map((id, index) => [
         id,
-        { tabs: [{ id: `ai-tab-${index}`, title: "新会话" }], activeTabId: `ai-tab-${index}` },
+        { tabs: [{ id: `ai-tab-${index}`, title: "新对话" }], activeTabId: `ai-tab-${index}` },
       ]),
     ),
   });

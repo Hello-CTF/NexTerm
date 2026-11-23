@@ -72,7 +72,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         boardKey,
         tabId,
         conversationId === undefined
-          ? { conversationId: undefined, title: tr("新会话") }
+          ? { conversationId: undefined, title: tr("新对话") }
           : { conversationId, ...(title ? { title } : {}) },
         aiAccountEpoch,
       );
@@ -216,7 +216,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       <div className="nx-ai-tabstrip flex h-[34px] shrink-0 items-center gap-1 border-b border-neutral-800/60 pl-1.5 pr-1 [@media(max-height:480px)]:h-7">
         <div
           role="tablist"
-          aria-label={tr("会话标签页")}
+          aria-label={tr("对话标签页")}
           className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
         >
           {tabs.map((t) => {
@@ -346,8 +346,8 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
         </div>
         <button
           className="nx-icon-btn nx-icon-btn-sm shrink-0"
-          title={tr("新建会话")}
-          aria-label={tr("新建会话")}
+          title={tr("新建对话")}
+          aria-label={tr("新建对话")}
           onClick={handleNewTab}
         >
           <IconPlus size={13} />

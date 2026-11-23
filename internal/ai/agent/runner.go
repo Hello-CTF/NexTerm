@@ -149,7 +149,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		return StartResponse{}, errors.New("AI 事件流未配置")
 	}
 	if r.store == nil {
-		return StartResponse{}, errors.New("AI 会话存储未配置")
+		return StartResponse{}, errors.New("AI 对话存储未配置")
 	}
 	if strings.TrimSpace(args.Message) == "" && len(args.Images) == 0 {
 		return StartResponse{}, errors.New("消息不能为空")

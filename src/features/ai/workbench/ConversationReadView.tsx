@@ -62,7 +62,7 @@ export function ConversationReadView({ record, running }: { record: Conversation
     return (
       <div className="flex flex-col items-center gap-2 p-6 text-center">
         <IconAlert size={16} className="text-red-300" />
-        <div className="text-xs text-red-300">{t("未能读取会话：{value}", { value: error })}</div>
+        <div className="text-xs text-red-300">{t("未能读取对话：{value}", { value: error })}</div>
         <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" onClick={reload}>
           <IconRefresh size={11} />
           {t("重试")}
@@ -77,8 +77,8 @@ export function ConversationReadView({ record, running }: { record: Conversation
         <IconSearch size={12} className="shrink-0 text-neutral-500" />
         <input
           className="nx-input nx-input-sm min-w-0 flex-1"
-          placeholder={t("在此会话中搜索，Enter 下一个")}
-          aria-label={t("在此会话中搜索")}
+          placeholder={t("在此对话中搜索，Enter 下一个")}
+          aria-label={t("在此对话中搜索")}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
@@ -99,8 +99,8 @@ export function ConversationReadView({ record, running }: { record: Conversation
         </button>
       </div>
       <div ref={scrollRef} role="log" aria-label={t("AI 对话记录（只读）")} className="min-h-0 flex-1 overflow-y-auto p-3">
-        {loading ? <div className="nx-hint py-6 text-center">{t("正在读取会话…")}</div> : null}
-        {!loading && items.length === 0 ? <div className="nx-hint py-6 text-center">{t("此会话还没有保存的消息")}</div> : null}
+        {loading ? <div className="nx-hint py-6 text-center">{t("正在读取对话…")}</div> : null}
+        {!loading && items.length === 0 ? <div className="nx-hint py-6 text-center">{t("此对话还没有保存的消息")}</div> : null}
         {start > 0 ? (
           <div className="mb-2 flex justify-center">
             <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => setWindowSize((size) => size + READ_WINDOW)}>

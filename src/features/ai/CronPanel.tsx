@@ -645,7 +645,7 @@ export function CronPanel({
       ) : (
         <div className="flex flex-col gap-1.5">
           {jobs.length === 0 ? (
-            <div className="nx-hint py-2 text-[12px]">{t("此会话暂无定时任务。")}</div>
+            <div className="nx-hint py-2 text-[12px]">{t("此对话暂无定时任务。")}</div>
           ) : (
             jobs.map((job) => {
               const status = jobStatus(job);
@@ -762,7 +762,7 @@ export function CronPanel({
       )}
 
       <p className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
-        {t("启用、停用和删除只影响所选任务。删除 AI 会话时，该会话的全部定时任务也会一并删除。")}
+        {t("启用、停用和删除只影响所选任务。删除 AI 对话时，该对话的全部定时任务也会一并删除。")}
       </p>
     </div>
   );

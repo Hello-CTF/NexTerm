@@ -82,7 +82,7 @@ func agentIPCError(err error) error {
 		return ipc.WrapError(ipc.CodeBadParam, err.Error(), err)
 	case "消息不存在":
 		return ipc.WrapError(ipc.CodeNotFound, err.Error(), err)
-	case "AI 会话存储未配置", "AI 会话存储不支持消息截断", "权限设置未配置", "设备授权未配置":
+	case "AI 对话存储未配置", "AI 对话存储不支持消息截断", "权限设置未配置", "设备授权未配置":
 		return ipc.WrapError(ipc.CodeUnsupported, err.Error(), err)
 	default:
 		return err

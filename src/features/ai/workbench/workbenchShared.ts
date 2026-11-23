@@ -41,7 +41,7 @@ export function conversationStatusBadge(status: AiConversationStatus): string {
 }
 
 export function conversationTitle(title: string): string {
-  return title.trim() || t("（未命名会话）");
+  return title.trim() || t("（未命名对话）");
 }
 
 // Quick time ranges shared by the workbench filter and the export dialog; "custom" uses the day inputs.
@@ -103,7 +103,7 @@ export function conversationExportLabels(): Record<string, string> {
     "status.failed": t("失败"),
     "status.idle": t("未运行"),
     "decision.allow": t("已允许一次"),
-    "decision.allow_session": t("本会话已允许此类"),
+    "decision.allow_session": t("本对话已允许此类"),
     "decision.allow_persistent": t("已永久允许"),
     "decision.deny": t("已拒绝"),
     "decision.answered": t("已回答"),
@@ -150,24 +150,24 @@ export async function deleteConversationGuarded(
       pushToast(
         "info",
         inFlight === "running"
-          ? t("此会话中 AI 正在工作，请等待结束或先停止，再删除")
-          : t("此会话中有被中断的 AI 任务，请先打开会话处理，再删除"),
+          ? t("此对话中 AI 正在工作，请等待结束或先停止，再删除")
+          : t("此对话中有被中断的 AI 任务，请先打开对话处理，再删除"),
       );
       return false;
     }
   } catch (e) {
     // Deleting removes the run records too, so an unchecked conversation is kept.
-    pushToast("error", t("无法确认此会话中是否有 AI 任务正在运行，暂未删除，请稍后重试：{value}", { value: describeError(e) }));
+    pushToast("error", t("无法确认此对话中是否有 AI 任务正在运行，暂未删除，请稍后重试：{value}", { value: describeError(e) }));
     return false;
   }
-  const ok = await ask(t("确定要删除会话「{value}」吗？消息记录、运行记录和定时任务将一并清除，不可恢复。", { value: conversation.title || t("（未命名会话）") }), {
+  const ok = await ask(t("确定要删除对话「{value}」吗？消息记录、运行记录和定时任务将一并清除，不可恢复。", { value: conversation.title || t("（未命名对话）") }), {
     kind: "warning",
   });
   if (!ok || !canProceed()) return false;
   try {
     await aiApi.conversationDelete(conversation.id);
   } catch (e) {
-    pushToast("error", t("未能删除会话：{value}", { value: describeError(e) }));
+    pushToast("error", t("未能删除对话：{value}", { value: describeError(e) }));
     return false;
   }
   return true;
@@ -179,7 +179,7 @@ export function releaseDeletedConversation(conversationId: string): void {
   for (const [key, board] of Object.entries(state.aiBoards)) {
     for (const tab of board.tabs) {
       if (tab.conversationId === conversationId) {
-        state.updateAiTab(key, tab.id, { conversationId: undefined, title: t("新会话") }, state.aiAccountEpoch);
+        state.updateAiTab(key, tab.id, { conversationId: undefined, title: t("新对话") }, state.aiAccountEpoch);
       }
     }
   }
@@ -205,7 +205,7 @@ export async function exportConversationMarkdown(
     });
     const where = await finishSave(path, name);
     if (!where) pushToast("info", t("已取消保存"));
-    else pushToast("success", t("已导出会话到 {where}", { where }));
+    else pushToast("success", t("已导出对话到 {where}", { where }));
   } catch (error) {
     pushToast("error", t("导出失败：{value}。请更换保存位置后重试", { value: describeError(error) }));
   }
