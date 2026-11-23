@@ -19,7 +19,7 @@ import (
 //	<stage>/staged.json                     a pointer: version and asset name, written last
 //	<stage>/package/<asset name>            the package
 //	<stage>/package/SHA256SUMS              the release's exact checksum manifest
-//	<stage>/package/SHA256SUMS.minisig      its signature, when signatures apply
+//	<stage>/package/SHA256SUMS.minisig      its signature
 //
 // The stage directory is writable by the user, so nothing in it is trusted on its own: before a staged package is
 // reported ready or applied, the manifest's signature is verified again with the build's trusted key, bound to the
@@ -83,27 +83,26 @@ func (m *Manager) stagedPackage() (stagedPackage, bool) {
 	return staged, true
 }
 
-// stagedDigest verifies the staged manifest exactly as the release check does (the signature, bound to the
-// staged version, whenever a trusted key is configured or signatures are required) and returns the package's
-// digest from it.
+// stagedDigest verifies the staged manifest's signature, bound to the staged version, with the build's trusted key
+// and returns the package's digest from it. A build without a trusted key applies nothing.
 func (m *Manager) stagedDigest(staged stagedPackage) (string, error) {
 	trust, required, err := m.minisignTrust()
 	if err != nil {
 		return "", err
+	}
+	if !required {
+		return "", fmt.Errorf("%w: 此构建未内置发布签名公钥，不应用未签名的更新包", errStagedTampered)
 	}
 	directory := filepath.Join(m.stageDir(), stagedPackageDir)
 	manifest, err := readRegular(filepath.Join(directory, checksumsAssetName), maxChecksumManifestSize)
 	if err != nil {
 		return "", tampered(err)
 	}
-	var signature []byte
-	if required {
-		signature, err = readRegular(filepath.Join(directory, checksumSignatureAssetName), maxMinisignSignatureSize)
-		if err != nil {
-			return "", tampered(err)
-		}
+	signature, err := readRegular(filepath.Join(directory, checksumSignatureAssetName), maxMinisignSignatureSize)
+	if err != nil {
+		return "", tampered(err)
 	}
-	sums, err := verifyChecksums(manifest, signature, trust, required, staged.Version)
+	sums, err := verifyChecksums(manifest, signature, trust, true, staged.Version)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", errStagedTampered, err)
 	}

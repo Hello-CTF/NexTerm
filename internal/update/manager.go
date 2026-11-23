@@ -300,7 +300,10 @@ func (m *Manager) check(ctx context.Context, channel ReleaseChannel) (Status, *r
 		status.ReleaseURL = release.HTMLURL
 		status.DownloadURL = asset.BrowserDownloadURL
 		if status.CanInstall {
-			if reason := m.installBlocker(); reason != "" {
+			if reason := m.unsignedInstallBlocker(); reason != "" {
+				status.CanInstall = false
+				status.UnavailableReason = reason
+			} else if reason := m.installBlocker(); reason != "" {
 				status.CanInstall = false
 				status.UnavailableReason = reason
 			}

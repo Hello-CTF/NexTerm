@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/releasesig/releasesigtest"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/update"
 )
@@ -87,6 +88,10 @@ func updateIPCDebArchiveWithPath(t *testing.T, version, binaryPath string) (stri
 	return fmt.Sprintf("nexterm-desktop_linux_%s_%s.deb", runtime.GOARCH, version), archive.Bytes()
 }
 
+// updateIPCKey signs the fixture's SHA256SUMS as the release workflow does; a manager that installs trusts it in
+// place of the key release builds embed.
+var updateIPCKey = releasesigtest.NewKey(11)
+
 func updateIPCFixture(t *testing.T, version string) (*httptest.Server, string, []byte) {
 	t.Helper()
 	archiveName, archive := updateIPCDebArchive(t, version)
@@ -103,16 +108,21 @@ func updateIPCFixtureArchive(t *testing.T, version, archiveName string, archive 
 		{"name": "nexterm-desktop_macos_arm64_" + version + ".dmg"},
 		{"name": "nexterm-desktop_macos_amd64_" + version + ".dmg"},
 		{"name": "SHA256SUMS"},
+		{"name": "SHA256SUMS.minisig"},
 	}
 	var sums strings.Builder
 	for _, asset := range assets {
 		name := asset["name"].(string)
+		if strings.HasPrefix(name, "SHA256SUMS") {
+			continue
+		}
 		if name == archiveName {
 			fmt.Fprintf(&sums, "%s  %s\n", hex.EncodeToString(digest[:]), name)
 			continue
 		}
 		fmt.Fprintf(&sums, "%s  %s\n", strings.Repeat("0", 64), name)
 	}
+	signature := updateIPCKey.Sign([]byte(sums.String()), "NexTerm "+version+" SHA256SUMS")
 	releases := []map[string]any{{
 		"tag_name": "v" + version, "body": "notes", "draft": false, "prerelease": false, "assets": assets,
 	}}
@@ -125,6 +135,8 @@ func updateIPCFixtureArchive(t *testing.T, version, archiveName string, archive 
 		switch strings.TrimPrefix(request.URL.Path, "/assets/") {
 		case "SHA256SUMS":
 			_, _ = response.Write([]byte(sums.String()))
+		case "SHA256SUMS.minisig":
+			_, _ = response.Write([]byte(signature))
 		case archiveName:
 			_, _ = response.Write(archive)
 		default:
@@ -206,6 +218,7 @@ func TestUpdateInstallEmitsProgressEvents(t *testing.T) {
 	production := newUpdateTestProduction(t, true, recorder)
 	manager := production.Services.Update
 	manager.APIURL = server.URL + "/releases"
+	manager.MinisignPublicKey = updateIPCKey.PublicKeyFile()
 	manager.CurrentVersion = "0.2.2"
 	executable := filepath.Join(t.TempDir(), "nexterm-desktop")
 	if err := os.WriteFile(executable, []byte("old-binary"), 0o755); err != nil {
@@ -388,6 +401,7 @@ func TestUpdateInstallIPCPreservesLinuxDebErrors(t *testing.T) {
 			manager := &update.Manager{
 				CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: runtime.GOARCH, CanInstall: true, StageDir: t.TempDir(),
 				ExePath: filepath.Join(t.TempDir(), "nexterm-desktop"), APIURL: server.URL + "/releases",
+				MinisignPublicKey: updateIPCKey.PublicKeyFile(),
 			}
 			dispatcher := ipc.NewDispatcher()
 			if err := registerUpdateCommands(dispatcher, manager); err != nil {

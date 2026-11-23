@@ -23,3 +23,13 @@ func (m *Manager) minisignTrust() (releasesig.PublicKey, bool, error) {
 	}
 	return key, true, nil
 }
+
+// unsignedInstallBlocker refuses installing from a build without a trusted key. Release builds always embed one
+// (the release workflow fails without it), so only a development build lands here; it still reports the newer
+// release and its download link, but a package that only matches an unsigned checksum is never installed.
+func (m *Manager) unsignedInstallBlocker() string {
+	if _, required, err := m.minisignTrust(); err == nil && !required {
+		return "此构建未内置发布签名公钥，无法验证更新包的签名，不能在应用内安装；请下载新版安装包手动安装"
+	}
+	return ""
+}

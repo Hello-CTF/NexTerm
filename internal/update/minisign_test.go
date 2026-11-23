@@ -8,6 +8,7 @@ import (
 )
 
 func TestMinisignTrustConfiguration(t *testing.T) {
+	withoutEmbeddedKey(t)
 	legacy := &Manager{}
 	if _, required, err := legacy.minisignTrust(); err != nil || required {
 		t.Fatalf("legacy policy = required %v, err %v", required, err)

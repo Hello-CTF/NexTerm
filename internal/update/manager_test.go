@@ -144,7 +144,7 @@ func linuxFixture(t *testing.T, version string, corruptChecksum bool) *releaseFi
 	if corruptChecksum {
 		checksums = strings.Repeat("0", 64) + "  " + archiveName + "\n"
 	}
-	return &releaseFixture{
+	fixture := &releaseFixture{
 		releases: []Release{{
 			TagName: "v" + version,
 			Body:    "release notes",
@@ -157,11 +157,28 @@ func linuxFixture(t *testing.T, version string, corruptChecksum bool) *releaseFi
 		archive:     archive,
 		archiveName: archiveName,
 	}
+	fixture.sign(fixtureKey, version)
+	return fixture
 }
 
+// unsign removes the signature and its asset, as from a release published without one.
+func (fixture *releaseFixture) unsign() {
+	fixture.signature = ""
+	assets := fixture.releases[0].Assets[:0]
+	for _, asset := range fixture.releases[0].Assets {
+		if asset.Name != checksumSignatureAssetName {
+			assets = append(assets, asset)
+		}
+	}
+	fixture.releases[0].Assets = assets
+}
+
+// sign signs the fixture's checksums for version with key, as the release workflow does.
 func (fixture *releaseFixture) sign(key releasesigtest.Key, version string) {
 	fixture.signature = key.Sign([]byte(fixture.checksums), fmt.Sprintf("NexTerm %s %s", version, checksumsAssetName))
-	fixture.releases[0].Assets = append(fixture.releases[0].Assets, Asset{Name: checksumSignatureAssetName})
+	if _, ok := findReleaseAsset(fixture.releases[0], checksumSignatureAssetName); !ok {
+		fixture.releases[0].Assets = append(fixture.releases[0].Assets, Asset{Name: checksumSignatureAssetName})
+	}
 }
 
 func TestCheckFindsUpdate(t *testing.T) {
@@ -217,6 +234,7 @@ func TestCheckDegradesToUnavailableReason(t *testing.T) {
 			fixture: func(t *testing.T) *releaseFixture {
 				fixture := linuxFixture(t, "0.3.0", false)
 				fixture.checksums = strings.Repeat("0", 64) + "  other-file\n"
+				fixture.sign(fixtureKey, "0.3.0")
 				return fixture
 			},
 			contains: "缺少",
