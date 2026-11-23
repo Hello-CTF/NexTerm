@@ -696,7 +696,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               <label className="flex cursor-pointer items-start gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-[12.5px] text-neutral-200" data-setting="close-to-tray">
-                    {t("关闭时保留后台运行（最小化到托盘）")}
+                    {t("关闭窗口时最小化到托盘")}
                     <SyncScopeBadge scope="local" />
                   </div>
                   <p className="nx-hint mt-0.5">{t("关闭窗口后留在托盘，会话保持连接；右键托盘图标可退出。")}</p>

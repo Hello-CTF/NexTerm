@@ -46,7 +46,7 @@ let mounted: MountedView | undefined;
 
 function trayToggle(): HTMLInputElement | null {
   for (const label of mounted?.container.querySelectorAll("label") ?? []) {
-    if (label.textContent?.includes("关闭时保留后台运行")) return label.querySelector("input[type='checkbox']");
+    if (label.textContent?.includes("关闭窗口时最小化到托盘")) return label.querySelector("input[type='checkbox']");
   }
   return null;
 }
