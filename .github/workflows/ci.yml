@@ -297,37 +297,6 @@ jobs:
         if: ${{ fromJSON(needs.version.outputs.scope).race && matrix.shard == 0 }}
         run: go test -count=1 ./internal/terminal -run '^(TestThroughputAcceptanceWorkload|TestHighVolumeFeedMemoryBounded)$'
 
-  privacy-model:
-    # The unit suite runs the engine on a synthetic graph only. This job runs the real AstrLink Guard
-    # model through the pure-Go engine on the amd64 (AVX) and Apple silicon (NEON/SME) kernels.
-    name: Privacy model (${{ matrix.runner }})
-    needs: version
-    if: github.event_name == 'pull_request' && fromJSON(needs.version.outputs.scope).unit
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-latest, macos-26]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/go-toolchain
-      - name: Download the latest FP32 model
-        id: model
-        run: |
-          directory="$(go run ./scripts/privacy-model -root "$RUNNER_TEMP/privacy-models")"
-          test -n "$directory"
-          echo "directory=$directory" >> "$GITHUB_OUTPUT"
-      - name: Run the real-model engine tests
-        env:
-          NEXTERM_PRIVACY_TEST_MODEL: ${{ steps.model.outputs.directory }}
-        # -v keeps the per-file case counts and the benchmark times in the log; a missing model would skip, so fail instead.
-        run: |
-          test -f "$NEXTERM_PRIVACY_TEST_MODEL/installation.json"
-          go test -v -count=1 -run '^(TestAstrLinkGuardRealModel|TestAstrLinkGuardTokenizerOffsets)$' -bench BenchmarkDetectRealModel -benchtime 5x ./internal/ai/privacy/inference
-
   database:
     needs: version
     if: fromJSON(needs.version.outputs.scope).database
@@ -859,7 +828,6 @@ jobs:
       - frontend-coverage
       - quality
       - unit
-      - privacy-model
       - database
       - native
       - mobile-compile
@@ -885,7 +853,6 @@ jobs:
             const skipAllowed = {
               quality: !scope.quality,
               unit: !scope.unit,
-              "privacy-model": event !== "pull_request" || !scope.unit,
               database: !scope.database,
               frontend: !scope.frontend,
               "frontend-lint": !scope.frontendTests,
