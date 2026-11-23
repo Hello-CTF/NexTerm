@@ -29,6 +29,15 @@ describe("applyBackendPlatform", () => {
     expect(isWindows()).toBe(false);
   });
 
+  it("gives the iOS app (iPhone and iPad) the Command shortcuts of macOS, while its local sessions are not macOS", () => {
+    applyBackendPlatform("ios", true);
+    expect(isMac()).toBe(true);
+    expect(isWindows()).toBe(false);
+    expect(localSessionIsMac()).toBe(false);
+    applyBackendPlatform("android", true);
+    expect(isMac()).toBe(false);
+  });
+
   it("ignores an empty or non-string answer", () => {
     setWindowsPlatform(true);
     applyBackendPlatform("", true);

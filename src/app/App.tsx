@@ -7,6 +7,8 @@ import { ALL_PROJECTS, focusedWorkspaces } from "./projectFocus";
 import { useBackgroundSessionsAccess } from "../features/terminal/backgroundSessionsAccess";
 import { ErrorBoundary } from "../ui/ErrorBoundary";
 import { useShellLayout } from "./shell";
+import { singlePaneFor } from "./shell/shellMode";
+import { isPhoneScreen } from "./device";
 import { useAppBootEffects, useAppDialogHandlers, useWebAuthRefresh } from "./shell/AppBootEffects";
 import type { JumpScope } from "./JumpPalette";
 import { useTabRecencyTracker } from "./jump/tabRecency";
@@ -200,7 +202,7 @@ function AppShell() {
       activeSessionId,
       overlaySidebars,
       splitAllowed: viewport.splitAllowed,
-      singlePane: layout.mode === "mobile" || viewport.compact,
+      singlePane: singlePaneFor(layout.mode, viewport.compact, isPhoneScreen(window.screen.width, window.screen.height)),
       docks,
       onNewTerminal: () => void openNewTerminal(),
       onLocalTerminal: () => void openLocalTerminal(),

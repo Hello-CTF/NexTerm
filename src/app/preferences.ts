@@ -4,6 +4,7 @@ import { DESKTOP } from "../ipc/env";
 import { syncApi } from "../ipc/commands";
 import { listenEvent } from "../ipc/events";
 import { t } from "../i18n";
+import { currentDeviceSignals, isMobileDevice as isMobileUserAgent } from "./device";
 import { ACCENT_VARIABLE_NAMES, accentVariables, DEFAULT_ACCENT, parseAccentPreset, type AccentPreset } from "./accentPresets";
 import { parseCustomSchemes, SCHEME_ID_PATTERN, type CustomTerminalScheme } from "../features/terminal/terminalSchemes";
 import {
@@ -710,7 +711,7 @@ const MOBILE_DEFAULT_TERMINAL_FONT_SIZE = 12;
 
 // Same detection as isMobile in platform.ts; platform is not imported because several terminal tests partially mock platform without exporting isMobile.
 function isMobileDevice(): boolean {
-  return typeof navigator !== "undefined" && /iPhone|iPad|Android/i.test(navigator.userAgent);
+  return typeof navigator !== "undefined" && isMobileUserAgent(currentDeviceSignals());
 }
 
 // builtinAppearance returns the builtin default of a field; the mobile terminal default font size is one step smaller than desktop.
