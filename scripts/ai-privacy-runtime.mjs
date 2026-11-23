@@ -6,7 +6,9 @@
 // (or NEXTERM_ORT_VERSION) and every download is verified against the digest
 // its publisher states; no digests are pinned in this repository. Desktop
 // builds use the GitHub release and, when GitHub cannot be reached after
-// retries, Microsoft's Microsoft.ML.OnnxRuntime package on nuget.org.
+// retries, Microsoft's Microsoft.ML.OnnxRuntime package on nuget.org. iOS
+// builds use the CocoaPods archive and, when its host cannot serve it, the
+// xcframework in the same version's NuGet package.
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
@@ -30,6 +32,7 @@ const nugetRuntimes = {
   "windows-arm64": "win-arm64",
   "windows-amd64": "win-x64",
 };
+const NUGET_IOS_XCFRAMEWORK = "runtimes/ios/native/onnxruntime.xcframework.zip";
 const nativeLibrary = { darwin: "libonnxruntime.dylib", linux: "libonnxruntime.so", windows: "onnxruntime.dll" };
 const UPSTREAM_LICENSES = ["LICENSE", "ThirdPartyNotices.txt"];
 // The managed-API package is about 1 MB and carries the release's license files (its LICENSE as LICENSE.txt).
@@ -146,6 +149,21 @@ async function nugetPlan(common, version, context) {
     ...(common.os === "darwin" ? { minimumOS: "13.4" } : {}),
     libraryPath,
     members: [libraryPath, ...UPSTREAM_LICENSES.filter((name) => entries.has(name))],
+  };
+}
+
+// iosNugetPlan replaces an iOS pod plan whose archive cannot be downloaded: the NuGet package of the same
+// version carries the same static xcframework (one zip inside the package), verified by the package SHA-512.
+export async function iosNugetPlan(plan, context = {}) {
+  const found = await nugetPackage(NUGET_PACKAGE, plan.version, context);
+  if (!found?.entries.has(NUGET_IOS_XCFRAMEWORK)) throw new Error(`nuget.org publishes no ${NUGET_IOS_XCFRAMEWORK} for ONNX Runtime ${plan.version}`);
+  const { entries, ...packaged } = found;
+  return {
+    ...plan,
+    ...packaged,
+    source: "nuget",
+    members: [NUGET_IOS_XCFRAMEWORK, ...UPSTREAM_LICENSES.filter((name) => entries.has(name))],
+    innerArchive: NUGET_IOS_XCFRAMEWORK,
   };
 }
 
@@ -410,8 +428,8 @@ async function collect(directory, files, prefix = "") {
 
 export async function buildRuntime(options) {
   if (!options.output) throw new Error("--output is required");
-  const context = { env: options.env, fetchImpl: options.fetchImpl };
-  const plan = options.plan ?? await runtimePlan(options, context);
+  const context = { env: options.env, fetchImpl: options.fetchImpl, retryDelayMs: options.retryDelayMs };
+  let plan = options.plan ?? await runtimePlan(options, context);
   const output = path.resolve(options.output);
   if (plan.unavailable) {
     console.warn(`warning: ${plan.unavailable}; building without the privacy runtime`);
@@ -426,11 +444,20 @@ export async function buildRuntime(options) {
   let source = options.ortDir && path.resolve(options.ortDir);
   let archiveSha256 = null;
   if (!source) {
-    const downloaded = await download(plan, cache, context);
+    let downloaded;
+    try {
+      downloaded = await download(plan, cache, context);
+    } catch (error) {
+      if (plan.os !== "ios" || plan.source === "nuget") throw error;
+      console.warn(`warning: ${plan.archive} unavailable (${error.message}); using the Microsoft.ML.OnnxRuntime ${plan.version} package on nuget.org`);
+      plan = await iosNugetPlan(plan, context);
+      downloaded = await download(plan, cache, context);
+    }
     archiveSha256 = downloaded.sha256;
     source = path.join(cache, plan.version, plan.archive.replaceAll(".", "-") + "-extracted");
     await rm(source, { recursive: true, force: true });
     await unpack(downloaded.archive, source, plan.members);
+    if (plan.innerArchive) await unpack(path.join(source, ...plan.innerArchive.split("/")), source);
   }
   await stageLibrary(plan, source, output);
   await stageLicenses(plan, source, output, { directory: options.licenseDir, ...context });

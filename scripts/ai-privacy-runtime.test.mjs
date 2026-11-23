@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { crc32 } from "node:zlib";
-import { buildRuntime, resolveVersion, runtimePlan } from "./ai-privacy-runtime.mjs";
+import { buildRuntime, iosNugetPlan, resolveVersion, runtimePlan } from "./ai-privacy-runtime.mjs";
 
 const SHA512 = Buffer.alloc(64, 7).toString("base64");
 const catalogURL = "https://api.nuget.org/v3/catalog0/data/x/microsoft.ml.onnxruntime.1.32.0.json";
@@ -196,6 +196,52 @@ test("mobile builds take the license files from nuget.org when GitHub cannot ser
     await buildRuntime({ plan, ortDir: source, output, env: {}, fetchImpl });
     assert.equal(await readFile(path.join(output, "licenses/ONNX-RUNTIME-LICENSE"), "utf8"), "MIT License");
     assert.equal(await readFile(path.join(output, "licenses/ONNX-RUNTIME-THIRD-PARTY-NOTICES"), "utf8"), "notices");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(path.join(path.dirname(new URL(import.meta.url).pathname), "..", ".tmp/ai-privacy-runtime", version), { recursive: true, force: true });
+  }
+});
+
+function nugetPackageRoutes(version, nupkg, entries) {
+  const catalog = `https://api.nuget.org/v3/catalog0/data/x/ort-${version}.json`;
+  const content = `https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/${version}/microsoft.ml.onnxruntime.${version}.nupkg`;
+  return {
+    [`https://api.nuget.org/v3/registration5-gz-semver2/microsoft.ml.onnxruntime/${version}.json`]: json({ catalogEntry: catalog, packageContent: content }),
+    [catalog]: json({
+      packageHash: createHash("sha512").update(nupkg).digest("base64"),
+      packageHashAlgorithm: "SHA512",
+      packageEntries: entries.map((fullName) => ({ fullName })),
+    }),
+    [content]: new Response(nupkg),
+  };
+}
+
+test("an iOS NuGet plan needs the xcframework in the package", async () => {
+  const pod = { os: "ios", arch: "arm64", iosPlatform: "device", version: "1.30.0", archive: "pod-archive-onnxruntime-c-1.30.0.zip" };
+  const { fetchImpl } = fakeFetch(nugetPackageRoutes("1.30.0", Buffer.from("x"), ["LICENSE"]));
+  await assert.rejects(iosNugetPlan(pod, context(fetchImpl)), /publishes no runtimes\/ios\/native\/onnxruntime\.xcframework\.zip/);
+});
+
+test("an iOS pod archive that cannot be downloaded falls back to the NuGet xcframework", { skip: !hasUnzip && "unzip is not installed" }, async () => {
+  const directory = await mkdtemp(path.join(process.env.TMPDIR || os.tmpdir(), "ort-ios-"));
+  const version = `1.30.${Date.now() % 100000}`;
+  try {
+    const slice = "onnxruntime.xcframework/ios-arm64/onnxruntime.framework/onnxruntime";
+    const xcframework = storedZip({ [slice]: "static library" });
+    const entries = ["runtimes/ios/native/onnxruntime.xcframework.zip", "LICENSE", "ThirdPartyNotices.txt"];
+    const nupkg = storedZip({ [entries[0]]: xcframework, LICENSE: "MIT License", "ThirdPartyNotices.txt": "notices" });
+    const { fetchImpl, calls } = fakeFetch({
+      "https://download.onnxruntime.ai/": () => { throw new TypeError("fetch failed"); },
+      ...nugetPackageRoutes(version, nupkg, entries),
+    });
+    const archive = `pod-archive-onnxruntime-c-${version}.zip`;
+    const plan = { os: "ios", arch: "arm64", iosPlatform: "device", library: "onnxruntime.framework/onnxruntime", version, minimumOS: "15.1", archive, url: `https://download.onnxruntime.ai/${archive}`, digest: null };
+    const build = buildRuntime({ plan, output: path.join(directory, "out"), env: {}, fetchImpl, retryDelayMs: 0 });
+    if (process.platform === "darwin") await build.catch(() => {});
+    else await assert.rejects(build, /requires macOS and Xcode/);
+    assert.ok(calls.some((url) => url.startsWith("https://download.onnxruntime.ai/")));
+    const extracted = path.join(path.dirname(new URL(import.meta.url).pathname), "..", ".tmp/ai-privacy-runtime", version, `microsoft-ml-onnxruntime-${version.replaceAll(".", "-")}-nupkg-extracted`);
+    assert.equal(await readFile(path.join(extracted, slice), "utf8"), "static library");
   } finally {
     await rm(directory, { recursive: true, force: true });
     await rm(path.join(path.dirname(new URL(import.meta.url).pathname), "..", ".tmp/ai-privacy-runtime", version), { recursive: true, force: true });
