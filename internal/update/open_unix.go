@@ -14,3 +14,8 @@ var syscallELOOP error = syscall.ELOOP
 func openNoFollow(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 }
+
+// openVerifiedCopy opens the private copy of the staged package for the hash that verifies it.
+func openVerifiedCopy(path string) (*os.File, error) {
+	return openNoFollow(path)
+}

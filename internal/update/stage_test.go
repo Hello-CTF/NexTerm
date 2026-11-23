@@ -487,3 +487,33 @@ func TestLoadStagedSweepsLeftoversAndInstallTightensTheDirectory(t *testing.T) {
 		t.Fatalf("stage directory mode = %v, want 0700", info.Mode().Perm())
 	}
 }
+
+func TestCopyVerifiedReturnsTheHashedCopyAndRejectsAnotherDigest(t *testing.T) {
+	parent := t.TempDir()
+	staged := filepath.Join(t.TempDir(), "nexterm-desktop_linux_amd64_1.0.0.deb")
+	content := []byte("signed package")
+	if err := os.WriteFile(staged, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(content)
+	copied, cleanup, err := copyVerified(staged, parent, hex.EncodeToString(sum[:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(filepath.Dir(copied.Name())) != parent {
+		t.Fatalf("copy %s is not in a private directory under %s", copied.Name(), parent)
+	}
+	read := make([]byte, len(content)+1)
+	n, _ := copied.Read(read)
+	if string(read[:n]) != string(content) {
+		t.Fatalf("copy reads %q, want %q", read[:n], content)
+	}
+	cleanup()
+	requireStageEmpty(t, parent)
+
+	other := sha256.Sum256([]byte("another package"))
+	if _, _, err := copyVerified(staged, parent, hex.EncodeToString(other[:])); !errors.Is(err, errStagedTampered) {
+		t.Fatalf("copyVerified with another digest = %v, want errStagedTampered", err)
+	}
+	requireStageEmpty(t, parent)
+}

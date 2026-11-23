@@ -366,37 +366,34 @@ func hashMatches(path, digest string) error {
 	return nil
 }
 
-// copyVerified opens the staged package once, copies it into a fresh private directory under parent while hashing
-// it, and returns the copy, still open and rewound, only when the hash matches digest. The Linux installer reads
-// that handle, so nothing can swap the file between the check and its use; the macOS and Windows installers open
-// the copy by path (hdiutil, NSIS), which narrows the window to the private directory but does not close it
-// against a process of the same user. cleanup closes and removes the copy.
+// copyVerified opens the staged package once and copies it into a fresh private directory under parent, then
+// reopens the copy through openVerifiedCopy, hashes it through that handle and returns the handle, rewound, only
+// when the hash matches digest. The Linux installer reads that handle. On Windows the handle denies writing,
+// deleting and renaming the copy to everyone while it is open, so the file NSIS runs is the file that was hashed.
+// hdiutil on macOS opens the copy by path in another process, and macOS has no mandatory lock: the copy is
+// verified after it was written and sits in a directory only this user can write, but a process of the same user
+// could still replace it between the hash and the attach. cleanup closes and removes the copy.
 func copyVerified(path, parent, digest string) (*os.File, func(), error) {
-	source, err := openRegular(path)
-	if err != nil {
-		return nil, nil, tampered(err)
-	}
-	defer source.Close()
 	directory, err := os.MkdirTemp(parent, ".apply-")
 	if err != nil {
 		return nil, nil, err
 	}
 	copyPath := filepath.Join(directory, filepath.Base(path))
-	target, err := os.OpenFile(copyPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err := copyStaged(path, copyPath); err != nil {
+		_ = os.RemoveAll(directory)
+		return nil, nil, err
+	}
+	copied, err := openVerifiedCopy(copyPath)
 	if err != nil {
 		_ = os.RemoveAll(directory)
 		return nil, nil, err
 	}
 	cleanup := func() {
-		_ = target.Close()
+		_ = copied.Close()
 		_ = os.RemoveAll(directory)
 	}
 	hash := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(target, hash), source); err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	if err := target.Sync(); err != nil {
+	if _, err := io.Copy(hash, copied); err != nil {
 		cleanup()
 		return nil, nil, err
 	}
@@ -404,9 +401,26 @@ func copyVerified(path, parent, digest string) (*os.File, func(), error) {
 		cleanup()
 		return nil, nil, fmt.Errorf("%w: %s 的 SHA-256 与签名的校验和不一致", errStagedTampered, filepath.Base(path))
 	}
-	if _, err := target.Seek(0, io.SeekStart); err != nil {
+	if _, err := copied.Seek(0, io.SeekStart); err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	return target, cleanup, nil
+	return copied, cleanup, nil
+}
+
+// copyStaged copies the staged package, opened through openRegular, to a new file at copyPath and syncs it. The
+// write handle is closed before the copy is reopened for verification.
+func copyStaged(path, copyPath string) error {
+	source, err := openRegular(path)
+	if err != nil {
+		return tampered(err)
+	}
+	defer source.Close()
+	target, err := os.OpenFile(copyPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(target, source)
+	syncErr := target.Sync()
+	return errors.Join(copyErr, syncErr, target.Close())
 }
