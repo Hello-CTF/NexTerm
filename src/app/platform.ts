@@ -1,4 +1,5 @@
 import { useSyncExternalStore, type CSSProperties } from "react";
+import { currentDeviceSignals, isAppleKeyboardDevice, isMobileDevice } from "./device";
 
 const COARSE_POINTER_QUERY = "(pointer: coarse)";
 
@@ -20,9 +21,8 @@ export function useCoarsePointer(): boolean {
   return useSyncExternalStore(subscribeCoarsePointer, isCoarsePointer);
 }
 
-let macPlatform =
-  typeof navigator !== "undefined" &&
-  (/Mac/i.test(navigator.platform ?? "") || /Macintosh/.test(navigator.userAgent));
+// macOS, or iOS/iPadOS whose hardware keyboards use Command the same way (device.ts isAppleKeyboardDevice).
+let macPlatform = typeof navigator !== "undefined" && isAppleKeyboardDevice(currentDeviceSignals());
 
 export function isMac(): boolean {
   return macPlatform;
@@ -39,8 +39,8 @@ export function setWindowsPlatform(fromBackend: boolean): void {
   windowsPlatform = fromBackend;
 }
 
-const mobileUA =
-  typeof navigator !== "undefined" && /iPhone|iPad|Android/i.test(navigator.userAgent);
+// iPhone, iPad (also when iPadOS reports a Mac) or Android.
+const mobileUA = typeof navigator !== "undefined" && isMobileDevice(currentDeviceSignals());
 
 export function isMobile(): boolean {
   return mobileUA;
@@ -107,7 +107,8 @@ export function applyBackendPlatform(os: unknown, desktop: boolean): void {
   if (typeof os !== "string" || os.length === 0) return;
   backendOS = os;
   if (!desktop) return;
-  setMacPlatform(os === "macos" || os === "darwin");
+  // The iOS app (iPhone and iPad) takes the Command shortcuts of macOS for hardware keyboards.
+  setMacPlatform(os === "macos" || os === "darwin" || os === "ios");
   setWindowsPlatform(os === "windows");
 }
 

@@ -15,6 +15,12 @@ export function shellModeFor(mobileDevice: boolean, overlaySidebars: boolean): S
   return overlaySidebars ? "compact" : "desktop";
 }
 
+// singlePaneFor says whether the workspace shows one pane at a time: on a phone, or on any viewport compact enough
+// (<= 560px). A tablet in the mobile shell keeps the split panes its viewport allows, as a desktop window does.
+export function singlePaneFor(mode: ShellMode, compactViewport: boolean, phoneScreen: boolean): boolean {
+  return compactViewport || (mode === "mobile" && phoneScreen);
+}
+
 // overlaySidebarsFor is the app layout's overlay rule: the viewport width threshold, or landscape fullscreen,
 // where the width often exceeds the threshold but the sidebars must not squeeze the fullscreen terminal.
 export function overlaySidebarsFor(widthOverlay: boolean, landscapeFull: boolean): boolean {

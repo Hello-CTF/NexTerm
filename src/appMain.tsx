@@ -17,6 +17,7 @@ import { applySessionStatusEvent, noteHelperProgress, probeForegroundSessions, u
 import { installForegroundResume } from "./app/foregroundResume";
 import { onRemoteChange } from "./app/layout";
 import { applyBackendPlatform, setLocalWindowsBuild } from "./app/platform";
+import { isMobileShell } from "./app/shell";
 import { installLongPressContextMenu } from "./app/longPress";
 import { installInputCapitalization } from "./app/inputCapitalization";
 import { setMountUnavailableReason } from "./app/capabilities";
@@ -148,7 +149,7 @@ async function bootstrapApp(): Promise<void> {
 }
 
 async function wireMobileInsets(): Promise<void> {
-  if (!/Android|iPhone|iPad/i.test(navigator.userAgent)) return;
+  if (!isMobileShell()) return;
   const apply = async () => {
     try {
       const insets = await systemApi.insets();

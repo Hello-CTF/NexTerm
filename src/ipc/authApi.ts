@@ -2,6 +2,7 @@
 // WEB transport only; the desktop has no account system (local-first).
 // Errors are always normalized to the AppError shape ({ code, message }), aligned with toAppError in /rpc.
 
+import { currentDeviceSignals, isMobileDevice } from "../app/device";
 import { WEB } from "./env";
 import { httpUrl } from "./env";
 import type { AppError } from "./commands";
@@ -185,7 +186,7 @@ export function toAuthError(e: unknown): AppError {
 }
 
 function browserClientKind(): "browser" | "mobile" {
-  return typeof navigator !== "undefined" && /iPhone|iPad|Android/i.test(navigator.userAgent) ? "mobile" : "browser";
+  return typeof navigator !== "undefined" && isMobileDevice(currentDeviceSignals()) ? "mobile" : "browser";
 }
 
 function ensureAuthEpoch(startedEpoch: number): void {
