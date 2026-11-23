@@ -52,6 +52,7 @@ import androidx.biometric.BiometricManager;
 import androidx.biometric.BiometricPrompt;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.fragment.app.FragmentActivity;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKey;
@@ -1154,7 +1155,10 @@ public class WailsBridge {
 
     /**
      * Watch (1) / unwatch (0) the soft keyboard, emitting "common:keyboard"
-     * {visible,height} (height in px) via an inset listener on the content view.
+     * {visible,height} via an inset listener on the decor view. height is how
+     * far the keyboard covers the WebView, in CSS px (dp), the unit iOS emits.
+     * The activity draws edge to edge, so adjustResize no longer shrinks the
+     * WebView and the page cannot see the keyboard on its own.
      */
     public void setKeyboardWatch(final int enabled) {
         mainHandler.post(() -> {
@@ -1162,17 +1166,18 @@ public class WailsBridge {
             if (enabled != 0) {
                 if (keyboardListener != null) return;
                 keyboardListener = (v, insets) -> {
-                    int imeHeight = 0;
-                    boolean visible;
-                    if (Build.VERSION.SDK_INT >= 30) {
-                        imeHeight = insets.getInsets(WindowInsets.Type.ime()).bottom;
-                        visible = insets.isVisible(WindowInsets.Type.ime());
-                    } else {
-                        imeHeight = insets.getSystemWindowInsetBottom();
-                        visible = imeHeight > 0;
-                    }
-                    emitKeyboard(visible, imeHeight);
-                    return insets;
+                    // WindowInsetsCompat reports the IME alone below API 30 too, where the
+                    // system window inset also holds the navigation bar under edge to edge.
+                    WindowInsetsCompat compat = WindowInsetsCompat.toWindowInsetsCompat(insets, v);
+                    final int imeBottom = compat.getInsets(WindowInsetsCompat.Type.ime()).bottom;
+                    final boolean visible = compat.isVisible(WindowInsetsCompat.Type.ime()) || imeBottom > 0;
+                    // Measured after the layout pass these insets start, so a WebView that
+                    // still resizes for the keyboard reports no overlap.
+                    v.post(() -> {
+                        int height = visible ? keyboardOverlapDp(v, imeBottom) : 0;
+                        emitKeyboard(height > 0, height);
+                    });
+                    return v.onApplyWindowInsets(insets);
                 };
                 content.setOnApplyWindowInsetsListener(keyboardListener);
                 content.requestApplyInsets();
@@ -1181,6 +1186,24 @@ public class WailsBridge {
                 keyboardListener = null;
             }
         });
+    }
+
+    /** The part of the WebView the keyboard covers, converted from device px to dp. */
+    private int keyboardOverlapDp(View decor, int imeBottomPx) {
+        if (imeBottomPx <= 0) return 0;
+        int[] location = new int[2];
+        decor.getLocationOnScreen(location);
+        int windowBottom = location[1] + decor.getHeight();
+        int keyboardTop = windowBottom - imeBottomPx;
+        int viewBottom = windowBottom;
+        WebView view = webView;
+        if (view != null && view.isAttachedToWindow() && view.getHeight() > 0) {
+            view.getLocationOnScreen(location);
+            viewBottom = location[1] + view.getHeight();
+        }
+        int overlapPx = Math.max(0, viewBottom - keyboardTop);
+        float density = activity.getResources().getDisplayMetrics().density;
+        return density > 0 ? Math.round(overlapPx / density) : overlapPx;
     }
 
     private void emitKeyboard(boolean visible, int height) {
