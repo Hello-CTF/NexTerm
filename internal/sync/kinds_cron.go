@@ -244,7 +244,7 @@ func (s *Service) ForeignCronRemove(ctx context.Context, request ForeignCronRemo
 			continue
 		}
 		if !job.ForeignDevice {
-			return ipc.NewError(ipc.CodeBadParam, "该定时任务在本机运行，请在所属会话中删除")
+			return ipc.NewError(ipc.CodeBadParam, "该定时任务在本机运行，请在所属对话中删除")
 		}
 		if err := jobs.Delete(ctx, job.SessionID, job.ID, job.Revision); err != nil {
 			if errors.Is(err, cron.ErrConflict) || errors.Is(err, cron.ErrNotFound) {
