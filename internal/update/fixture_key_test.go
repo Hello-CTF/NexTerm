@@ -13,6 +13,7 @@ import (
 var fixtureKey = releasesigtest.NewKey(7)
 
 func TestMain(m *testing.M) {
+	runAsInstallerChild()
 	releasesig.EmbeddedPublicKey = fixtureKey.EncodedPublic
 	os.Exit(m.Run())
 }
