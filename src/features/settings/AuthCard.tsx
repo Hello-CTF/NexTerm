@@ -535,7 +535,7 @@ export function AuthCard({ sync }: { sync?: ReactNode } = {}) {
           )}
           <p className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
             <IconCheckCircle size={11} className="mr-1 inline align-[-1px]" />
-            {t("登录后 12 小时内有操作会自动延长，最长 7 天；修改密码或被管理员重置密码后，所有登录立即失效。")}
+            {t("登录后 12 小时内有操作会自动延长，最长 7 天；修改密码或被超级管理员重置密码后，所有登录立即失效。")}
           </p>
         </section>
       )}
@@ -742,7 +742,7 @@ function TotpCard() {
         <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
           <IconInfo size={14} className="mt-0.5 shrink-0" />
           <div>
-            {t("管理员要求所有账号启用两步验证。完成绑定前，仅可使用绑定功能。")}
+            {t("超级管理员要求所有账号启用两步验证。完成绑定前，仅可使用绑定功能。")}
           </div>
         </div>
       )}

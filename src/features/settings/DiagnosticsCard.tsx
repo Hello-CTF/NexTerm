@@ -136,7 +136,7 @@ export function DiagnosticsCard() {
           <IconActivity size={15} className="text-neutral-400" />
           <span className="nx-card-title">{t("诊断与调试")}</span>
         </div>
-        <div className="nx-hint">{t("仅管理员可使用调试模式。")}</div>
+        <div className="nx-hint">{t("仅超级管理员可使用调试模式。")}</div>
       </section>
     );
   }

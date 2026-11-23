@@ -44,7 +44,7 @@ describe("account audit records", () => {
     mounted = mount(createElement(AuditView));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("登录失败"));
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("管理员重置用户");
+    expect(text).toContain("超级管理员重置用户");
     expect(text).not.toContain("login_failure");
     expect([...mounted.container.querySelectorAll(".nx-badge")].map((b) => b.textContent)).toContain("账号");
 

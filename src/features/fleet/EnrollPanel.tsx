@@ -219,7 +219,7 @@ export function EnrollPanel(props: EnrollPanelProps) {
             </button>
           </>
         ) : (
-          <span>{t("管理员尚未配置接入地址，设备无法接入。请联系管理员配置后再接入。")}</span>
+          <span>{t("尚未配置接入地址，新设备无法接入。请联系超级管理员配置。")}</span>
         )}
       </div>
     );

@@ -177,7 +177,7 @@ describe("AI privacy settings", () => {
   it("asks accounts that cannot manage models to contact an administrator", async () => {
     mocks.status.mockResolvedValue({ ...baseline(), canManage: false });
     mounted = mount(createElement(PrivacyCard));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("请联系管理员下载模型"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("请联系超级管理员下载模型"));
     expect(mounted.container.textContent).not.toContain("需先下载并选择模型");
   });
 
