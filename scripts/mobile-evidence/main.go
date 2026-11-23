@@ -287,7 +287,7 @@ func (c *checker) run() error {
 		return nil
 	}
 	c.manifest = manifest
-	c.checkPrivacyRuntime()
+	c.checkPrivacyEngine()
 	c.add("zip-structure", "passed", fmt.Sprintf("central directory contains %d unique safe entries totaling %d uncompressed bytes", manifest.entryCount, manifest.totalUncompressedBytes))
 	if c.id == "mobile-ios" {
 		c.checkIOS()

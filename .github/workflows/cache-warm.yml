@@ -19,7 +19,6 @@ on:
       - pnpm-lock.yaml
       - scripts/build.mjs
       - scripts/lib/build-*.mjs
-      - scripts/ai-privacy-runtime.mjs
       - .github/actions/**
       - .github/workflows/cache-warm.yml
   schedule:
@@ -37,6 +36,8 @@ concurrency:
 
 env:
   GOTOOLCHAIN: go1.27.3
+  # The pure-Go privacy engine needs gomlx's SIMD kernels; tests and builds use the same experiment.
+  GOEXPERIMENT: simd
   GOFLAGS: -mod=readonly
 
 jobs:
@@ -86,28 +87,6 @@ jobs:
       - name: Warm the pnpm store
         if: matrix.arch == 'amd64'
         run: pnpm install --frozen-lockfile
-      # A failed download must not fail the job: the build cache is saved only
-      # when the job succeeds.
-      - name: Resolve the ONNX Runtime version CI resolves
-        id: toolchain
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          NEXTERM_ORT_VERSION: ${{ vars.NEXTERM_ORT_VERSION }}
-        run: node scripts/resolve-toolchain.mjs >> "$GITHUB_OUTPUT"
-      - name: Warm the ONNX Runtime download cache
-        if: steps.toolchain.outputs.ort_version != ''
-        uses: ./.github/actions/ort-cache
-        with:
-          version: ${{ steps.toolchain.outputs.ort_version }}
-          target: linux-${{ matrix.arch }}
-      - name: Download the ONNX Runtime the native linux/${{ matrix.arch }} job stages
-        if: steps.toolchain.outputs.ort_version != ''
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          NEXTERM_ORT_VERSION: ${{ steps.toolchain.outputs.ort_version }}
-        run: node scripts/ai-privacy-runtime.mjs --os=linux --arch=${{ matrix.arch }} --output="$RUNNER_TEMP/ort-stage"
 
   # The Go/Wails quality gates job has its own build cache profile. Its Go
   # compilation is go vet (host and Windows) plus the go run tools of
@@ -196,26 +175,6 @@ jobs:
         run: |
           node scripts/build.mjs helper --release --os=${{ matrix.os }} --arch=${{ matrix.arch }}
           node scripts/build.mjs agent --release --os=${{ matrix.os }} --arch=${{ matrix.arch }}
-      # A failed download must not fail the job: the build cache is saved only
-      # when the job succeeds.
-      - name: Resolve the ONNX Runtime version CI resolves
-        id: toolchain
-        continue-on-error: true
-        env:
-          NEXTERM_ORT_VERSION: ${{ vars.NEXTERM_ORT_VERSION }}
-        run: node scripts/resolve-toolchain.mjs >> "$GITHUB_OUTPUT"
-      - name: Warm the ONNX Runtime download cache
-        if: steps.toolchain.outputs.ort_version != ''
-        uses: ./.github/actions/ort-cache
-        with:
-          version: ${{ steps.toolchain.outputs.ort_version }}
-          target: ${{ matrix.os }}-${{ matrix.arch }}
-      - name: Download the ONNX Runtime the native desktop job stages
-        if: steps.toolchain.outputs.ort_version != ''
-        continue-on-error: true
-        env:
-          NEXTERM_ORT_VERSION: ${{ steps.toolchain.outputs.ort_version }}
-        run: node scripts/ai-privacy-runtime.mjs --os=${{ matrix.os }} --arch=${{ matrix.arch }} --output="$RUNNER_TEMP/ort-stage"
 
   # windows-11-arm keeps its temp directory on C: and windows-latest on D:; the
   # cache version includes the path, so they cannot share a module cache entry.

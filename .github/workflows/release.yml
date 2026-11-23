@@ -13,6 +13,8 @@ concurrency:
 
 env:
   GOTOOLCHAIN: go1.27.3
+  # The pure-Go privacy engine needs gomlx's SIMD kernels; tests and builds use the same experiment.
+  GOEXPERIMENT: simd
   GOFLAGS: -mod=readonly
 
 jobs:
@@ -22,7 +24,6 @@ jobs:
     timeout-minutes: 10
     outputs:
       desktop-matrix: ${{ steps.desktop-matrix.outputs.value }}
-      ort-version: ${{ steps.toolchain.outputs.ort_version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -84,12 +85,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0
-      - name: Resolve the latest ONNX Runtime once for the whole release
-        id: toolchain
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          NEXTERM_ORT_VERSION: ${{ vars.NEXTERM_ORT_VERSION }}
-        run: node scripts/resolve-toolchain.mjs >> "$GITHUB_OUTPUT"
       - name: Generate the desktop release matrix from the native matrix
         id: desktop-matrix
         run: echo "value=$(node scripts/release-matrix.mjs)" >> "$GITHUB_OUTPUT"
@@ -108,7 +103,6 @@ jobs:
     with:
       release_version: ${{ github.ref_name }}
       updater_public_key: ${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}
-      ort_version: ${{ needs.version.outputs.ort-version }}
 
   desktop:
     name: ${{ matrix.os }}/${{ matrix.arch }} native package
@@ -133,7 +127,6 @@ jobs:
         shell: bash
         run: |
           echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          echo "NEXTERM_ORT_VERSION=${{ needs.version.outputs.ort-version }}" >> "$GITHUB_ENV"
           echo "GITHUB_TOKEN=${{ github.token }}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -205,7 +198,6 @@ jobs:
           if [ "${{ matrix.os }}" = "windows" ]; then suffix=".exe"; fi
           binary="nexterm-desktop-${{ matrix.os }}-${{ matrix.arch }}${suffix}"
           cp "target/release-work/reused-native/go-build/${binary}" "target/release-work/reused-native/go-build/${binary}.manifest.json" target/go-build/
-          cp -R target/release-work/reused-native/go-build/ai-runtime-* target/go-build/
           if [ "${{ matrix.os }}" != "windows" ]; then chmod +x "target/go-build/${binary}"; fi
           while IFS='|' read -r helper_os helper_arch helper; do
             cp "target/release-work/verified-helpers/go-build/$helper" "target/release-work/verified-helpers/go-build/$helper.manifest.json" target/go-build/
@@ -247,20 +239,6 @@ jobs:
           fi
       - name: Package the verified production desktop with updater evidence
         run: node scripts/build.mjs desktop --release --package --package-only --consume-dist=target/release-work/verified-dist/dist --dist-manifest=target/release-work/verified-dist/target/dist-manifest.json --os=${{ matrix.os }} --arch=${{ matrix.arch }} --require-evidence
-      # Extracts the finished dmg/exe/deb and loads the bundled ONNX Runtime from it
-      # (macOS also checks the hardened-runtime entitlement), so a package that
-      # builds and hashes fine but cannot load its runtime fails before upload.
-      - name: Smoke-test the packaged privacy runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          suffix=""; if [ "${{ matrix.os }}" = "windows" ]; then suffix=".exe"; fi
-          CGO_ENABLED=0 go build -o "target/release-work/ort-load-check${suffix}" ./scripts/ort-load-check
-          case "${{ matrix.os }}" in darwin) kind=macos; ext=dmg;; windows) kind=windows; ext=exe;; *) kind=linux; ext=deb;; esac
-          shopt -s nullglob
-          artifacts=(target/release-assets/nexterm-desktop_${kind}_${{ matrix.arch }}_*.${ext})
-          test "${#artifacts[@]}" -eq 1 || { echo "::error::expected exactly one packaged ${ext}, found ${#artifacts[@]}"; exit 1; }
-          node .github/scripts/verify-packaged-runtime.mjs "${artifacts[0]}" "${{ matrix.os }}" "${{ matrix.arch }}" "target/release-work/ort-load-check${suffix}"
       - name: Clean up macOS signing material (optional)
         if: always() && matrix.os == 'darwin' && env.NEXTERM_MACOS_SIGNING == 'true'
         shell: bash
@@ -300,7 +278,6 @@ jobs:
         shell: bash
         run: |
           echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          echo "NEXTERM_ORT_VERSION=${{ needs.version.outputs.ort-version }}" >> "$GITHUB_ENV"
           echo "GITHUB_TOKEN=${{ github.token }}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -329,7 +306,6 @@ jobs:
           binary="nexterm-server-linux-${{ matrix.arch }}"
           mkdir -p target/go-build
           cp "target/release-work/reused-native/go-build/${binary}" "target/release-work/reused-native/go-build/${binary}.manifest.json" target/go-build/
-          cp -R target/release-work/reused-native/go-build/ai-runtime-* target/go-build/
           chmod +x "target/go-build/${binary}"
           while IFS='|' read -r helper_os helper_arch helper; do
             cp "target/release-work/verified-helpers/go-build/$helper" "target/release-work/verified-helpers/go-build/$helper.manifest.json" target/go-build/
@@ -434,7 +410,6 @@ jobs:
         shell: bash
         run: |
           echo "NEXTERM_RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          echo "NEXTERM_ORT_VERSION=${{ needs.version.outputs.ort-version }}" >> "$GITHUB_ENV"
           echo "GITHUB_TOKEN=${{ github.token }}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

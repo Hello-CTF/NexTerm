@@ -7,12 +7,12 @@ import { buildBinary, buildHelpers, reportOnly } from "./lib/build-binary.mjs";
 
 const HELP_TEXT = `#!/usr/bin/env node
 /**
- * Go/Wails delivery entry point. Desktop and server builds stage the latest stable
- * ONNX Runtime 1.x library (NEXTERM_ORT_VERSION pins one) in ai-runtime/ (no model
- * weights are bundled). Only the Linux and macOS desktops use cgo (Wails); every other
- * binary is CGO_ENABLED=0. The Linux server loads ONNX Runtime through purego, so it is
- * dynamically linked but glibc-portable (libc/libdl/libpthread only, no GLIBC_ version
- * requirements); the Linux agent and helpers stay fully static.
+ * Go/Wails delivery entry point. The privacy engine is pure Go and built into the
+ * desktop and server binaries (no native runtime library; model weights are
+ * downloaded at run time). Only the Linux and macOS desktops use cgo (Wails); every other
+ * binary is CGO_ENABLED=0. The Linux server must be static or glibc-portable
+ * (libc/libdl/libpthread only, no GLIBC_ version requirements); the Linux agent and
+ * helpers stay fully static.
  * Artifact versions come from NEXTERM_RELEASE_VERSION (set from the release
  * tag in CI); the wails.json/package.json versions are 0.0.0 placeholders.
  *

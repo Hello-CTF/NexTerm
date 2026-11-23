@@ -60,20 +60,18 @@ func requirePayloadFile(t *testing.T, path, body string) {
 }
 
 func TestLinuxPayloadStagesAndRejectsInvalidRuntime(t *testing.T) {
-	valid := []payloadEntry{{"usr/bin/nexterm-desktop", "new", 0}, {"usr/bin/ai-runtime/licenses/ONNX-RUNTIME-LICENSE", "license", 0}, {"usr/bin/ai-runtime/libonnxruntime.so", "native", 0}}
+	marker := `{"unavailable":"the privacy engine is built into the application"}`
+	valid := []payloadEntry{{"usr/bin/nexterm-desktop", "new", 0}, {"usr/bin/ai-runtime/runtime.json", marker, 0}}
 	for _, test := range []struct {
 		name         string
 		entries      []payloadEntry
 		cancel, fail bool
 	}{
-		{name: "complete", entries: valid}, {name: "payload without runtime", entries: valid[:1], fail: true},
-		{name: "incomplete", entries: valid[:2], fail: true},
-		{name: "unavailable runtime manifest", entries: []payloadEntry{valid[0], {"usr/bin/ai-runtime/runtime.json", `{"unavailable":"no library for this target"}`, 0}}},
-		{name: "empty unavailable reason", entries: []payloadEntry{valid[0], {"usr/bin/ai-runtime/runtime.json", `{"unavailable":""}`, 0}}, fail: true},
+		{name: "legacy runtime marker", entries: valid},
+		{name: "payload without runtime", entries: valid[:1]},
 		{name: "duplicate", entries: append(append([]payloadEntry{}, valid...), valid[1]), fail: true},
 		{name: "traversal", entries: append(append([]payloadEntry{}, valid...), payloadEntry{"usr/bin/ai-runtime/../../outside", "bad", 0}), fail: true},
 		{name: "symlink", entries: append(append([]payloadEntry{}, valid...), payloadEntry{"usr/bin/ai-runtime/link", "", tar.TypeSymlink}), fail: true},
-		{name: "directory instead of library", entries: []payloadEntry{valid[0], valid[1], {"usr/bin/ai-runtime/libonnxruntime.so/child", "bad", 0}}, fail: true},
 		{name: "canceled", entries: valid, cancel: true, fail: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -94,21 +92,21 @@ func TestLinuxPayloadStagesAndRejectsInvalidRuntime(t *testing.T) {
 				}
 				requirePayloadFile(t, exe, "old")
 				requirePayloadFile(t, runtime, "old-native")
-			} else {
-				if err != nil {
-					t.Fatal(err)
-				}
-				requirePayloadFile(t, exe, "new")
-				if test.name == "unavailable runtime manifest" {
-					requirePayloadFile(t, filepath.Join(dir, "ai-runtime/runtime.json"), test.entries[1].body)
-					if _, err := os.Stat(runtime); !errors.Is(err, os.ErrNotExist) {
-						t.Fatalf("stale library survived an unavailable runtime: %v", err)
-					}
-				} else if len(test.entries) > 1 {
-					requirePayloadFile(t, runtime, "native")
-				} else {
-					requirePayloadFile(t, runtime, "old-native")
-				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			requirePayloadFile(t, exe, "new")
+			if len(test.entries) == 1 {
+				// A payload without ai-runtime leaves the existing directory alone.
+				requirePayloadFile(t, runtime, "old-native")
+				return
+			}
+			// The marker replaces the ONNX Runtime an older release installed.
+			requirePayloadFile(t, filepath.Join(dir, "ai-runtime/runtime.json"), marker)
+			if _, err := os.Stat(runtime); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("stale library survived the runtime marker: %v", err)
 			}
 		})
 	}
@@ -122,7 +120,7 @@ func TestLinuxPayloadRestoresRuntimeWhenExecutableCannotBeReplaced(t *testing.T)
 	}
 	library := filepath.Join(dir, "ai-runtime/libonnxruntime.so")
 	writePayloadFile(t, library, "old")
-	err := installLinuxPayload(context.Background(), payloadTar(t, payloadEntry{"usr/bin/nexterm-desktop", "new", 0}, payloadEntry{"usr/bin/ai-runtime/libonnxruntime.so", "ort", 0}), exe)
+	err := installLinuxPayload(context.Background(), payloadTar(t, payloadEntry{"usr/bin/nexterm-desktop", "new", 0}, payloadEntry{"usr/bin/ai-runtime/runtime.json", `{"unavailable":"built in"}`, 0}), exe)
 	if err == nil {
 		t.Fatal("expected executable replacement failure")
 	}
@@ -130,12 +128,14 @@ func TestLinuxPayloadRestoresRuntimeWhenExecutableCannotBeReplaced(t *testing.T)
 }
 
 func TestWindowsPayloadRollsBackBothImages(t *testing.T) {
-	for _, mode := range []string{"success", "installer error", "incomplete runtime", "no old runtime"} {
+	const marker = `{"unavailable":"the privacy engine is built into the application"}`
+	for _, mode := range []string{"success", "installer error", "missing executable", "no old runtime"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			exe := filepath.Join(dir, "nexterm.exe")
 			library := filepath.Join(dir, "ai-runtime/onnxruntime.dll")
 			license := filepath.Join(dir, "ai-runtime/licenses/ONNX-RUNTIME-LICENSE")
+			manifest := filepath.Join(dir, "ai-runtime/runtime.json")
 			writePayloadFile(t, exe, "old")
 			if mode != "no old runtime" {
 				writePayloadFile(t, library, "old-ort")
@@ -147,13 +147,13 @@ func TestWindowsPayloadRollsBackBothImages(t *testing.T) {
 						t.Fatalf("loaded image %s not moved aside", name)
 					}
 				}
+				writePayloadFile(t, manifest, marker)
+				if mode == "missing executable" {
+					return nil
+				}
 				writePayloadFile(t, exe, "new")
-				writePayloadFile(t, license, "new-license")
 				if mode == "installer error" || mode == "no old runtime" {
 					return errors.New("failed installer")
-				}
-				if mode != "incomplete runtime" {
-					writePayloadFile(t, library, "new-ort")
 				}
 				return nil
 			})
@@ -162,8 +162,12 @@ func TestWindowsPayloadRollsBackBothImages(t *testing.T) {
 					t.Fatal(err)
 				}
 				requirePayloadFile(t, exe, "new")
-				requirePayloadFile(t, library, "new-ort")
-				requirePayloadFile(t, license, "new-license")
+				requirePayloadFile(t, manifest, marker)
+				for _, name := range []string{library, license} {
+					if _, err := os.Stat(name); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("old runtime file %s survived: %v", name, err)
+					}
+				}
 			} else {
 				if err == nil {
 					t.Fatal("expected failure")
@@ -191,7 +195,7 @@ func TestWindowsPayloadSweepsStaleBackups(t *testing.T) {
 	writePayloadFile(t, filepath.Join(dir, "unrelated", "keep"), "keep")
 	if err := installWindowsPayload(exe, func() error {
 		writePayloadFile(t, exe, "new")
-		writePayloadFile(t, filepath.Join(dir, "ai-runtime/onnxruntime.dll"), "ort")
+		writePayloadFile(t, filepath.Join(dir, "ai-runtime/runtime.json"), `{"unavailable":"built in"}`)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -208,30 +212,21 @@ func requireNoWindowsBackups(t *testing.T, dir string) {
 	}
 }
 
-func TestWindowsPayloadAcceptsUnavailableRuntime(t *testing.T) {
-	for _, unavailable := range []bool{true, false} {
+func TestWindowsPayloadDoesNotRequireRuntime(t *testing.T) {
+	for _, withMarker := range []bool{true, false} {
 		dir := t.TempDir()
 		exe := filepath.Join(dir, "nexterm.exe")
 		writePayloadFile(t, exe, "old")
 		err := installWindowsPayload(exe, func() error {
 			writePayloadFile(t, exe, "new")
-			if unavailable {
-				writePayloadFile(t, filepath.Join(dir, "ai-runtime/runtime.json"), `{"unavailable":"no library for this target"}`)
-			} else {
-				writePayloadFile(t, filepath.Join(dir, "ai-runtime/runtime.json"), `{"files":{}}`)
+			if withMarker {
+				writePayloadFile(t, filepath.Join(dir, "ai-runtime/runtime.json"), `{"unavailable":"built in"}`)
 			}
 			return nil
 		})
-		if unavailable {
-			if err != nil {
-				t.Fatalf("unavailable runtime rejected: %v", err)
-			}
-			requirePayloadFile(t, exe, "new")
-		} else {
-			if err == nil {
-				t.Fatal("available runtime without its library accepted")
-			}
-			requirePayloadFile(t, exe, "old")
+		if err != nil {
+			t.Fatalf("payload (marker %v) rejected: %v", withMarker, err)
 		}
+		requirePayloadFile(t, exe, "new")
 	}
 }

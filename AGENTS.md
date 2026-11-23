@@ -17,7 +17,7 @@ Reply in the user's language. Keep this file limited to rules that prevent regre
 - `scripts`, `.github/scripts`, `.github/workflows`, `Taskfile.yml`: builds, tests, CI, and releases.
 - `website`: GitHub Pages site. `build`: native build configuration and mobile projects. `deploy/systemd`: server units.
 
-Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` glibc-portable dynamic binary (purego loads ONNX Runtime; agent and helpers stay fully static), and the privacy runtime uses the latest ONNX Runtime 1.x (>= 1.23) resolved by `scripts/ai-privacy-runtime.mjs`; `NEXTERM_ORT_VERSION` pins a version. Linux CI and release jobs run on hosted Ubuntu runners (GTK/WebKitGTK packages in `.github/actions/linux-gui-deps`); the Linux desktop needs GTK >= 4.14 to compile and run. Exact versions and commands live in `go.mod`, `package.json`, and the workflows.
+Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` binary (static, or glibc-portable if dynamic; agent and helpers stay fully static). The AI privacy engine is pure Go (onnx-gomlx on gomlx's Go backend) built into the desktop, server and mobile binaries with no native runtime, and every Go build and test uses `GOEXPERIMENT=simd` for its vector kernels (Taskfile, CI workflows, `scripts/build.mjs` and the mobile Go builds set it). Linux debs and the Windows installer keep only `ai-runtime/runtime.json` declaring the runtime unavailable so updaters from 1.4.6-rc.3 and earlier accept them. Linux CI and release jobs run on hosted Ubuntu runners (GTK/WebKitGTK packages in `.github/actions/linux-gui-deps`); the Linux desktop needs GTK >= 4.14 to compile and run. Exact versions and commands live in `go.mod`, `package.json`, and the workflows.
 
 ## Working Rules
 

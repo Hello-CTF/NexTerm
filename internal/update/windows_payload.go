@@ -15,7 +15,8 @@ const windowsBackupPrefix = ".nexterm-update-old-"
 // Windows refuses to rename a directory that contains a mapped image, so the
 // runtime files move one by one while their directory stays in place.
 // Successful backups remain until the next install sweeps them, because the
-// running process may still hold the old executable and ONNX Runtime open.
+// running process may still hold the old executable (and, when updating from a
+// release before 1.4.6-rc.4, its ONNX Runtime) open.
 func installWindowsPayload(executable string, install func() error) error {
 	directory := filepath.Dir(executable)
 	sweepWindowsBackups(directory)
@@ -52,18 +53,12 @@ func installWindowsPayload(executable string, install func() error) error {
 	if err := install(); err != nil {
 		return rollback(err)
 	}
-	required := []string{executable}
-	if !runtimeUnavailable(runtimeTarget) {
-		required = append(required, filepath.Join(runtimeTarget, "onnxruntime.dll"))
+	info, err := os.Lstat(executable)
+	if err != nil {
+		return rollback(fmt.Errorf("安装完成后文件不可用 %s: %w", executable, err))
 	}
-	for _, name := range required {
-		info, err := os.Lstat(name)
-		if err != nil {
-			return rollback(fmt.Errorf("安装完成后文件不可用 %s: %w", name, err))
-		}
-		if !info.Mode().IsRegular() {
-			return rollback(fmt.Errorf("安装完成后文件类型无效 %s", name))
-		}
+	if !info.Mode().IsRegular() {
+		return rollback(fmt.Errorf("安装完成后文件类型无效 %s", executable))
 	}
 	// Best effort only: loaded Windows images cannot be deleted until they are
 	// unmapped; sweepWindowsBackups removes them on a later install.

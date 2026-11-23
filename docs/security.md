@@ -26,13 +26,13 @@
 
 ## AI 信息脱敏
 
-默认关闭。在「设置 → AI 信息脱敏」下载最新发布的 `QuantumNous/astrlink-guard` 模型（从 Hugging Face 下载，权重不随应用分发），选择 INT8、FP32 或 FP16 后启用。
+默认关闭。在「设置 → AI 信息脱敏」下载最新发布的 `QuantumNous/astrlink-guard` 模型（FP32 权重约 147 MB，从 Hugging Face 下载，不随应用分发）后启用。
 
 每个模型配置可在「高级参数 → AI 信息脱敏」中覆盖这个开关：跟随全局设置、始终开启或始终关闭。始终开启同样需要已选择本地模型，否则该模型的请求会被阻止；始终关闭的模型会以明文接收请求。AI 助手输入栏的盾牌按钮可以只对当前对话临时开启或关闭脱敏，从下一条消息起生效，优先于模型配置和全局开关；进行中的运行在重启恢复后仍沿用开始时的选择。
 
 - 启用后模型或运行时不可用会阻止请求，不会退回明文发送；图片等非文本内容不会脱敏，会原样发送给 AI 服务；识别可能遗漏敏感信息。
 - 同一会话内占位稳定，回复和工具参数会自动还原。
-- 本地推理需要 Linux（glibc 2.27 或更新并带 libstdc++，不支持 musl）、Windows、macOS 13.4+、iOS/iPadOS 15.1+ 或 Android 7.0+；ONNX Runtime 不再发布的平台（目前为 Intel Mac）上脱敏不可用，应用其余功能不受影响。
+- 推理由内置于应用的纯 Go 引擎完成，不需要任何原生运行时库，在应用支持的所有平台上都可用。
 - 检测在运行 AI 的设备执行，浏览器模式在服务端执行。
 
 实现复用 [AstrLink](https://github.com/Calcium-Ion/AstrLink)，来源版本和许可证见[声明](../internal/ai/privacy/third_party/ASTRLINK_NOTICE.md)。

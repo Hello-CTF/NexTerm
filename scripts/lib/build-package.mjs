@@ -1,14 +1,12 @@
 // Native desktop packaging: Linux deb, macOS dmg, Windows NSIS installer.
 import fs from "node:fs";
 import path from "node:path";
-import { runtimeLibrary, fileDigest } from "./privacy-runtime.mjs";
 import { resolveMakensis } from "./makensis.mjs";
 import { helperTargets } from "../../.github/scripts/helper-matrix.mjs";
-import { loadManifest } from "./build-manifest.mjs";
 import { HOST_OS, LINUX_DESKTOP_ENTRY, ROOT, SOURCE_DATE_EPOCH, VERSION, VERSION_INFO, archiveTool, die, log, option, run, wailsConfig } from "./build-context.mjs";
 import { runWails } from "./build-wails.mjs";
 import { validateBinaryForPackaging } from "./build-evidence.mjs";
-import { copyPrivacyRuntime, privacyRuntimeDirectory } from "./build-privacy.mjs";
+import { writeLegacyRuntimeMarker } from "./legacy-runtime-marker.mjs";
 import { inspectBinary } from "./build-inspect.mjs";
 import { runRetryingBusy, sleepSync } from "./retry-busy.mjs";
 
@@ -77,7 +75,7 @@ function packageLinuxDesktop(binary, goarch) {
   fs.mkdirSync(assets, { recursive: true });
   fs.copyFileSync(binary, path.join(dataDir, "usr/bin/nexterm-desktop"));
   copyHelpers(path.join(dataDir, "usr/bin"));
-  copyPrivacyRuntime(binary, path.join(dataDir, "usr/bin/ai-runtime"), "linux", goarch);
+  writeLegacyRuntimeMarker(path.join(dataDir, "usr/bin/ai-runtime"));
   fs.copyFileSync(path.join(ROOT, "public/brand/nexterm-mark-256.png"), path.join(dataDir, "usr/share/icons/hicolor/256x256/apps/nexterm.png"));
   fs.copyFileSync(path.join(ROOT, "LICENSE"), path.join(dataDir, "usr/share/doc/nexterm/copyright"));
   fs.writeFileSync(path.join(dataDir, LINUX_DESKTOP_ENTRY), `[Desktop Entry]\nType=Application\nName=NexTerm\nComment=SSH / SFTP / Docker / database operations terminal\nExec=nexterm-desktop %u\nIcon=nexterm\nTerminal=false\nCategories=System;TerminalEmulator;\nMimeType=x-scheme-handler/nexterm;\nStartupWMClass=${wailsConfig.info.productIdentifier}\n`);
@@ -118,14 +116,6 @@ function packageDarwin(binary, goarch) {
   fs.copyFileSync(binary, path.join(app, "Contents/MacOS/NexTerm"));
   fs.chmodSync(path.join(app, "Contents/MacOS/NexTerm"), 0o755);
   copyDarwinHelpers(app);
-  const runtimeDirectory = path.join(app, "Contents/Frameworks/ai-runtime");
-  const runtimeResources = path.join(app, "Contents/Resources/ai-runtime");
-  copyPrivacyRuntime(binary, runtimeResources, "darwin", goarch);
-  const runtimeAvailable = fs.existsSync(path.join(runtimeResources, runtimeLibrary("darwin")));
-  if (runtimeAvailable) {
-    fs.mkdirSync(runtimeDirectory, { recursive: true });
-    fs.renameSync(path.join(runtimeResources, runtimeLibrary("darwin")), path.join(runtimeDirectory, runtimeLibrary("darwin")));
-  }
   const icon = path.join(ROOT, "public/brand/icon.icns");
   if (!fs.existsSync(icon)) die("macOS icon.icns asset is missing");
   fs.copyFileSync(icon, path.join(app, "Contents/Resources/icon.icns"));
@@ -134,16 +124,8 @@ function packageDarwin(binary, goarch) {
   run("plutil", ["-lint", path.join(app, "Contents/Info.plist")]);
   const signIdentity = process.env.NEXTERM_MACOS_SIGN_IDENTITY || "-";
   const signArgs = ["--force", "--sign", signIdentity];
-  // The hardened runtime enforces library validation; the entitlement lets the app dlopen its bundled ONNX Runtime.
-  if (signIdentity !== "-") signArgs.push("--options", "runtime", "--timestamp", "--entitlements", path.join(ROOT, "build/darwin/entitlements.plist"));
+  if (signIdentity !== "-") signArgs.push("--options", "runtime", "--timestamp");
   run("codesign", [...signArgs, "--deep", app]);
-  // Signing changes Mach-O bytes; retain provenance and record the signed hashes.
-  const runtimeManifestPath = path.join(runtimeResources, "runtime.json");
-  const runtimeManifest = loadManifest(runtimeManifestPath);
-  runtimeManifest.unsigned_manifest_sha256 = fileDigest(runtimeManifestPath);
-  if (runtimeAvailable) runtimeManifest.files[runtimeLibrary("darwin")] = fileDigest(path.join(runtimeDirectory, runtimeLibrary("darwin")));
-  fs.writeFileSync(runtimeManifestPath, `${JSON.stringify(runtimeManifest, null, 2)}\n`);
-  run("codesign", [...signArgs, app]);
   run("codesign", ["--verify", "--deep", "--strict", app]);
   fs.symlinkSync("/Applications", path.join(work, "Applications"));
   fs.mkdirSync(assets, { recursive: true });
@@ -197,9 +179,12 @@ function packageWindows(binary, goarch) {
   const icon = path.join(ROOT, "public/brand/icon.ico");
   if (!fs.existsSync(icon)) die("Windows icon.ico asset is missing");
   const installer = path.join(assets, `nexterm-desktop_windows_${goarch}_${VERSION}.exe`);
+  const legacyMarker = path.join(work, "ai-runtime");
+  fs.rmSync(legacyMarker, { recursive: true, force: true });
+  writeLegacyRuntimeMarker(legacyMarker);
   const defines = [
     `NEXTERM_BINARY=${binary}`,
-    `NEXTERM_AI_RUNTIME=${privacyRuntimeDirectory(binary, "windows", goarch)}`,
+    `NEXTERM_LEGACY_RUNTIME_MARKER=${legacyMarker}`,
     `NEXTERM_VERSION=${VERSION}`,
     `NEXTERM_NUMERIC_VERSION=${VERSION_INFO.core}.0`,
     `NEXTERM_OUT=${installer}`,

@@ -97,7 +97,7 @@ const GLIBC_NEEDED = new Set(["libc.so.6", "libdl.so.2", "libpthread.so.0"]);
 const GLIBC_INTERPRETER = { amd64: "/lib64/ld-linux-x86-64.so.2", arm64: "/lib/ld-linux-aarch64.so.1" };
 const GLIBC_MAX_VERSION = [2, 17];
 
-// A purego (CGO_ENABLED=0) binary is dynamically linked against glibc only; this keeps it runnable on any glibc Linux.
+// A CGO_ENABLED=0 binary is static, or dynamically linked against glibc only; either runs on any glibc Linux.
 export function glibcPortableProblems(inspected, goarch) {
   if (inspected.static) return [];
   const problems = [];

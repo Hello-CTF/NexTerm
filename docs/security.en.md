@@ -26,13 +26,13 @@ Before installing an update, the desktop app verifies the Minisign signature of 
 
 ## AI privacy redaction
 
-Off by default. In Settings → AI privacy redaction (AI 信息脱敏), download the latest released `QuantumNous/astrlink-guard` model (downloaded from Hugging Face; weights are not bundled), select INT8, FP32, or FP16, then enable it.
+Off by default. In Settings → AI privacy redaction (AI 信息脱敏), download the latest released `QuantumNous/astrlink-guard` model (FP32 weights, about 147 MB, downloaded from Hugging Face and not bundled), then enable it.
 
 Each model profile can override this switch under Advanced parameters → AI data masking (AI 信息脱敏): follow the global setting, always on, or always off. Always on also needs a chosen local model, otherwise that model's requests are blocked; a model set to always off receives requests in plaintext. The shield button in the AI assistant's input bar turns redaction on or off for the current conversation only, from its next message, ahead of the model profile and the global switch; a run restored after a restart keeps the choice it started with.
 
 - When enabled, an unavailable model or runtime blocks requests instead of sending plaintext; images and other non-text content are not redacted and go to the AI provider unchanged; detection can miss sensitive information.
 - Placeholders stay stable within a conversation, and responses and tool arguments are restored automatically.
-- Local inference needs Linux (glibc 2.27 or newer with libstdc++; musl is not supported), Windows, macOS 13.4+, iOS/iPadOS 15.1+, or Android 7.0+. Redaction is unavailable on platforms ONNX Runtime no longer publishes (currently Intel Macs); the rest of the app works.
+- Inference runs in a pure-Go engine built into the app, with no native runtime library, on every platform the app supports.
 - Detection runs on the device running AI, or on the server in browser mode.
 
 The implementation reuses [AstrLink](https://github.com/Calcium-Ion/AstrLink); see the [source and license notice](../internal/ai/privacy/third_party/ASTRLINK_NOTICE.md).

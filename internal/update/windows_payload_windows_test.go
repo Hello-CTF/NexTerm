@@ -11,7 +11,7 @@ import (
 )
 
 // loadRuntimeDLL copies a real system DLL to ai-runtime/onnxruntime.dll and
-// maps it, reproducing the running desktop's hold on ONNX Runtime.
+// maps it, reproducing the hold a desktop before 1.4.6-rc.4 kept on ONNX Runtime.
 func loadRuntimeDLL(t *testing.T, dir string) (string, []byte, *syscall.DLL) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(os.Getenv("SystemRoot"), "System32", "version.dll"))

@@ -999,20 +999,12 @@ install_web() {
   rm -rf "$OPT_DIR/web.old"
 }
 
-install_ai_runtime() {
+# The privacy engine is built into nexterm-server. Releases before 1.4.6-rc.4
+# installed ONNX Runtime in ai-runtime/; the rollback backup keeps a copy so a
+# failed upgrade restores it together with the old binary.
+remove_legacy_ai_runtime() {
   fail_at ai-runtime
-  rm -rf "$OPT_DIR/ai-runtime.new"
-  if [ -d "$SOURCE_DIR/ai-runtime" ]; then
-    cp -R "$SOURCE_DIR/ai-runtime" "$OPT_DIR/ai-runtime.new"
-  fi
-  rm -rf "$OPT_DIR/ai-runtime.old"
-  if [ -d "$OPT_DIR/ai-runtime" ]; then mv "$OPT_DIR/ai-runtime" "$OPT_DIR/ai-runtime.old"; fi
-  if [ -d "$OPT_DIR/ai-runtime.new" ]; then
-    mv "$OPT_DIR/ai-runtime.new" "$OPT_DIR/ai-runtime"
-  else
-    log "payload has no AI privacy runtime; optional local AI redaction will be unavailable"
-  fi
-  rm -rf "$OPT_DIR/ai-runtime.old"
+  rm -rf "$OPT_DIR/ai-runtime.new" "$OPT_DIR/ai-runtime.old" "$OPT_DIR/ai-runtime"
 }
 
 legacy_capture_failed() {
@@ -1401,18 +1393,12 @@ bootstrap_admin() {
 # Run the payload binary before mutating anything so an unsupported C library or
 # CPU fails the install instead of leaving a service that cannot start.
 preflight_server_binary() {
-  local output rc=0 missing
+  local output rc=0
   output="$("$SOURCE_DIR/nexterm-server" --version 2>&1)" || rc=$?
   if [ "$rc" -ne 0 ]; then
     die "payload nexterm-server cannot run on this host (exit $rc): ${output:-no output}; it requires a matching CPU architecture and a glibc-based Linux (musl distributions such as Alpine are not supported)"
   fi
   log "payload server version: ${output:-unknown}"
-  if [ -f "$SOURCE_DIR/ai-runtime/libonnxruntime.so" ] && command -v ldd >/dev/null 2>&1; then
-    missing="$(ldd "$SOURCE_DIR/ai-runtime/libonnxruntime.so" 2>/dev/null | grep 'not found' || true)"
-    if [ -n "$missing" ]; then
-      log "WARNING: optional local AI redaction will be unavailable until these ONNX Runtime dependencies are installed: $(printf '%s' "$missing" | tr -s ' \t\n' ' ')"
-    fi
-  fi
 }
 
 # 1.3.0 changed the sync protocol: pre-1.3.0 devices and servers can no longer
@@ -1452,12 +1438,6 @@ run_install() {
     [ -f "$SOURCE_DIR/$f" ] || die "payload is missing $f (run this script from an extracted NexTerm server archive, or pass --source DIR)"
   done
   [ -f "$SOURCE_DIR/web/index.html" ] || die "payload is missing web/index.html"
-  if [ -d "$SOURCE_DIR/ai-runtime" ]; then
-    # A target without an upstream ONNX Runtime build ships only runtime.json with an "unavailable" reason.
-    if [ ! -f "$SOURCE_DIR/ai-runtime/libonnxruntime.so" ] && ! grep -q '"unavailable"' "$SOURCE_DIR/ai-runtime/runtime.json" 2>/dev/null; then
-      die "payload is missing ai-runtime/libonnxruntime.so"
-    fi
-  fi
   preflight_server_binary
   detect_platform
   require_systemctl
@@ -1501,7 +1481,7 @@ run_install() {
   fi
   install_binaries
   install_web
-  install_ai_runtime
+  remove_legacy_ai_runtime
   install_units
   ensure_env_files
   ensure_master_key

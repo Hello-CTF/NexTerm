@@ -95,21 +95,16 @@ tasks:
 
         export CGO_ENABLED=1
         export GOOS=android
+        # The pure-Go privacy engine needs the SIMD kernels for usable speed.
+        case ",${GOEXPERIMENT:-}," in *,simd,*) ;; *) export GOEXPERIMENT="${GOEXPERIMENT:+$GOEXPERIMENT,}simd" ;; esac
 
         mkdir -p {{.BIN_DIR}}
         mkdir -p build/android/app/src/main/jniLibs/$JNI_DIR
 
         go build -buildmode=c-shared -overlay build/android/overlay.json {{.BUILD_FLAGS}} \
           -o build/android/app/src/main/jniLibs/$JNI_DIR/libwails.so ./cmd/nexterm-desktop
-        PRIVACY_RUNTIME="build/android/gen/privacy-runtime/$JNI_DIR"
-        rm -rf "$PRIVACY_RUNTIME"
-        node scripts/ai-privacy-runtime.mjs --os=android --arch="$GOARCH" --output="$PRIVACY_RUNTIME"
-        cp "$PRIVACY_RUNTIME/libonnxruntime.so" "build/android/app/src/main/jniLibs/$JNI_DIR/libonnxruntime.so"
-        PRIVACY_ASSETS="build/android/gen/privacy-assets/ai-runtime/$JNI_DIR"
-        rm -rf "$PRIVACY_ASSETS"
-        mkdir -p "$PRIVACY_ASSETS"
-        cp -R "$PRIVACY_RUNTIME/licenses" "$PRIVACY_ASSETS/licenses"
-        cp "$PRIVACY_RUNTIME/runtime.json" "$PRIVACY_ASSETS/runtime.json"
+        # Builds before 1.4.6-rc.4 staged ONNX Runtime here; never package a stale copy.
+        rm -rf build/android/gen/privacy-assets build/android/gen/privacy-runtime "build/android/app/src/main/jniLibs/$JNI_DIR/libonnxruntime.so"
     vars:
       BUILD_FLAGS:
         sh: 'node scripts/mobile-source.mjs ldflags --platform=android --production={{.PRODUCTION | default "false"}}'
