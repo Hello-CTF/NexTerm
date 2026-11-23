@@ -34,6 +34,7 @@ vi.mock("@devolutions/iron-remote-desktop-rdp", () => ({
   init: vi.fn(async () => undefined),
   Backend: {},
   displayControl: vi.fn(() => ({})),
+  colorDepth: vi.fn(() => ({})),
 }));
 
 import { VncClient } from "../../features/remote/VncClient";
