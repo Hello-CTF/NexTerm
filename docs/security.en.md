@@ -15,7 +15,7 @@ This is not end-to-end encryption: the password is sent to the server at sign-in
 
 ## Update signatures
 
-Before installing an update, the desktop app verifies the Minisign signature of `SHA256SUMS` and checks the installer against it. The device agent's self-upgrade verifies the Minisign signature too, and development builds without an embedded signing key refuse to self-upgrade. Windows installers carry no Authenticode signature.
+Before installing an update, the desktop app verifies the Minisign signature of `SHA256SUMS` and checks the installer against it; development builds without an embedded signing key still report new versions but refuse to install them. The device agent's self-upgrade verifies the Minisign signature too, and development builds without an embedded signing key refuse to self-upgrade. Windows installers carry no Authenticode signature.
 
 ## Server
 
