@@ -7,6 +7,8 @@ import type { Workspace } from "../../app/store";
 
 const mocks = vi.hoisted(() => ({
   reopen: vi.fn(),
+  connect: vi.fn(),
+  assetGet: vi.fn(),
   listLive: vi.fn(),
   listDurable: vi.fn(),
   sessionList: vi.fn(),
@@ -14,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../app/store", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../app/store")>();
-  return { ...actual, reopenRemoteDesktopTab: mocks.reopen };
+  return { ...actual, reopenRemoteDesktopTab: mocks.reopen, connectAsset: mocks.connect };
 });
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -23,6 +25,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     ...actual,
     terminalApi: { ...actual.terminalApi, listLive: mocks.listLive, listDurable: mocks.listDurable },
     sessionApi: { ...actual.sessionApi, list: mocks.sessionList },
+    assetApi: { ...actual.assetApi, get: mocks.assetGet },
   };
 });
 
@@ -58,6 +61,8 @@ function text(): string {
 
 beforeEach(() => {
   mocks.reopen.mockReset().mockResolvedValue({ ok: true });
+  mocks.connect.mockReset().mockResolvedValue({ ok: true });
+  mocks.assetGet.mockReset().mockResolvedValue({ id: "db-asset", name: "orders", kind: "postgres" });
   mocks.listLive.mockReset().mockResolvedValue([]);
   mocks.listDurable.mockReset().mockResolvedValue([]);
   mocks.sessionList.mockReset().mockResolvedValue([]);
@@ -241,15 +246,67 @@ describe("WorkspaceEmpty", () => {
     expect(buttons()).toEqual([]);
   });
 
-  it("offers a terminal button in database and tools workspaces", () => {
-    for (const kind of ["db", "tools"] as const) {
-      useUi.setState({ workspaces: [workspace({ kind })] });
+  describe("database workspace", () => {
+    const dbWorkspace = (patch: Partial<Workspace> = {}) =>
+      workspace({
+        kind: "db",
+        assetId: "db-asset",
+        panes: [
+          { id: "p0", tabs: [], activeTabId: null },
+          { id: "p1", tabs: [], activeTabId: null },
+        ],
+        activePaneId: "p0",
+        ...patch,
+      });
+
+    it("reopens the database into this pane instead of offering a terminal", async () => {
+      let focusedPane: string | undefined;
+      mocks.connect.mockImplementation(async () => {
+        focusedPane = useUi.getState().workspaces[0]?.activePaneId;
+        return { ok: true };
+      });
+      useUi.setState({ workspaces: [dbWorkspace()] });
       const onNew = render();
-      expect(text()).not.toContain("文件树");
-      expect(buttons()).toEqual(["新建终端"]);
+      expect(text()).not.toContain("终端");
+      expect(buttons()).toEqual(["重新打开数据库"]);
+
       click(view!.container.querySelector("button")!);
-      expect(onNew).toHaveBeenCalledTimes(1);
-      view!.unmount();
-    }
+      await flush();
+
+      expect(mocks.assetGet).toHaveBeenCalledWith("db-asset");
+      expect(mocks.connect).toHaveBeenCalledWith(expect.objectContaining({ id: "db-asset" }));
+      expect(focusedPane).toBe("p1");
+      expect(onNew).not.toHaveBeenCalled();
+    });
+
+    it("offers nothing to reopen while the database is open in another pane", () => {
+      useUi.setState({
+        workspaces: [
+          dbWorkspace({
+            panes: [
+              { id: "p0", tabs: [{ id: "d1", kind: "db", title: "PostgreSQL", connId: "c1", closable: true }], activeTabId: "d1" },
+              { id: "p1", tabs: [], activeTabId: null },
+            ],
+          }),
+        ],
+      });
+      render();
+      expect(buttons()).toEqual([]);
+    });
+
+    it("offers nothing to reopen when the asset was deleted", () => {
+      useUi.setState({ workspaces: [dbWorkspace({ deletedTarget: true })] });
+      render();
+      expect(text()).toContain("已删除");
+      expect(buttons()).toEqual([]);
+    });
+  });
+
+  it("offers no terminal in a tools workspace", () => {
+    useUi.setState({ workspaces: [workspace({ kind: "tools" })] });
+    const onNew = render();
+    expect(text()).toContain("此窗格暂无内容");
+    expect(buttons()).toEqual([]);
+    expect(onNew).not.toHaveBeenCalled();
   });
 });
