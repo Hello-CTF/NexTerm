@@ -207,7 +207,7 @@ export function DockerMergedLogs({
         <div className="flex shrink-0 flex-wrap gap-x-3 gap-y-1 border-b border-neutral-800/70 px-3 py-1.5 text-[11px]">
           {containers.map((container, index) => (
             <span key={container.id} className={`font-mono ${PALETTE[index % PALETTE.length]}`} title={failed[index]}>
-              {container.name}{failed[index] !== undefined && t("（附加失败）")}
+              {container.name}{failed[index] !== undefined && t("（日志读取失败）")}
             </span>
           ))}
         </div>

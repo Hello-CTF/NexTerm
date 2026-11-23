@@ -148,7 +148,7 @@ export function AgentRosterPanel({
         const { tabId } = await api.attach(entry.handle);
         onOpened?.(tabId, entry);
       } catch (e) {
-        pushToast("error", t("未能附加子代理：{value}", { value: describeError(e) }));
+        pushToast("error", t("未能接入子代理：{value}", { value: describeError(e) }));
       }
     });
 
@@ -372,14 +372,14 @@ export function AgentRosterPanel({
                     confirmedDead
                       ? deadReason(entry.presence)
                       : unknownTerminal
-                        ? t("子代理状态未知，暂时不能附加")
+                        ? t("子代理状态未知，暂时不能接入")
                         : entry.releasePending
-                          ? t("正在释放，无法附加")
-                          : t("附加到现有终端会话")
+                          ? t("正在释放，无法接入")
+                          : t("将子代理接入当前 AI 对话并打开其终端")
                   }
                   onClick={() => void attachEntry(entry)}
                 >
-                  {t("附加")}
+                  {t("接入对话")}
                 </button>
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"
