@@ -7,6 +7,7 @@ import {
   type ProjectInventory,
 } from "./projectFocus";
 import {
+  closeWorkspaces,
   reconnectWorkspaceConnection,
   sessionStatusText,
   useUi,
@@ -29,14 +30,6 @@ function workspaceIcon(workspace: Workspace) {
   if (workspace.kind === "db") return workspace.dbKind === "redis" ? IconLayers : IconDatabase;
   if (workspace.kind === "tools") return IconSettings;
   return assetIcon(workspace.assetKind ?? "ssh");
-}
-
-async function closeWorkspaces(targets: Workspace[]): Promise<void> {
-  for (const target of targets) {
-    // A target closed by another path while an earlier dialog was open is not a decline.
-    if (!useUi.getState().workspaces.some((candidate) => candidate.id === target.id)) continue;
-    if (!(await useUi.getState().closeWorkspace(target.id))) break;
-  }
 }
 
 interface WorkspaceStripTabProps {
@@ -102,21 +95,21 @@ function WorkspaceStripTab({
         label: t("关闭工作区"),
         icon: <IconClose size={13} />,
         disabled: !workspace.closable,
-        onSelect: () => void closeWorkspaces([workspace]),
+        onSelect: () => void closeWorkspaces([workspace.id]),
       },
       {
         kind: "item",
         label: t("关闭左侧全部工作区"),
         icon: <IconClose size={13} />,
         disabled: closableLeft.length === 0,
-        onSelect: () => void closeWorkspaces(closableLeft),
+        onSelect: () => void closeWorkspaces(closableLeft.map((item) => item.id)),
       },
       {
         kind: "item",
         label: t("关闭右侧全部工作区"),
         icon: <IconClose size={13} />,
         disabled: closableRight.length === 0,
-        onSelect: () => void closeWorkspaces(closableRight),
+        onSelect: () => void closeWorkspaces(closableRight.map((item) => item.id)),
       },
     );
     setMenu({ x: event.clientX, y: event.clientY, items });

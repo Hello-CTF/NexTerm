@@ -224,14 +224,15 @@ describe("ProjectWorkspaceStrip close menu", () => {
     expect(closeWorkspace.mock.calls).toEqual([["ws-root"], ["ws-child"]]);
   });
 
-  it("closes batches in order and stops when a workspace close is declined", async () => {
-    const closeWorkspace = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+  it("closes the whole side as one batch in strip order", async () => {
+    const closeWorkspace = vi.fn().mockResolvedValue(true);
     renderBatch(closeWorkspace);
     openMenu("ws-current");
     click(menuItem("关闭右侧全部工作区"));
     await flush();
 
-    expect(closeWorkspace.mock.calls).toEqual([["ws-right-1"], ["ws-right-2"]]);
+    expect(closeWorkspace.mock.calls.map(([id]) => id)).toEqual(["ws-right-1", "ws-right-2", "ws-right-3"]);
+    expect(closeWorkspace.mock.calls.every(([, options]) => options?.confirmed !== undefined)).toBe(true);
   });
 
   it("skips workspaces that are not closable", async () => {
@@ -245,8 +246,8 @@ describe("ProjectWorkspaceStrip close menu", () => {
     expect(closeWorkspace.mock.calls).toEqual([["ws-right-1"]]);
   });
 
-  it("closes left workspaces in strip order and stops when one is declined", async () => {
-    const closeWorkspace = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+  it("closes left workspaces in strip order", async () => {
+    const closeWorkspace = vi.fn().mockResolvedValue(true);
     renderBatch(closeWorkspace, [
       workspace("ws-left-1", "root-asset"),
       workspace("ws-left-2", "root-asset"),
@@ -257,22 +258,7 @@ describe("ProjectWorkspaceStrip close menu", () => {
     click(menuItem("关闭左侧全部工作区"));
     await flush();
 
-    expect(closeWorkspace.mock.calls).toEqual([["ws-left-1"], ["ws-left-2"]]);
-  });
-
-  it("does not treat a target closed during the batch as a decline", async () => {
-    const closeWorkspace = vi.fn(async (id: string) => {
-      if (id === "ws-right-1") {
-        useUi.setState({ workspaces: useUi.getState().workspaces.filter((item) => item.id !== "ws-right-2") });
-      }
-      return true;
-    });
-    renderBatch(closeWorkspace);
-    openMenu("ws-current");
-    click(menuItem("关闭右侧全部工作区"));
-    await flush();
-
-    expect(closeWorkspace.mock.calls.map(([id]) => id)).toEqual(["ws-right-1", "ws-right-3"]);
+    expect(closeWorkspace.mock.calls.map(([id]) => id)).toEqual(["ws-left-1", "ws-left-2", "ws-left-3"]);
   });
 
   it("keeps the reconnect item beside the close items", () => {
@@ -300,11 +286,11 @@ describe("ProjectWorkspaceStrip close menu", () => {
       };
     }
 
-    it("confirms a connected remote desktop in the batch and closes it once accepted", async () => {
+    it("confirms the connected remote desktops of the batch once and closes them all once accepted", async () => {
       dialogMocks.ask.mockResolvedValue(true);
-      const remote = remoteWorkspace("ws-remote");
       setRemoteStatus("ws-remote-tab", "connected");
-      renderBatch(realCloseWorkspace, [workspace("ws-current", "root-asset"), remote]);
+      setRemoteStatus("ws-remote-2-tab", "connected");
+      renderBatch(realCloseWorkspace, [workspace("ws-current", "root-asset"), remoteWorkspace("ws-remote"), remoteWorkspace("ws-remote-2")]);
       openMenu("ws-current");
       click(menuItem("关闭右侧全部工作区"));
       await flushUntil(() => dialogMocks.ask.mock.calls.length > 0);
@@ -315,9 +301,10 @@ describe("ProjectWorkspaceStrip close menu", () => {
       expect(useUi.getState().workspaces.map((item) => item.id)).toEqual(["ws-current"]);
     });
 
-    it("keeps the remote desktop and stops the batch when the confirmation is declined", async () => {
+    it("keeps every workspace of the batch when the single confirmation is declined", async () => {
       dialogMocks.ask.mockResolvedValue(false);
       setRemoteStatus("ws-remote-tab", "connected");
+      setRemoteStatus("ws-remote-2-tab", "connected");
       renderBatch(realCloseWorkspace, [workspace("ws-current", "root-asset"), remoteWorkspace("ws-remote"), remoteWorkspace("ws-remote-2")]);
       openMenu("ws-current");
       click(menuItem("关闭右侧全部工作区"));
