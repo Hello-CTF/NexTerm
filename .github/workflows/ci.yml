@@ -51,6 +51,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       native-matrix: ${{ steps.plan.outputs.matrix }}
       unit-matrix: ${{ steps.plan.outputs.unitMatrix }}
+      mobile-matrix: ${{ steps.plan.outputs.mobileMatrix }}
       scope: ${{ steps.plan.outputs.scope }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -297,6 +298,8 @@ jobs:
         if: ${{ fromJSON(needs.version.outputs.scope).race && matrix.shard == 0 }}
         run: go test -count=1 ./internal/terminal -run '^(TestThroughputAcceptanceWorkload|TestHighVolumeFeedMemoryBounded)$'
 
+  # The Go test shards already run every dbtest fixture on SQLite (the default backend), so CI has no separate SQLite
+  # leg; task test:database:sqlite remains the local no-service check.
   database:
     needs: version
     if: fromJSON(needs.version.outputs.scope).database
@@ -312,18 +315,19 @@ jobs:
             port: 5432
             health: pg_isready -h 127.0.0.1 -U nexterm -d nexterm_test
             dsn: postgres://nexterm:nexterm@127.0.0.1:5432/nexterm_test?sslmode=disable
+            data: /var/lib/postgresql/data
           - backend: mysql
             image: mysql:8.4@sha256:24989179f58856db763f418010c1169fecc944e3ec1ea7e921572d83eb070f70
             port: 3306
             health: mysqladmin ping --silent -h 127.0.0.1
             dsn: root:nexterm_root@tcp(127.0.0.1:3306)/nexterm_test?parseTime=true
+            data: /var/lib/mysql
           - backend: mariadb
             image: mariadb:11.4@sha256:250e1609e93c0e6aecf64bfbab2d84d5e89d2481540fe77447ff6c855c3b1873
             port: 3306
             health: healthcheck.sh --connect --innodb_initialized
             dsn: root:nexterm_root@tcp(127.0.0.1:3306)/nexterm_test?parseTime=true
-          - backend: sqlite
-            dsn: ""
+            data: /var/lib/mysql
     env:
       NEXTERM_TEST_DB_BACKEND: ${{ matrix.backend }}
       NEXTERM_TEST_DB_DSN: ${{ matrix.dsn }}
@@ -336,11 +340,13 @@ jobs:
         with:
           build-cache: test
           save-build-cache: "false"
+      # The data directory lives in memory: each fixture creates and drops a database, and durable writes made the
+      # MySQL leg the slowest database job.
       - name: Start the database container
-        if: matrix.backend != 'sqlite'
         run: |
           docker run --detach --name nexterm-test-db \
             --publish "${{ matrix.port }}:${{ matrix.port }}" \
+            --tmpfs "${{ matrix.data }}" \
             --env POSTGRES_USER=nexterm \
             --env POSTGRES_PASSWORD=nexterm \
             --env POSTGRES_DB=nexterm_test \
@@ -359,12 +365,7 @@ jobs:
             --health-timeout 5s \
             --health-retries 20 \
             "${{ matrix.image }}"
-      - name: Install the pinned task runner
-        run: |
-          go install github.com/go-task/task/v3/cmd/task@v3.45.5
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Wait for the database container
-        if: matrix.backend != 'sqlite'
         run: |
           for _ in {1..60}; do
             status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' nexterm-test-db)"
@@ -382,14 +383,13 @@ jobs:
           echo "database did not become healthy" >&2
           docker logs nexterm-test-db
           exit 1
+      # The same command as task test:database, without installing the task runner.
       - name: Run the shared database contracts
         run: |
-          if [ -n "$NEXTERM_TEST_DB_DSN" ]; then
-            echo "::add-mask::$NEXTERM_TEST_DB_DSN"
-          fi
-          task test:database
+          echo "::add-mask::$NEXTERM_TEST_DB_DSN"
+          go run ./scripts/test-database
       - name: Stop the database container
-        if: always() && matrix.backend != 'sqlite'
+        if: always()
         run: |
           if docker container inspect nexterm-test-db >/dev/null 2>&1; then
             docker rm --force --volumes nexterm-test-db
@@ -421,7 +421,9 @@ jobs:
           node-version: 24.22.0
       - uses: ./.github/actions/go-toolchain
         with:
-          build-cache: native
+          # The cross-compiled helper groups share the linux/amd64 runner but compile a different package set, so
+          # they restore no build cache instead of evicting the warmed linux/amd64 profile.
+          build-cache: ${{ (matrix.os == 'linux' && matrix.arch != 'amd64' && matrix.arch != 'arm64') && '' || 'native' }}
       - name: Verify Windows PowerShell runtimes
         if: github.event_name == 'pull_request' && fromJSON(needs.version.outputs.scope).unit && matrix.os == 'windows' && matrix.arch == 'amd64' && contains(matrix.kinds, 'desktop')
         shell: powershell
@@ -445,8 +447,10 @@ jobs:
         with:
           name: frontend-dist
           path: target/ci-work/verified-dist
+      # Darwin test code needs cgo, so only a macOS runner can compile it. Windows builds without cgo, so the quality
+      # job's GOOS=windows go vet already type-checks its test code and the real Windows tests above link and run it.
       - name: Compile native platform tests without running TestMain
-        if: github.event_name == 'pull_request' && fromJSON(needs.version.outputs.scope).unit && contains(matrix.kinds, 'desktop') && ((matrix.os == 'windows' && matrix.arch == 'amd64') || (matrix.os == 'darwin' && matrix.arch == 'arm64'))
+        if: github.event_name == 'pull_request' && fromJSON(needs.version.outputs.scope).unit && contains(matrix.kinds, 'desktop') && matrix.os == 'darwin' && matrix.arch == 'arm64'
         run: go run -mod=readonly ./scripts/compile-only ./...
       - name: Test desktop production embedding
         if: github.event_name == 'pull_request' && matrix.os == 'linux' && matrix.arch == 'amd64' && contains(matrix.kinds, 'desktop')
@@ -519,14 +523,11 @@ jobs:
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
       GITHUB_TOKEN: ${{ github.token }}
+    # Android compiles for every Go change; the macOS iOS leg only for changes that can break iOS specifically
+    # (see IOS_FILES in .github/scripts/ci-plan.mjs) or under full-ci. cache-warm compiles iOS on master.
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - platform: android
-            runner: ubuntu-latest
-          - platform: ios
-            runner: macos-26
+      matrix: ${{ fromJSON(needs.version.outputs.mobile-matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -596,14 +597,11 @@ jobs:
     env:
       NEXTERM_RELEASE_VERSION: ${{ needs.version.outputs.version }}
       GITHUB_TOKEN: ${{ github.token }}
+    # The unsigned iOS simulator build has no consumer when ios-dist builds the signed device app.
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: android
-            runner: ubuntu-latest
-          - platform: ios
-            runner: macos-26
+        include: ${{ fromJSON(vars.NEXTERM_IOS_SIGNING == 'true' && '[{"platform":"android","runner":"ubuntu-latest"}]' || '[{"platform":"android","runner":"ubuntu-latest"},{"platform":"ios","runner":"macos-26"}]') }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

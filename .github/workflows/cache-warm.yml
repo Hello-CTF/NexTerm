@@ -19,6 +19,10 @@ on:
       - pnpm-lock.yaml
       - scripts/build.mjs
       - scripts/lib/build-*.mjs
+      - scripts/mobile-source.mjs
+      - scripts/lib/mobile.mjs
+      - build/android/**
+      - build/ios/**
       - .github/actions/**
       - .github/workflows/cache-warm.yml
   schedule:
@@ -115,10 +119,10 @@ jobs:
         continue-on-error: true
         run: go build ./scripts/...
 
-  # Fills the "native" build cache profile of the smoke-target desktop jobs that
-  # compile every test package (the slowest PR jobs). The Linux native profile
-  # is shared by the linux/amd64 job and three cross-compiled helper jobs on the
-  # same runner, so it is left cold rather than warmed with a partial set.
+  # Fills the "native" build cache profile of the smoke-target native jobs, the
+  # slowest PR jobs. The cross-compiled Linux helper jobs restore no build cache
+  # (ci.yml), so the linux/amd64 profile holds only what that job compiles: the
+  # production-tag desktop test and the desktop, server, helper and agent builds.
   native:
     name: ${{ matrix.os }}/${{ matrix.arch }} native build cache
     strategy:
@@ -130,6 +134,9 @@ jobs:
             arch: arm64
           - runner: windows-latest
             os: windows
+            arch: amd64
+          - runner: ubuntu-latest
+            os: linux
             arch: amd64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -145,10 +152,15 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.22.0
+      - name: Install Linux WebView prerequisites
+        if: matrix.os == 'linux'
+        uses: ./.github/actions/linux-gui-deps
       - uses: ./.github/actions/go-toolchain
         with:
           build-cache: native
+      # Only darwin/arm64 compiles every test package in CI (ci.yml native job).
       - name: Compile native platform tests without running TestMain
+        if: matrix.os == 'darwin'
         continue-on-error: true
         run: go run -mod=readonly ./scripts/compile-only ./...
       # scripts/build.mjs needs the verified frontend for the desktop binary, but
@@ -160,7 +172,7 @@ jobs:
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: ${{ matrix.os == 'darwin' && '1' || '0' }}
+          CGO_ENABLED: ${{ matrix.os != 'windows' && '1' || '0' }}
         run: |
           set -euo pipefail
           if [ "$GOOS" = darwin ]; then
@@ -170,11 +182,80 @@ jobs:
           echo placeholder > cmd/nexterm-desktop/dist/index.html
           trap 'rm -rf cmd/nexterm-desktop/dist' EXIT
           go build -mod=readonly -trimpath -buildvcs=false -tags production -o "$RUNNER_TEMP/nexterm-desktop-warm" ./cmd/nexterm-desktop
+          # The linux/amd64 job also runs scripts/test-production.mjs (go test -tags production) on the host.
+          if [ "$GOOS" = linux ]; then
+            go test -count=1 -exec=true -tags production ./cmd/nexterm-desktop
+          fi
+      - name: Compile the production server
+        if: matrix.os == 'linux'
+        continue-on-error: true
+        env:
+          CGO_ENABLED: "0"
+        run: go build -mod=readonly -trimpath -buildvcs=false -tags production -o "$RUNNER_TEMP/nexterm-server-warm" ./cmd/nexterm-server
       - name: Build the production helper and agent
         continue-on-error: true
         run: |
           node scripts/build.mjs helper --release --os=${{ matrix.os }} --arch=${{ matrix.arch }}
           node scripts/build.mjs agent --release --os=${{ matrix.os }} --arch=${{ matrix.arch }}
+
+  # Fills the mobile-android and mobile-ios build cache profiles with the
+  # production build and vet of the CI mobile compile job. A placeholder
+  # frontend stands in for the embedded dist. PRs compile iOS only for changes
+  # that can break it, so this iOS step fails visibly instead of continuing: a
+  # broken iOS compile on master shows here (and saves no cache).
+  mobile:
+    name: ${{ matrix.platform }} mobile build cache
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            runner: ubuntu-latest
+          - platform: ios
+            runner: macos-26
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Linux libraries required by the Wails CLI
+        if: matrix.platform == 'android'
+        uses: ./.github/actions/linux-gui-deps
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+      - uses: ./.github/actions/go-toolchain
+        with:
+          build-cache: mobile-${{ matrix.platform }}
+      - uses: ./.github/actions/wails-cli
+      - name: Stage a placeholder frontend and generate the overlay
+        run: |
+          mkdir -p cmd/nexterm-desktop/dist
+          echo placeholder > cmd/nexterm-desktop/dist/index.html
+          wails3 task ${{ matrix.platform }}:generate:${{ matrix.platform }}:overlay
+      - name: Build and vet Android production packages
+        if: matrix.platform == 'android'
+        continue-on-error: true
+        env:
+          GOOS: android
+          GOARCH: arm64
+          CGO_ENABLED: "0"
+        run: |
+          go build -overlay build/android/overlay.json -tags android,production ./cmd/... ./internal/...
+          go vet -overlay build/android/overlay.json -tags android,production ./cmd/... ./internal/...
+      - name: Build and vet iOS production packages
+        if: matrix.platform == 'ios'
+        env:
+          GOOS: ios
+          GOARCH: arm64
+          CGO_ENABLED: "1"
+        run: |
+          SDK_PATH="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+          export CGO_CFLAGS="-isysroot $SDK_PATH -target arm64-apple-ios15.0-simulator -mios-simulator-version-min=15.0"
+          export CGO_LDFLAGS="-isysroot $SDK_PATH -target arm64-apple-ios15.0-simulator"
+          go build -overlay build/ios/xcode/overlay.json -tags ios,production ./cmd/... ./internal/...
+          go vet -tags ios,production ./cmd/... ./internal/...
 
   # windows-11-arm keeps its temp directory on C: and windows-latest on D:; the
   # cache version includes the path, so they cannot share a module cache entry.
@@ -210,7 +291,7 @@ jobs:
   # 10 GB repository quota. Keep the newest master entry of each.
   prune:
     name: Prune superseded master caches
-    needs: [linux, quality, native, modules]
+    needs: [linux, quality, native, mobile, modules]
     if: ${{ !cancelled() && github.ref == 'refs/heads/master' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
