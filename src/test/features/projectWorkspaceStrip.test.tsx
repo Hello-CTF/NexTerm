@@ -246,6 +246,17 @@ describe("ProjectWorkspaceStrip close menu", () => {
     expect(closeWorkspace.mock.calls).toEqual([["ws-right-1"]]);
   });
 
+  it("closes the active workspace last when it is part of the batch", async () => {
+    const closeWorkspace = vi.fn().mockResolvedValue(true);
+    renderBatch(closeWorkspace, batch, "ws-right-2");
+    useUi.setState({ activeWorkspaceId: "ws-right-2" });
+    openMenu("ws-current");
+    click(menuItem("关闭右侧全部工作区"));
+    await flush();
+
+    expect(closeWorkspace.mock.calls.map(([id]) => id)).toEqual(["ws-right-1", "ws-right-3", "ws-right-2"]);
+  });
+
   it("closes left workspaces in strip order", async () => {
     const closeWorkspace = vi.fn().mockResolvedValue(true);
     renderBatch(closeWorkspace, [
