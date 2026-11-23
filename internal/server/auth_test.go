@@ -496,10 +496,22 @@ type aiJobAuthModel struct {
 	block bool
 	first *schema.Message
 	calls atomic.Int64
+	// entered, when set, is closed once the run reaches the blocking model, so
+	// a test can wait until the run has passed the steer drain that precedes
+	// each model call.
+	entered   chan struct{}
+	enterOnce sync.Once
+}
+
+func (m *aiJobAuthModel) blocked() {
+	if m.entered != nil {
+		m.enterOnce.Do(func() { close(m.entered) })
+	}
 }
 
 func (m *aiJobAuthModel) Generate(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.Message, error) {
 	if m.block {
+		m.blocked()
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
@@ -511,6 +523,7 @@ func (m *aiJobAuthModel) Generate(ctx context.Context, _ []*schema.Message, _ ..
 
 func (m *aiJobAuthModel) Stream(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	if m.block {
+		m.blocked()
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
@@ -701,10 +714,12 @@ func TestAIJobOperationsAuthorizationOverHTTP(t *testing.T) {
 		t.Helper()
 		var actions atomic.Int64
 		var chat model.BaseChatModel
+		var blocking *aiJobAuthModel
 		deps := tools.Dependencies{}
 		switch operation {
 		case "cancel", "steer":
-			chat = &aiJobAuthModel{block: true}
+			blocking = &aiJobAuthModel{block: true, entered: make(chan struct{})}
+			chat = blocking
 		case "confirm":
 			chat = &aiJobAuthModel{first: schema.AssistantMessage("", []schema.ToolCall{{
 				ID: "call", Type: "function", Function: schema.FunctionCall{Name: "docker_control", Arguments: `{"container_id":"web","action":"start"}`},
@@ -717,6 +732,15 @@ func TestAIJobOperationsAuthorizationOverHTTP(t *testing.T) {
 		}
 		runtime := newRuntime(t, chat, deps, authMode)
 		started := start(t, runtime, operation)
+		if blocking != nil {
+			// ai_chat returns before the run reaches the model. A steer sent earlier would be delivered
+			// at the pre-model drain and saved, so wait until the model holds the run.
+			select {
+			case <-blocking.entered:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("%s run did not reach the model", operation)
+			}
+		}
 		operator := runtime.alicePeer
 		switch operation {
 		case "cancel":
