@@ -287,6 +287,7 @@ type errorMsg struct {
 	ID               string `json:"id,omitempty"`
 	Title            string `json:"title,omitempty"`
 	MetadataRevision uint64 `json:"metadata_revision,omitempty"`
+	TitleChangedAt   int64  `json:"title_changed_at,omitempty"`
 	// Version accompanies codeVersionMismatch: the protocol the rejecting
 	// helper speaks. Helpers before version 3 leave it empty. With
 	// codeLegacyHelper it is the protocol of the older helper.
@@ -377,6 +378,7 @@ func errorMessage(err error) errorMsg {
 		msg.ID = conflict.Current.ID
 		msg.Title = conflict.Current.Title
 		msg.MetadataRevision = conflict.Current.MetadataRevision
+		msg.TitleChangedAt = conflict.Current.TitleChangedAt
 	}
 	return msg
 }
@@ -401,7 +403,7 @@ func decodedError(msg errorMsg) error {
 	}
 	if msg.Code == codeMetadataConflict {
 		return &wireError{&MetadataConflictError{
-			Current: Info{ID: msg.ID, Title: msg.Title, MetadataRevision: msg.MetadataRevision},
+			Current: Info{ID: msg.ID, Title: msg.Title, MetadataRevision: msg.MetadataRevision, TitleChangedAt: msg.TitleChangedAt},
 			message: msg.Message,
 		}}
 	}

@@ -122,3 +122,34 @@ func TestRenameTabClampsFutureDecisionTime(t *testing.T) {
 		t.Fatalf("decision time = %d, want clamped to <= %d", info.TitleChangedAt, limit)
 	}
 }
+
+// The helper keeps the time of each title decision, so a recovery after a
+// restart orders a rename and a later clear by when they were made, not by
+// when this backend first saw them.
+func TestDurableRecoveryKeepsHelperDecisionTimes(t *testing.T) {
+	provider := newFakeDurableProvider()
+	first, _, _, firstSession := newDurableTestManager(t, provider)
+	info := openDurableTestTab(t, first, firstSession, "timed-tab", "a-1", false)
+	if _, err := first.RenameTabAt(context.Background(), info.ID, "deploy", 1_000); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second, _, _, secondSession := newDurableTestManager(t, provider)
+	renamed := recoverCanonicalDurableTestTab(t, second, secondSession, info.ID, "b-1")
+	if renamed.Title != "deploy" || !renamed.TitleCustom || renamed.TitleChangedAt != 1_000 {
+		t.Fatalf("recovered rename = %+v, want deploy decided at 1000", renamed)
+	}
+	if _, err := second.RenameTabAt(context.Background(), info.ID, "", 2_000); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	third, _, _, thirdSession := newDurableTestManager(t, provider)
+	cleared := recoverCanonicalDurableTestTab(t, third, thirdSession, info.ID, "c-1")
+	if cleared.TitleCustom || cleared.TitleChangedAt != 2_000 {
+		t.Fatalf("recovered clear = %+v, want an unlocked title decided at 2000", cleared)
+	}
+}
