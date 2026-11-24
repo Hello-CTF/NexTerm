@@ -1088,6 +1088,10 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				if errors.Is(err, session.ErrTabNotFound) && input.SessionID != "" {
 					if _, sessionErr := s.sessions.SessionFor(ctx, input.SessionID); sessionErr != nil {
 						err = sessionErr
+						if input.Mode == "kill" && errors.Is(sessionErr, session.ErrSessionNotFound) {
+							// Without its session the host was never asked, so the kill must not read as done.
+							err = session.IPCError(sessionErr).WithDetail(terminalCloseDetail{KillSkipped: true})
+						}
 					} else if input.Mode == "kill" {
 						_, err = s.sessions.RecoverRemoteDurable(ctx, input.TabID, session.OpenTabOptions{
 							SessionID: input.SessionID, ClientID: call.ClientID, Detached: true, Cols: 80, Rows: 24,
@@ -1376,6 +1380,11 @@ func (s *terminalCommandService) authorizeDockerTab(ctx context.Context, tabID s
 
 // Account admission adds a user ID to the request context. An identity-less IPC
 // request is an already-admitted desktop, open, or gateway request.
+// terminalCloseDetail tells a client that a close did not reach the host: killSkipped means no process was ended.
+type terminalCloseDetail struct {
+	KillSkipped bool `json:"killSkipped"`
+}
+
 // terminalCloseTimeout bounds one terminal close request. It outlasts the durable kill timeout, so only a
 // recovery or helper wait that never finishes runs into it.
 const terminalCloseTimeout = 30 * time.Second

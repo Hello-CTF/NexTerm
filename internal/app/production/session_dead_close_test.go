@@ -4,6 +4,7 @@ package production
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -331,4 +332,23 @@ func TestProductionFailedKillOfRecoveredTabReleasesItsRecord(t *testing.T) {
 		}
 	}
 	t.Fatal("the process is no longer listed on the host")
+}
+
+func TestProductionKillWithoutItsSessionReportsTheKillSkipped(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: fixture.provider}
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	connectRemoteSSHAsset(t, production)
+
+	response := dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+ids.New()+`","sessionId":"`+ids.New()+`","mode":"kill"}`, "", "client-a")
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("kill without its session = %+v, want not_found", response.Error)
+	}
+	encoded, err := json.Marshal(response.Error.Detail)
+	if err != nil || string(encoded) != `{"killSkipped":true}` {
+		t.Fatalf("kill without its session detail = %s (%v), want the kill marked skipped", encoded, err)
+	}
+	if calls := len(resolver.recorded()); calls != 0 {
+		t.Fatalf("kill without its session reached %d helpers", calls)
+	}
 }

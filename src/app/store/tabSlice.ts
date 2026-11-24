@@ -206,6 +206,10 @@ export function createTabSlice(set: UiSet, get: UiGet) {
           if (remote && closeMode === "detach" && (code === "not_found" || code === "disconnected" || code === "timeout")) {
             remoteCloseUnknown = true;
           }
+          // The backend could not ask the host (the session is gone), so a durable process was not ended.
+          if (remote && closeMode === "kill" && !regularRemote && (e as { detail?: { killSkipped?: unknown } } | null)?.detail?.killSkipped === true) {
+            remoteKillSkipped = true;
+          }
         }
       } else if (target.kind === "db" && target.connId) {
         try {

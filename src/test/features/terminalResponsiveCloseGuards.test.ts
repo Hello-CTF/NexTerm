@@ -477,6 +477,19 @@ describe("kill danger actions", () => {
     expect(toastText()).not.toContain("已结束「");
   });
 
+  it("requestKillTab never reports a kill the backend could not send to the host", async () => {
+    const tab = { ...terminal(), durable: true };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.closeTab.mockRejectedValueOnce({ code: "not_found", message: "会话不存在", detail: { killSkipped: true } });
+
+    await requestKillTab(tab.id);
+
+    expect(mocks.closeTab).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
+    expect(toastText()).toContain("远端进程未能结束");
+    expect(toastText()).not.toContain("已结束「");
+  });
+
   it("requestKillTab keeps a regular remote tab when its kill fails as disconnected", async () => {
     const tab = { ...terminal(), durable: false, retainable: false };
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
