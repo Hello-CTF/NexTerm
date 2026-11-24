@@ -288,7 +288,10 @@ export class RdpClient implements RemoteClient {
         .withProxyAddress(remoteProxyAddress())
         .withAuthToken(prepared.ticket)
         .withServerDomain(secret?.domain ?? prepared.domain)
-        .withExtension(rdp.displayControl(true));
+        .withExtension(rdp.displayControl(true))
+        // The package announces 16 bpp unless told otherwise, and servers such as xrdp refuse the EGFX
+        // graphics pipeline below 32 bpp.
+        .withExtension(rdp.colorDepth(32));
       if (this.options.initialSize) builder.withDesktopSize(this.options.initialSize);
       let session;
       try {

@@ -124,6 +124,7 @@ vi.mock("@devolutions/iron-remote-desktop-rdp", () => ({
     return wasm.state.fileChannel ? wasm.FileTransfer : undefined;
   },
   displayControl: vi.fn((enabled: boolean) => ({ displayControl: enabled })),
+  colorDepth: vi.fn((bitsPerPixel: number) => ({ colorDepth: bitsPerPixel })),
 }));
 
 import { RdpClient } from "../../features/remote/RdpClient";
@@ -303,7 +304,7 @@ describe("RdpClient connect", () => {
     expect(calls("withDestination")).toEqual(["10.0.0.5:3389"]);
     expect(calls("withProxyAddress")).toEqual(["nxrd://remotedesktop"]);
     expect(calls("withAuthToken")).toEqual(["tick"]);
-    expect(calls("withExtension")).toEqual([{ displayControl: true }]);
+    expect(calls("withExtension")).toEqual([{ displayControl: true }, { colorDepth: 32 }]);
     expect(calls("withDesktopSize")).toEqual([{ width: 1280, height: 720 }]);
     expect(scenario.ui.setEnableClipboard).toHaveBeenCalledWith(true);
     expect(scenario.ui.setEnableAutoClipboard).toHaveBeenCalledWith(false);
