@@ -180,8 +180,10 @@ export function createTabSlice(set: UiSet, get: UiGet) {
               await terminalApi.closeTab(tabId, closeMode, target.sessionId);
             } catch (e) {
               // A durable terminal on a host that cannot be reached cannot be ended now. Dropping only this client's
-              // attachment needs no remote call, so the tab still closes and the process stays in 后台会话.
-              if (closeMode !== "kill" || regularRemote || (e as { code?: string } | null)?.code !== "disconnected") throw e;
+              // attachment needs no remote call, so the tab still closes and the process stays in 后台会话. A host
+              // whose SSH connection is up but whose helper does not answer in time times out instead.
+              const code = (e as { code?: string } | null)?.code;
+              if (closeMode !== "kill" || regularRemote || (code !== "disconnected" && code !== "timeout")) throw e;
               closeMode = "detach";
               remoteKillSkipped = true;
               await terminalApi.closeTab(tabId, "detach", target.sessionId);
@@ -193,7 +195,7 @@ export function createTabSlice(set: UiSet, get: UiGet) {
         } catch (e) {
           const code = (e as { code?: string } | null)?.code;
           const endedTab = target.kind === "terminal" && (
-            code === "not_found" || (code === "disconnected" && (target.dead || target.exited))
+            code === "not_found" || ((code === "disconnected" || code === "timeout") && (target.dead || target.exited))
           );
           if (!endedTab) {
             get().updateTab(id, { closeError: describeError(e) });
@@ -201,8 +203,12 @@ export function createTabSlice(set: UiSet, get: UiGet) {
             void get().resyncSessions({ silent: true });
             return false;
           }
-          if (remote && closeMode === "detach" && (code === "not_found" || code === "disconnected")) {
+          if (remote && closeMode === "detach" && (code === "not_found" || code === "disconnected" || code === "timeout")) {
             remoteCloseUnknown = true;
+          }
+          // The backend could not ask the host (the session is gone), so a durable process was not ended.
+          if (remote && closeMode === "kill" && !regularRemote && (e as { detail?: { killSkipped?: unknown } } | null)?.detail?.killSkipped === true) {
+            remoteKillSkipped = true;
           }
         }
       } else if (target.kind === "db" && target.connId) {
