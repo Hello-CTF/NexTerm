@@ -158,7 +158,20 @@ jobs:
           fi
           # Fail closed: only install when the tool is neither cached nor preinstalled,
           # and reject any package whose download cannot be checksum-verified.
-          choco install nsis --version=3.12 --yes --no-progress --require-checksums
+          if ! choco install nsis --version=3.12 --yes --no-progress --require-checksums; then
+            # The Chocolatey feed times out at times: take the same release from the NSIS
+            # project's SourceForge files instead, pinned by its SHA-256.
+            echo "::warning::Chocolatey could not install NSIS; using the pinned SourceForge archive"
+            archive="$RUNNER_TEMP/nsis-3.12.zip"
+            curl --fail --location --retry 3 --retry-all-errors --max-time 300 --output "$archive" \
+              "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.12/nsis-3.12.zip"
+            echo "56581f90db321581c5381193d796fffcf2d24b2f8fed2160a6c6a3baa67f2c4f  $archive" | sha256sum --check --strict
+            unpacked="$RUNNER_TEMP/nsis-unpacked"
+            rm -rf "$unpacked"
+            MSYS_NO_PATHCONV=1 pwsh -NoProfile -Command "Expand-Archive -LiteralPath '$(cygpath -w "$archive")' -DestinationPath '$(cygpath -w "$unpacked")'"
+            mkdir -p "/c/Program Files (x86)/NSIS"
+            cp -R "$unpacked/nsis-3.12/." "/c/Program Files (x86)/NSIS/"
+          fi
           MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/NSIS/makensis.exe" /VERSION
       - name: Ensure 7-Zip can inspect the finished installer
         if: matrix.os == 'windows'
