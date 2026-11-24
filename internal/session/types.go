@@ -543,10 +543,12 @@ type DurableTabOptions struct {
 	Env      []string
 	Recover  bool
 	Identity *base.DurableIdentity
-	// Title and MetadataRevision are the helper descriptor's canonical
-	// metadata a recovery starts from.
+	// Title, MetadataRevision and TitleChangedAt are the helper descriptor's
+	// canonical metadata a recovery starts from. TitleChangedAt is zero when
+	// the helper does not record when the title was decided.
 	Title            string
 	MetadataRevision uint64
+	TitleChangedAt   int64
 	// Cwd and WindowTitle are what the helper last observed in the output: the
 	// OSC 7 directory and the OSC window title a recovery starts from.
 	Cwd         string

@@ -55,6 +55,7 @@ func translateMetadataError(err error) error {
 		return &base.DurableMetadataConflictError{
 			CurrentTitle:            conflict.Current.Title,
 			CurrentMetadataRevision: conflict.Current.MetadataRevision,
+			CurrentTitleChangedAt:   conflict.Current.TitleChangedAt,
 		}
 	}
 	if errors.Is(err, ErrUnsupported) {
@@ -71,7 +72,7 @@ func checkedIdentity(identity base.DurableIdentity) (*Identity, error) {
 }
 
 func renameResult(info Info) base.DurableRenameResult {
-	return base.DurableRenameResult{Title: info.Title, MetadataRevision: info.MetadataRevision}
+	return base.DurableRenameResult{Title: info.Title, MetadataRevision: info.MetadataRevision, TitleChangedAt: info.TitleChangedAt}
 }
 
 func renameRequest(options base.DurableRenameOptions) RenameRequest {
@@ -81,6 +82,7 @@ func renameRequest(options base.DurableRenameOptions) RenameRequest {
 		RequestID:                options.RequestID,
 		ExpectedMetadataRevision: options.ExpectedMetadataRevision,
 		Title:                    options.Title,
+		TitleChangedAt:           options.TitleChangedAt,
 	}
 }
 
@@ -220,6 +222,7 @@ func durableDescriptors(infos []Info) []base.DurableDescriptor {
 			WindowTitle:      info.WindowTitle,
 			Cwd:              info.Cwd,
 			MetadataRevision: info.MetadataRevision,
+			TitleChangedAt:   info.TitleChangedAt,
 			Cols:             info.Cols,
 			Rows:             info.Rows,
 			Dead:             info.Dead,

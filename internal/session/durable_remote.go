@@ -781,7 +781,7 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 	options.TabID = tabID
 	options.SessionID = selected.sessionID
 	options.Durable = &DurableTabOptions{
-		Recover: true, Title: selected.descriptor.Title, MetadataRevision: selected.descriptor.MetadataRevision,
+		Recover: true, Title: selected.descriptor.Title, MetadataRevision: selected.descriptor.MetadataRevision, TitleChangedAt: selected.descriptor.TitleChangedAt,
 		Cwd: selected.descriptor.Cwd, WindowTitle: selected.descriptor.WindowTitle,
 		RecoveredExited: selected.descriptor.Dead,
 	}
@@ -934,6 +934,7 @@ func (m *Manager) renameCanonicalTab(ctx context.Context, tab *Tab, provider bas
 	}
 	result, err := provider.RenameDurable(ctx, base.DurableRenameOptions{
 		ID: tab.ID, Incarnation: identity.Incarnation, RequestID: attempt.requestID, ExpectedMetadataRevision: metadataRevision, Title: title,
+		TitleChangedAt: attempt.changedAt,
 	})
 	return m.finishDurableRename(ctx, tab, provider, attempt, result, err)
 }
@@ -950,7 +951,7 @@ func beginDurableRename(ctx context.Context, tab *Tab, provider base.DurableProv
 	}
 	if found && descriptor.Incarnation != tab.durableIdentity.Incarnation {
 		tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation, Generation: descriptor.Generation}
-		tab.adoptHelperTitleLocked(descriptor.Title)
+		tab.adoptHelperTitleLocked(descriptor.Title, descriptor.TitleChangedAt)
 		tab.metadataRevision = descriptor.MetadataRevision
 	}
 	for id, attempt := range tab.renameAttempts {
@@ -981,13 +982,16 @@ func beginDurableRename(ctx context.Context, tab *Tab, provider base.DurableProv
 }
 
 // adoptHelperTitleLocked takes the canonical title the shared helper reports
-// (another instance may have renamed or cleared it). The helper carries no
-// decision time, so a title that differs from the current one is stamped
-// with this backend's clock: that decision is at least as new as now from
-// this backend's view, and a stale client decision must not win over it.
-func (t *Tab) adoptHelperTitleLocked(title string) {
+// (another instance may have renamed or cleared it) with the time the helper
+// recorded for that decision. A helper that records no time (an older one)
+// has a differing title stamped with this backend's clock: that decision is at
+// least as new as now from this backend's view, and a stale client decision
+// must not win over it.
+func (t *Tab) adoptHelperTitleLocked(title string, changedAt int64) {
 	custom := title != ""
-	if title != t.title || custom != t.titleCustom {
+	if changedAt > 0 {
+		t.titleChangedAt = clampTitleDecisionTime(changedAt, time.Now())
+	} else if title != t.title || custom != t.titleCustom {
 		t.titleChangedAt = time.Now().UnixMilli()
 	}
 	t.title = title
@@ -1009,7 +1013,9 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 			}
 			tab.title = result.Title
 			tab.titleCustom = result.Title != ""
-			if attempt.changedAt > 0 {
+			if result.TitleChangedAt > 0 {
+				tab.titleChangedAt = clampTitleDecisionTime(result.TitleChangedAt, time.Now())
+			} else if attempt.changedAt > 0 {
 				tab.titleChangedAt = attempt.changedAt
 			}
 			tab.metadataRevision = result.MetadataRevision
@@ -1035,7 +1041,7 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 		attempt.resultMetadataRevision = conflict.CurrentMetadataRevision
 		tab.mu.Lock()
 		if !tab.closed && !tab.destroying {
-			tab.adoptHelperTitleLocked(conflict.CurrentTitle)
+			tab.adoptHelperTitleLocked(conflict.CurrentTitle, conflict.CurrentTitleChangedAt)
 			tab.metadataRevision = conflict.CurrentMetadataRevision
 			event := tab.controlEventLocked()
 			tab.mu.Unlock()
@@ -1056,7 +1062,7 @@ func (m *Manager) finishDurableRename(ctx context.Context, tab *Tab, provider ba
 			tab.mu.Lock()
 			if !tab.closed && !tab.destroying {
 				tab.durableIdentity = base.DurableIdentity{CreatedAt: descriptor.CreatedAt, Incarnation: descriptor.Incarnation, Generation: descriptor.Generation}
-				tab.adoptHelperTitleLocked(descriptor.Title)
+				tab.adoptHelperTitleLocked(descriptor.Title, descriptor.TitleChangedAt)
 				tab.metadataRevision = descriptor.MetadataRevision
 				event := tab.controlEventLocked()
 				tab.mu.Unlock()

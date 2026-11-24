@@ -178,6 +178,7 @@ func (s *Session) infoLocked() Info {
 		Generation:       s.supervisor.generation,
 		Title:            s.entry.Title,
 		MetadataRevision: s.entry.MetadataRevision,
+		TitleChangedAt:   s.entry.TitleChangedAt,
 		Cols:             s.entry.Cols,
 		Rows:             s.entry.Rows,
 		Dead:             s.dead,

@@ -39,12 +39,15 @@ type DurableDescriptor struct {
 	// OSC 7; empty when the helper does not report one.
 	Cwd              string
 	MetadataRevision uint64
-	Cols             uint32
-	Rows             uint32
-	Dead             bool
-	ExitCode         *int
-	Signal           string
-	FinishedAt       *time.Time
+	// TitleChangedAt is the client time (Unix ms) of the decision that set
+	// Title, a rename or a clear; zero when the helper does not record it.
+	TitleChangedAt int64
+	Cols           uint32
+	Rows           uint32
+	Dead           bool
+	ExitCode       *int
+	Signal         string
+	FinishedAt     *time.Time
 	// HistoryBase and HistoryNext bound the recorded output the helper still
 	// keeps; HistoryTruncated reports that output before HistoryBase was
 	// dropped by the history limit.
@@ -94,16 +97,19 @@ type DurableRenameOptions struct {
 	RequestID                string
 	ExpectedMetadataRevision uint64
 	Title                    string
+	TitleChangedAt           int64
 }
 
 type DurableRenameResult struct {
 	Title            string
 	MetadataRevision uint64
+	TitleChangedAt   int64
 }
 
 type DurableMetadataConflictError struct {
 	CurrentTitle            string
 	CurrentMetadataRevision uint64
+	CurrentTitleChangedAt   int64
 }
 
 func (e *DurableMetadataConflictError) Error() string {
