@@ -1954,6 +1954,23 @@ func (m *Manager) CloseTab(id string) error {
 	return m.closeTab(tab, true)
 }
 
+// ReleaseDurableTabFor drops this backend's record of a durable tab without
+// ending its host process, which stays listed in the background and can be
+// recovered later.
+func (m *Manager) ReleaseDurableTabFor(ctx context.Context, id string) error {
+	tab, err := m.TabFor(ctx, id)
+	if err != nil {
+		return err
+	}
+	tab.mu.Lock()
+	durableTab := tab.durable != nil
+	tab.mu.Unlock()
+	if !durableTab {
+		return ErrUnsupported
+	}
+	return m.closeTab(tab, false)
+}
+
 // KillTab closes a tab and ends its durable host process.
 func (m *Manager) KillTab(id string) error {
 	m.mu.Lock()

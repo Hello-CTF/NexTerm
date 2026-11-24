@@ -109,6 +109,24 @@ describe("close = detach (M111)", () => {
     expect(toastText()).toContain("已转入后台");
   });
 
+  it("does not wait forever on a host whose listing never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const tab = { ...terminal(), exited: true };
+      seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+      mocks.listDurable.mockReturnValueOnce(new Promise(() => undefined));
+
+      const closing = requestCloseTab(tab.id);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await closing;
+
+      expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
+      expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(["ssh", "device"] as const)("keeps missing %s backend state unknown and never defaults to kill", async (kind) => {
     const tab = { ...terminal(), exited: false };
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }], kind);
@@ -134,6 +152,17 @@ describe("close = detach (M111)", () => {
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", undefined, "s");
     expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-terminal", "kill", "s");
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
+  });
+
+  it("closes an exited terminal whose cleanup times out on an unresponsive host", async () => {
+    const tab = { ...terminal(), exited: true, exitCode: 0 };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.listLive.mockResolvedValueOnce([liveTab("kernel-terminal", true)]);
+    mocks.closeTab.mockRejectedValueOnce({ code: "timeout", message: "操作超时，请重试" });
+
+    await requestCloseTab(tab.id);
+
     expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
   });
 
@@ -430,6 +459,34 @@ describe("kill danger actions", () => {
     expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
     expect(toastText()).toContain("远端进程未能结束");
     expect(toastText()).toContain("后台会话");
+    expect(toastText()).not.toContain("已结束「");
+  });
+
+  it("requestKillTab closes locally when the host's helper does not answer in time", async () => {
+    const tab = { ...terminal(), durable: true };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.closeTab
+      .mockRejectedValueOnce({ code: "timeout", message: "操作超时，请重试" })
+      .mockRejectedValueOnce({ code: "not_found", message: "资源不存在或已删除" });
+
+    await requestKillTab(tab.id);
+
+    expect(mocks.closeTab).toHaveBeenLastCalledWith("kernel-terminal", "detach", "s");
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
+    expect(toastText()).toContain("远端进程未能结束");
+    expect(toastText()).not.toContain("已结束「");
+  });
+
+  it("requestKillTab never reports a kill the backend could not send to the host", async () => {
+    const tab = { ...terminal(), durable: true };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.closeTab.mockRejectedValueOnce({ code: "not_found", message: "会话不存在", detail: { killSkipped: true } });
+
+    await requestKillTab(tab.id);
+
+    expect(mocks.closeTab).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
+    expect(toastText()).toContain("远端进程未能结束");
     expect(toastText()).not.toContain("已结束「");
   });
 

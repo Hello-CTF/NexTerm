@@ -1081,16 +1081,30 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				if input.Mode != "" && input.Mode != "detach" && input.Mode != "kill" {
 					return nil, ipc.BadParam(errors.New("终端关闭模式无效"))
 				}
+				// A host whose helper accepts requests but never answers must not hold a close forever.
+				ctx, cancel := context.WithTimeout(ctx, terminalCloseTimeout)
+				defer cancel()
 				err := s.closeSessionTab(ctx, call, input)
 				if errors.Is(err, session.ErrTabNotFound) && input.SessionID != "" {
 					if _, sessionErr := s.sessions.SessionFor(ctx, input.SessionID); sessionErr != nil {
 						err = sessionErr
+						if input.Mode == "kill" && errors.Is(sessionErr, session.ErrSessionNotFound) {
+							// Without its session the host was never asked, so the kill must not read as done.
+							err = session.IPCError(sessionErr).WithDetail(terminalCloseDetail{KillSkipped: true})
+						}
 					} else if input.Mode == "kill" {
 						_, err = s.sessions.RecoverRemoteDurable(ctx, input.TabID, session.OpenTabOptions{
 							SessionID: input.SessionID, ClientID: call.ClientID, Detached: true, Cols: 80, Rows: 24,
 						})
 						if err == nil {
 							err = s.closeSessionTab(ctx, call, input)
+							if err != nil {
+								// The tab was recovered only to be ended. When the kill fails nobody views it, so its
+								// record is released and the process stays in the background.
+								if releaseErr := s.sessions.ReleaseDurableTabFor(context.WithoutCancel(ctx), input.TabID); releaseErr != nil && !errors.Is(releaseErr, session.ErrTabNotFound) {
+									err = errors.Join(err, releaseErr)
+								}
+							}
 						}
 					}
 				}
@@ -1366,6 +1380,15 @@ func (s *terminalCommandService) authorizeDockerTab(ctx context.Context, tabID s
 
 // Account admission adds a user ID to the request context. An identity-less IPC
 // request is an already-admitted desktop, open, or gateway request.
+// terminalCloseDetail tells a client that a close did not reach the host: killSkipped means no process was ended.
+type terminalCloseDetail struct {
+	KillSkipped bool `json:"killSkipped"`
+}
+
+// terminalCloseTimeout bounds one terminal close request. It outlasts the durable kill timeout, so only a
+// recovery or helper wait that never finishes runs into it.
+const terminalCloseTimeout = 30 * time.Second
+
 func productionSessionRequestContext(ctx context.Context) context.Context {
 	if _, ok := ipc.UserIDFromContext(ctx); ok {
 		return ctx
