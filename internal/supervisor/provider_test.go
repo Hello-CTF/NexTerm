@@ -765,9 +765,10 @@ func TestDurableMetadataProvidersRenameConflictAndRetry(t *testing.T) {
 				RequestID:                ids.New(),
 				ExpectedMetadataRevision: descriptors[0].MetadataRevision,
 				Title:                    "builder",
+				TitleChangedAt:           1_000,
 			}
 			result, err := provider.RenameDurable(ctx, request)
-			if err != nil || result.Title != "builder" || result.MetadataRevision != 1 {
+			if err != nil || result.Title != "builder" || result.MetadataRevision != 1 || result.TitleChangedAt != 1_000 {
 				t.Fatalf("RenameDurable = %+v, %v", result, err)
 			}
 			retry, err := provider.RenameDurable(ctx, request)
@@ -787,7 +788,7 @@ func TestDurableMetadataProvidersRenameConflictAndRetry(t *testing.T) {
 			if !errors.As(err, &conflict) || !errors.Is(err, base.ErrMetadataConflict) {
 				t.Fatalf("stale rename = %v, want metadata conflict", err)
 			}
-			if conflict.CurrentTitle != "builder" || conflict.CurrentMetadataRevision != 1 {
+			if conflict.CurrentTitle != "builder" || conflict.CurrentMetadataRevision != 1 || conflict.CurrentTitleChangedAt != 1_000 {
 				t.Fatalf("conflict current metadata = %+v", conflict)
 			}
 			_, err = provider.RenameDurable(ctx, conflictRequest)
@@ -796,7 +797,7 @@ func TestDurableMetadataProvidersRenameConflictAndRetry(t *testing.T) {
 				t.Fatalf("same conflict request retry = %+v, %v", conflictRetry, err)
 			}
 			descriptors, err = provider.ListDurableDescriptors(ctx)
-			if err != nil || len(descriptors) != 1 || descriptors[0].Title != "builder" || descriptors[0].MetadataRevision != 1 {
+			if err != nil || len(descriptors) != 1 || descriptors[0].Title != "builder" || descriptors[0].MetadataRevision != 1 || descriptors[0].TitleChangedAt != 1_000 {
 				t.Fatalf("conflict changed canonical metadata = %+v, %v", descriptors, err)
 			}
 

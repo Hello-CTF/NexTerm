@@ -776,3 +776,53 @@ func TestAttachFromOffset(t *testing.T) {
 		t.Fatalf("attach beyond recording = %v, want ErrInvalidInput", err)
 	}
 }
+
+func TestRenamePersistsTitleDecisionTime(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	id := ids.New()
+	incarnation := ids.New()
+	if err := os.MkdirAll(sessionDir(stateDir, id), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	entry := fmt.Sprintf(`{"id":%q,"created_at":%q,"incarnation":%q,"cols":80,"rows":24,"running":false}`, id, time.Now().UTC().Format(time.RFC3339Nano), incarnation)
+	if err := os.WriteFile(entryPath(stateDir, id), []byte(entry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	supervisor, err := New(Config{StateDir: stateDir, CommandTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = supervisor.Close() })
+	provider := NewProvider(supervisor)
+	rename := base.DurableRenameOptions{ID: id, Incarnation: incarnation, RequestID: ids.New(), Title: "deploy", TitleChangedAt: 1_000}
+	if result, err := provider.RenameDurable(context.Background(), rename); err != nil || result.TitleChangedAt != 1_000 {
+		t.Fatalf("rename = %+v, %v; want the decision time returned", result, err)
+	}
+	clear := base.DurableRenameOptions{ID: id, Incarnation: incarnation, RequestID: ids.New(), ExpectedMetadataRevision: 1, Title: "", TitleChangedAt: 2_000}
+	cleared, err := provider.RenameDurable(context.Background(), clear)
+	if err != nil || cleared.TitleChangedAt != 2_000 {
+		t.Fatalf("clear = %+v, %v; want the decision time returned", cleared, err)
+	}
+	stale := base.DurableRenameOptions{ID: id, Incarnation: incarnation, RequestID: ids.New(), ExpectedMetadataRevision: 1, Title: "old", TitleChangedAt: 1_500}
+	var conflict *base.DurableMetadataConflictError
+	if _, err := provider.RenameDurable(context.Background(), stale); !errors.As(err, &conflict) || conflict.CurrentTitleChangedAt != 2_000 {
+		t.Fatalf("stale rename = %v, want a conflict carrying the current decision time", err)
+	}
+	if err := supervisor.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := New(Config{StateDir: stateDir, CommandTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = restarted.Close() })
+	provider = NewProvider(restarted)
+	descriptors, err := provider.ListDurableDescriptors(context.Background())
+	if err != nil || len(descriptors) != 1 || descriptors[0].Title != "" || descriptors[0].TitleChangedAt != 2_000 {
+		t.Fatalf("descriptors after restart = %+v, %v; want the clear decided at 2000", descriptors, err)
+	}
+	if retry, err := provider.RenameDurable(context.Background(), clear); err != nil || retry != cleared {
+		t.Fatalf("retried clear = %+v, %v; want the recorded result %+v", retry, err, cleared)
+	}
+}

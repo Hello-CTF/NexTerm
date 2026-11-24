@@ -70,14 +70,17 @@ type Info struct {
 	WindowTitle string `json:"window_title,omitempty"`
 	// Cwd is the last working directory the shell reported through OSC 7;
 	// empty before a report and from helpers that predate it.
-	Cwd              string     `json:"cwd,omitempty"`
-	MetadataRevision uint64     `json:"metadata_revision,omitempty"`
-	Cols             uint32     `json:"cols"`
-	Rows             uint32     `json:"rows"`
-	Dead             bool       `json:"dead"`
-	ExitCode         *int       `json:"exit_code,omitempty"`
-	Signal           string     `json:"signal,omitempty"`
-	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	Cwd              string `json:"cwd,omitempty"`
+	MetadataRevision uint64 `json:"metadata_revision,omitempty"`
+	// TitleChangedAt is the client time (Unix ms) of the rename or clear that
+	// set Title; zero from helpers that predate it or before any rename.
+	TitleChangedAt int64      `json:"title_changed_at,omitempty"`
+	Cols           uint32     `json:"cols"`
+	Rows           uint32     `json:"rows"`
+	Dead           bool       `json:"dead"`
+	ExitCode       *int       `json:"exit_code,omitempty"`
+	Signal         string     `json:"signal,omitempty"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
 	// Legacy marks the read-only recording of a session an older helper
 	// (protocol 2) ran; it is always dead and never renamed.
 	Legacy bool `json:"legacy,omitempty"`
@@ -140,6 +143,8 @@ type RenameRequest struct {
 	RequestID                string `json:"request_id"`
 	ExpectedMetadataRevision uint64 `json:"expected_metadata_revision"`
 	Title                    string `json:"title"`
+	// TitleChangedAt is the client time (Unix ms) of this title decision.
+	TitleChangedAt int64 `json:"title_changed_at,omitempty"`
 }
 
 type MetadataConflictError struct {

@@ -26,6 +26,7 @@ type renameRecord struct {
 	Title                    string `json:"title"`
 	ResultTitle              string `json:"result_title"`
 	ResultMetadataRevision   uint64 `json:"result_metadata_revision"`
+	ResultTitleChangedAt     int64  `json:"result_title_changed_at,omitempty"`
 	Conflict                 bool   `json:"conflict,omitempty"`
 }
 
@@ -36,6 +37,7 @@ type registryEntry struct {
 	Attempt          string                  `json:"attempt,omitempty"`
 	Title            string                  `json:"title,omitempty"`
 	MetadataRevision uint64                  `json:"metadata_revision,omitempty"`
+	TitleChangedAt   int64                   `json:"title_changed_at,omitempty"`
 	RenameRequests   map[string]renameRecord `json:"rename_requests,omitempty"`
 	Cols             uint32                  `json:"cols"`
 	Rows             uint32                  `json:"rows"`
@@ -59,6 +61,7 @@ func (e registryEntry) info() Info {
 		Incarnation:      e.Incarnation,
 		Title:            e.Title,
 		MetadataRevision: e.MetadataRevision,
+		TitleChangedAt:   e.TitleChangedAt,
 		Cols:             e.Cols,
 		Rows:             e.Rows,
 		Dead:             !e.Running,
@@ -192,6 +195,7 @@ func (s *Supervisor) Rename(ctx context.Context, request RenameRequest) (Info, e
 		}
 		current.Title = record.ResultTitle
 		current.MetadataRevision = record.ResultMetadataRevision
+		current.TitleChangedAt = record.ResultTitleChangedAt
 		if record.Conflict {
 			return Info{}, &MetadataConflictError{Current: current}
 		}
@@ -204,6 +208,7 @@ func (s *Supervisor) Rename(ctx context.Context, request RenameRequest) (Info, e
 		Title:                    request.Title,
 		ResultTitle:              current.Title,
 		ResultMetadataRevision:   current.MetadataRevision,
+		ResultTitleChangedAt:     current.TitleChangedAt,
 	}
 	if request.ExpectedMetadataRevision != current.MetadataRevision {
 		record.Conflict = true
@@ -218,15 +223,18 @@ func (s *Supervisor) Rename(ctx context.Context, request RenameRequest) (Info, e
 	}
 
 	updated.Title = request.Title
+	updated.TitleChangedAt = request.TitleChangedAt
 	updated.MetadataRevision++
 	record.ResultTitle = updated.Title
 	record.ResultMetadataRevision = updated.MetadataRevision
+	record.ResultTitleChangedAt = updated.TitleChangedAt
 	updated = storeRenameRecord(updated, request.RequestID, record)
 	if err := writeEntry(sessionsRoot(s.stateDir), updated); err != nil {
 		return Info{}, err
 	}
 	session.entry.Title = updated.Title
 	session.entry.MetadataRevision = updated.MetadataRevision
+	session.entry.TitleChangedAt = updated.TitleChangedAt
 	session.entry.RenameRequests = updated.RenameRequests
 	return updated.info(), nil
 }

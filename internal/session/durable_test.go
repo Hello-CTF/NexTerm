@@ -34,17 +34,18 @@ type fakeDurableProvider struct {
 }
 
 type fakeDurableRecord struct {
-	identity    int
-	output      []byte
-	killed      int
-	exitCode    *int
-	attachments []*fakeDurableAttachment
-	cols        uint32
-	rows        uint32
-	floorEvent  uint64
-	floorGrid   uint64
-	title       string
-	revision    uint64
+	identity       int
+	output         []byte
+	killed         int
+	exitCode       *int
+	attachments    []*fakeDurableAttachment
+	cols           uint32
+	rows           uint32
+	floorEvent     uint64
+	floorGrid      uint64
+	title          string
+	revision       uint64
+	titleChangedAt int64
 	// cwd and windowTitle are what the helper last observed in the output.
 	cwd         string
 	windowTitle string
@@ -191,11 +192,12 @@ func (p *fakeDurableProvider) RenameDurable(_ context.Context, options base.Dura
 		return base.DurableRenameResult{}, err
 	}
 	if options.ExpectedMetadataRevision != record.revision {
-		return base.DurableRenameResult{}, &base.DurableMetadataConflictError{CurrentTitle: record.title, CurrentMetadataRevision: record.revision}
+		return base.DurableRenameResult{}, &base.DurableMetadataConflictError{CurrentTitle: record.title, CurrentMetadataRevision: record.revision, CurrentTitleChangedAt: record.titleChangedAt}
 	}
 	record.title = options.Title
+	record.titleChangedAt = options.TitleChangedAt
 	record.revision++
-	return base.DurableRenameResult{Title: record.title, MetadataRevision: record.revision}, nil
+	return base.DurableRenameResult{Title: record.title, MetadataRevision: record.revision, TitleChangedAt: record.titleChangedAt}, nil
 }
 
 // currentDurableIdentity is the identity a descriptor listing would report.
@@ -398,7 +400,7 @@ func recoverCanonicalDurableTestTab(t *testing.T, manager *Manager, connected *S
 			TabID: id, SessionID: connected.ID, ClientID: "client-a", ChannelID: channel, Cols: 80, Rows: 24,
 			Durable: &DurableTabOptions{
 				Recover: true, Identity: &identity,
-				Title: descriptor.Title, MetadataRevision: descriptor.MetadataRevision,
+				Title: descriptor.Title, MetadataRevision: descriptor.MetadataRevision, TitleChangedAt: descriptor.TitleChangedAt,
 			},
 		})
 		if err != nil {

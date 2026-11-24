@@ -663,12 +663,17 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 			// dynamic title; the default empty canonical title must not
 			// lock the OSC title out for the tab's lifetime.
 			tab.titleCustom = options.Durable.Title != ""
-			if tab.titleCustom {
-				// Helper metadata carries no decision time: stamp the moment
+			if at := options.Durable.TitleChangedAt; at > 0 {
+				// The helper recorded when the title was decided (a rename or a
+				// clear), so later and earlier client decisions order against it.
+				tab.titleChangedAt = clampTitleDecisionTime(at, time.Now())
+			} else if tab.titleCustom {
+				// An older helper records no decision time: stamp the moment
 				// this backend first observes the title, never zero, so a
 				// stale timestamped client decision cannot overwrite it.
 				tab.titleChangedAt = time.Now().UnixMilli()
-			} else {
+			}
+			if !tab.titleCustom {
 				tab.title = tab.dynamicTitle()
 			}
 		}
