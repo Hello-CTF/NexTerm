@@ -433,6 +433,21 @@ describe("kill danger actions", () => {
     expect(toastText()).not.toContain("已结束「");
   });
 
+  it("requestKillTab closes locally when the host's helper does not answer in time", async () => {
+    const tab = { ...terminal(), durable: true };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.closeTab
+      .mockRejectedValueOnce({ code: "timeout", message: "操作超时，请重试" })
+      .mockRejectedValueOnce({ code: "not_found", message: "资源不存在或已删除" });
+
+    await requestKillTab(tab.id);
+
+    expect(mocks.closeTab).toHaveBeenLastCalledWith("kernel-terminal", "detach", "s");
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
+    expect(toastText()).toContain("远端进程未能结束");
+    expect(toastText()).not.toContain("已结束「");
+  });
+
   it("requestKillTab keeps a regular remote tab when its kill fails as disconnected", async () => {
     const tab = { ...terminal(), durable: false, retainable: false };
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);

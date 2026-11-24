@@ -180,8 +180,10 @@ export function createTabSlice(set: UiSet, get: UiGet) {
               await terminalApi.closeTab(tabId, closeMode, target.sessionId);
             } catch (e) {
               // A durable terminal on a host that cannot be reached cannot be ended now. Dropping only this client's
-              // attachment needs no remote call, so the tab still closes and the process stays in 后台会话.
-              if (closeMode !== "kill" || regularRemote || (e as { code?: string } | null)?.code !== "disconnected") throw e;
+              // attachment needs no remote call, so the tab still closes and the process stays in 后台会话. A host
+              // whose SSH connection is up but whose helper does not answer in time times out instead.
+              const code = (e as { code?: string } | null)?.code;
+              if (closeMode !== "kill" || regularRemote || (code !== "disconnected" && code !== "timeout")) throw e;
               closeMode = "detach";
               remoteKillSkipped = true;
               await terminalApi.closeTab(tabId, "detach", target.sessionId);
