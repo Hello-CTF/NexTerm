@@ -195,7 +195,7 @@ export function createTabSlice(set: UiSet, get: UiGet) {
         } catch (e) {
           const code = (e as { code?: string } | null)?.code;
           const endedTab = target.kind === "terminal" && (
-            code === "not_found" || (code === "disconnected" && (target.dead || target.exited))
+            code === "not_found" || ((code === "disconnected" || code === "timeout") && (target.dead || target.exited))
           );
           if (!endedTab) {
             get().updateTab(id, { closeError: describeError(e) });

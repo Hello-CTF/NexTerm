@@ -137,6 +137,17 @@ describe("close = detach (M111)", () => {
     expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
   });
 
+  it("closes an exited terminal whose cleanup times out on an unresponsive host", async () => {
+    const tab = { ...terminal(), exited: true, exitCode: 0 };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.listLive.mockResolvedValueOnce([liveTab("kernel-terminal", true)]);
+    mocks.closeTab.mockRejectedValueOnce({ code: "timeout", message: "操作超时，请重试" });
+
+    await requestCloseTab(tab.id);
+
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
+  });
+
   it("closes a dead terminal without any IPC", async () => {
     const tab: AppTab = { id: "dead", kind: "terminal", title: "dead", sessionId: "s", closable: true, dead: true };
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
