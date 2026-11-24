@@ -4,6 +4,7 @@ package production
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -270,4 +271,84 @@ func TestProductionKillThroughOtherRouteKeepsWatchedTerminal(t *testing.T) {
 		}
 	}
 	t.Fatalf("host process of the watched terminal ended: %+v", infos)
+}
+
+type failingKillProvider struct {
+	*supervisor.RemoteProvider
+}
+
+func (p *failingKillProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, options base.DurableTailOptions) (base.DurableAttachment, error) {
+	attachment, err := p.RemoteProvider.AttachTailWithIdentity(ctx, id, identity, options)
+	if attachment == nil || err != nil {
+		return attachment, err
+	}
+	return &failingKillAttachment{DurableAttachment: attachment}, nil
+}
+
+type failingKillAttachment struct {
+	base.DurableAttachment
+}
+
+func (a *failingKillAttachment) Kill(context.Context) error { return durable.ErrUnavailable }
+
+func TestProductionFailedKillOfRecoveredTabReleasesItsRecord(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	production, _ := newRemoteRecoveryHarness(t, &recordingDurableResolver{provider: &failingKillProvider{RemoteProvider: fixture.provider}})
+	connected := connectRemoteSSHAsset(t, production)
+	tabID := ids.New()
+	attachment, err := fixture.provider.Create(t.Context(), base.DurableCreateOptions{
+		ID: tabID, Command: []string{"/bin/sh", "-c", "sleep 60"}, Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := attachment.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fixture.client.Kill(context.Background(), tabID, nil) })
+
+	killed := dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","sessionId":"`+connected.ID+`","mode":"kill"}`, "", "client-a")
+	if killed.OK || killed.Error == nil || killed.Error.Code != ipc.CodeDisconnected {
+		t.Fatalf("kill on an unreachable helper = %+v, want a disconnected error", killed.Error)
+	}
+	if _, err := production.Services.Sessions.Tab(tabID); !errors.Is(err, session.ErrTabNotFound) {
+		t.Fatalf("a failed kill left the tab recovered only to be ended: %v", err)
+	}
+	// The client's fallback detach then finds nothing to keep, which closes the tab.
+	detached := dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","sessionId":"`+connected.ID+`","mode":"detach"}`, "", "client-a")
+	if detached.OK || detached.Error == nil || detached.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("fallback detach = %+v, want not found", detached.Error)
+	}
+	infos, err := fixture.client.List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range infos {
+		if info.ID == tabID {
+			if info.Dead {
+				t.Fatalf("a failed kill ended the process: %+v", info)
+			}
+			return
+		}
+	}
+	t.Fatal("the process is no longer listed on the host")
+}
+
+func TestProductionKillWithoutItsSessionReportsTheKillSkipped(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: fixture.provider}
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	connectRemoteSSHAsset(t, production)
+
+	response := dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+ids.New()+`","sessionId":"`+ids.New()+`","mode":"kill"}`, "", "client-a")
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("kill without its session = %+v, want not_found", response.Error)
+	}
+	encoded, err := json.Marshal(response.Error.Detail)
+	if err != nil || string(encoded) != `{"killSkipped":true}` {
+		t.Fatalf("kill without its session detail = %s (%v), want the kill marked skipped", encoded, err)
+	}
+	if calls := len(resolver.recorded()); calls != 0 {
+		t.Fatalf("kill without its session reached %d helpers", calls)
+	}
 }
