@@ -500,6 +500,16 @@ async function requestCloseTabWithAction(id: string, options: CloseRequestOption
   }
 }
 
+const CLOSE_CHECK_TIMEOUT_MS = 10_000;
+
+function withinCloseCheckTime<T>(pending: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("close check timed out")), CLOSE_CHECK_TIMEOUT_MS);
+  });
+  return Promise.race([pending, expired]).finally(() => clearTimeout(timer));
+}
+
 export async function reconcileTerminalCloseState(ids: string[]): Promise<void> {
   const candidates = ids
     .map((id) => findTab(id)?.tab)
@@ -528,7 +538,8 @@ export async function reconcileTerminalCloseState(ids: string[]): Promise<void> 
       ?? findTab(tab.id)?.ws.assetKind;
     return !byId.has(tab.tabId as string) && !tab.containerId && (kind === "ssh" || kind === "device") && tab.sessionId;
   }).map((tab) => tab.sessionId as string))];
-  const results = await Promise.allSettled(remoteSessions.map((id) => terminalApi.listDurable(id)));
+  // A host whose helper never answers counts as one that cannot be checked, so the close is not held up.
+  const results = await Promise.allSettled(remoteSessions.map((id) => withinCloseCheckTime(terminalApi.listDurable(id))));
   const remote = new Map(remoteSessions.map((id, index) => {
     const result = results[index];
     return [id, result.status === "fulfilled" ? new Map(result.value.map((tab) => [tab.id, tab])) : null] as const;

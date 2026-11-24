@@ -203,7 +203,7 @@ export function createTabSlice(set: UiSet, get: UiGet) {
             void get().resyncSessions({ silent: true });
             return false;
           }
-          if (remote && closeMode === "detach" && (code === "not_found" || code === "disconnected")) {
+          if (remote && closeMode === "detach" && (code === "not_found" || code === "disconnected" || code === "timeout")) {
             remoteCloseUnknown = true;
           }
         }

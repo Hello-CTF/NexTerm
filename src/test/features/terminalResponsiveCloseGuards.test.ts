@@ -109,6 +109,24 @@ describe("close = detach (M111)", () => {
     expect(toastText()).toContain("已转入后台");
   });
 
+  it("does not wait forever on a host whose listing never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const tab = { ...terminal(), exited: true };
+      seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+      mocks.listDurable.mockReturnValueOnce(new Promise(() => undefined));
+
+      const closing = requestCloseTab(tab.id);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await closing;
+
+      expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
+      expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(["ssh", "device"] as const)("keeps missing %s backend state unknown and never defaults to kill", async (kind) => {
     const tab = { ...terminal(), exited: false };
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }], kind);
