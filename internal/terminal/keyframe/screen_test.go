@@ -78,3 +78,14 @@ func BenchmarkScreenState(b *testing.B) {
 		_ = screen.State()
 	}
 }
+
+// A window title whose UTF-8 bytes include 0x9C must leave the screen as if it were not there.
+func TestTitleWithTheStringTerminatorByteLeavesTheScreenUnchanged(t *testing.T) {
+	plain := New(20, 3)
+	plain.Write([]byte("left right"))
+	titled := New(20, 3)
+	titled.Write([]byte("left \x1b]0;查看日志\x07right"))
+	if got, want := titled.State(), plain.State(); got != want {
+		t.Fatalf("screen with a title = %q, want %q", got, want)
+	}
+}

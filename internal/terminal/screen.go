@@ -7,6 +7,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/Hello-CTF/NexTerm/internal/terminal/oscfeed"
 )
 
 const ScrollbackLines = 100_000
@@ -287,11 +289,13 @@ func (g *grid) resize(cols, rows int, history *lineHistory, keepHistory bool, cu
 
 type screen struct {
 	parser *ansi.Parser
-	cols   int
-	rows   int
-	grid   *grid
-	main   *grid
-	alt    bool
+	// oscs collects OSC strings so a UTF-8 title byte cannot end them early.
+	oscs *oscfeed.Feeder
+	cols int
+	rows int
+	grid *grid
+	main *grid
+	alt  bool
 
 	cur          cursorState
 	saved        cursorState
@@ -310,9 +314,13 @@ type screen struct {
 }
 
 // maxOSCTitleBytes bounds a tracked window title; longer payloads are
-// rejected whole so the previous title stays. The parser's data buffer is
-// bounded separately so oversized OSC floods cannot grow memory.
+// rejected whole so the previous title stays. The collected OSC data is
+// bounded at oscDataLimit so oversized OSC floods cannot grow memory.
 const maxOSCTitleBytes = 4096
+
+// oscDataLimit still holds a title at maxOSCTitleBytes with its command
+// prefix; a longer payload is cut there and then rejected whole.
+const oscDataLimit = 8 * 1024
 
 func newScreen(cols, rows, history int) *screen {
 	s := &screen{
@@ -330,8 +338,8 @@ func newScreen(cols, rows, history int) *screen {
 		Execute:   s.execute,
 		HandleCsi: s.csi,
 		HandleEsc: s.esc,
-		HandleOsc: s.osc,
 	})
+	s.oscs = oscfeed.New(s.parser, oscDataLimit, s.osc)
 	return s
 }
 
@@ -407,9 +415,7 @@ func (s *screen) promptMarks() (prompt, input ScreenMark) {
 }
 
 func (s *screen) write(p []byte) {
-	for _, b := range p {
-		s.parser.Advance(b)
-	}
+	s.oscs.Write(p)
 }
 
 func (s *screen) takeResponses() []byte {

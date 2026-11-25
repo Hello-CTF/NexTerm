@@ -4,6 +4,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/oscfeed"
 )
 
 // Scrollback is the replay view's xterm scrollback (TranscriptReplayView).
@@ -16,8 +17,10 @@ const maxStyles = 1 << 16
 // Screen is the modelled xterm terminal. It is not safe for concurrent use.
 type Screen struct {
 	parser *ansi.Parser
-	cols   int
-	rows   int
+	// oscs collects OSC strings so a UTF-8 title byte cannot end them early and print the rest of the title.
+	oscs *oscfeed.Feeder
+	cols int
+	rows int
 
 	normal *buffer
 	alt    *buffer
@@ -64,9 +67,9 @@ func New(cols, rows int) *Screen {
 		Execute:   s.execute,
 		HandleCsi: s.csi,
 		HandleEsc: s.esc,
-		HandleOsc: func(int, []byte) { s.endJoin() },
 		HandleDcs: func(ansi.Cmd, ansi.Params, []byte) { s.endJoin() },
 	})
+	s.oscs = oscfeed.New(s.parser, 0, func(int, []byte) { s.endJoin() })
 	return s
 }
 
@@ -90,9 +93,7 @@ func (s *Screen) reset() {
 
 // Write applies terminal output.
 func (s *Screen) Write(p []byte) {
-	for _, b := range p {
-		s.parser.Advance(b)
-	}
+	s.oscs.Write(p)
 }
 
 // Size returns the screen size.

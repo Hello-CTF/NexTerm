@@ -224,3 +224,16 @@ func TestOSCTitleReadableAfterClose(t *testing.T) {
 		t.Fatalf("title after close = %q", got)
 	}
 }
+
+// A title character whose UTF-8 encoding holds 0x9C, the 8-bit string terminator, keeps the whole title and prints
+// none of it on the screen.
+func TestOSCTitleKeepsCharactersEncodingTheStringTerminatorByte(t *testing.T) {
+	tab := newTestTab(t)
+	feedString(tab, "\x1b]2;部署: 看板\x07ok")
+	if got := tab.Title(); got != "部署: 看板" {
+		t.Fatalf("title = %q, want %q", got, "部署: 看板")
+	}
+	if got := tab.ScreenText(); strings.Contains(got, "板") || !strings.Contains(got, "ok") {
+		t.Fatalf("screen = %q; the title must not be printed and the output after it must be", got)
+	}
+}

@@ -11,10 +11,9 @@ type Emulator struct {
 	scr *screen
 }
 
-// emulatorDataSize bounds the parser's OSC/DCS data buffer. The emulator
-// only reads window titles from that data, and the buffer still holds a
-// title at maxOSCTitleBytes; a longer payload is cut at the buffer and then
-// rejected whole as before.
+// emulatorDataSize bounds the parser's DCS and other string data buffer; OSC
+// strings, where the emulator reads window titles, are collected separately
+// up to oscDataLimit.
 const emulatorDataSize = 8 * 1024
 
 // NewEmulator returns an emulator of the given size; non-positive
