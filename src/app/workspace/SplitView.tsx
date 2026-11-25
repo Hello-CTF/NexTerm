@@ -16,6 +16,7 @@ import { workspaceLayoutTree } from "../paneLayout";
 import { paneIdsInOrder, paneRects, resolveActivePane, type Rect, type SplitDir, type SplitNode } from "../splitTree";
 import type { DropRegion } from "../tabDropZone";
 import { TabDropLayer } from "./TabDropLayer";
+import { paneShowsTabStrip } from "./paneChrome";
 import { t } from "../../i18n";
 
 // Divider thickness in pixels; each pane gives up half of it on every inner edge.
@@ -235,6 +236,8 @@ export function SplitView({ workspace, singlePane, renderPane, renderTab, onActi
     })
     .sort((left, right) => (left.tab.id < right.tab.id ? -1 : left.tab.id > right.tab.id ? 1 : 0));
   const defaultStrip = defaultStripHeight();
+  const stripHeight = (pane: Pane): number =>
+    paneShowsTabStrip(workspace, pane) ? strips[pane.id] ?? defaultStrip : 0;
   const shownOrder = solo ? [activePaneId] : tree ? paneIdsInOrder(tree) : [];
 
   // Panes render chrome first and all tab content after it, keyed by tab id, so DOM order is not
@@ -288,7 +291,7 @@ export function SplitView({ workspace, singlePane, renderPane, renderTab, onActi
             data-tab-content={tab.id}
             data-content-pane={pane.id}
             className={visible ? "absolute flex min-h-0 min-w-0 flex-col" : "hidden"}
-            style={visible ? tabContentStyle(rect, strips[pane.id] ?? defaultStrip) : undefined}
+            style={visible ? tabContentStyle(rect, stripHeight(pane)) : undefined}
             onMouseDown={() => {
               if (pane.id !== activePaneId) onActivatePane(pane.id);
             }}
@@ -304,7 +307,7 @@ export function SplitView({ workspace, singlePane, renderPane, renderTab, onActi
         <TabDropLayer
           panes={placement
             .filter((entry) => entry.shown)
-            .map((entry) => ({ paneId: entry.pane.id, style: tabContentStyle(entry.rect, strips[entry.pane.id] ?? defaultStrip) }))}
+            .map((entry) => ({ paneId: entry.pane.id, style: tabContentStyle(entry.rect, stripHeight(entry.pane)) }))}
           edges={!singlePane}
           onTabDrop={onTabDrop}
         />

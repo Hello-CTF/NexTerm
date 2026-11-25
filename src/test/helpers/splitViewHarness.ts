@@ -49,6 +49,7 @@ export function lazyPanelsMock() {
     SettingsView: stub("settings"),
     AuditView: stub("audit"),
     CredentialsPanel: stub("credentials-panel"),
+    RemoteDesktopPane: stub("remote-desktop"),
   };
 }
 

@@ -45,6 +45,7 @@ import {
   tabIcon,
   tabTooltip,
 } from "./tabStrip";
+import { paneShowsTabStrip } from "./paneChrome";
 import { PaneForTab } from "./PaneForTab";
 import { WorkspaceEmpty } from "./EmptyStates";
 import { beginTabDrag, currentTabDrag, endTabDrag, TAB_DRAG_MIME, tabDragFrom, useTabDrag } from "./tabDrag";
@@ -189,6 +190,7 @@ export function PaneGroup({
   onToggleLeft,
 }: PaneGroupProps) {
   const workspaceKind = useUi((s) => (workspaceId ? s.workspaces.find((w) => w.id === workspaceId)?.kind : undefined));
+  const showStrip = useUi((s) => paneShowsTabStrip(workspaceId ? s.workspaces.find((w) => w.id === workspaceId) : undefined, pane));
   const canNewTerminal = workspaceKind === undefined || workspaceKind === "session";
   const setActiveTab = useUi((s) => s.setActiveTab);
   const moveTabToPane = useUi((s) => s.moveTabToPane);
@@ -385,158 +387,159 @@ export function PaneGroup({
         if (!active) onActivate();
       }}
     >
-      <div
-        ref={stripRef}
-        className={`nx-tabstrip is-sub ${split ? "is-split" : ""} ${
-          active ? "is-active-pane" : ""
-        }`}
-      >
+      {showStrip && (
         <div
-          className={`nx-tabstrip-scroll${overflow.left ? " has-overflow-left" : ""}${overflow.right ? " has-overflow-right" : ""}`}
-          ref={tabScrollRef}
-          // A tab from another pane dropped on the strip but not on a tab joins the end of this pane.
-          onDragOver={(e) => {
-            const source = tabDragFrom(e.dataTransfer);
-            if (!source || source.paneId === pane.id || e.isDefaultPrevented()) return;
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "move";
-          }}
-          onDrop={(e) => {
-            const source = tabDragFrom(e.dataTransfer);
-            if (!source || source.paneId === pane.id || e.isDefaultPrevented()) return;
-            e.preventDefault();
-            endTabDrag();
-            moveTabToPane(source.tabId, pane.id);
-          }}
+          ref={stripRef}
+          className={`nx-tabstrip is-sub ${split ? "is-split" : ""} ${
+            active ? "is-active-pane" : ""
+          }`}
         >
-        {pane.tabs.length === 0 && (
-          <span className="px-1 text-xs text-neutral-500">{tr("该窗格暂无标签页")}</span>
-        )}
-        <div role="tablist" aria-label={tr("标签页")} className="flex items-center gap-[3px]">
-          {pane.tabs.map((t) => {
-            const Icon = tabIcon(t);
-            const isActive = t.id === activeTabId;
-            return (
-              <TabStripItem key={t.id} tab={t} active={isActive}>
-                {(unread, persistence, attention) => (
-                  <div
-                role="tab"
-                data-tab-id={t.id}
-                id={`nx-tab-${idPrefix}-${t.id}`}
-                aria-selected={isActive}
-                aria-controls={`nx-tab-panel-${idPrefix}-${t.id}`}
-                tabIndex={isActive ? 0 : -1}
-                // Touch shells move tabs from the tab menu and the palette instead of dragging.
-                draggable={!isTouchShell()}
-                className={`nx-tab ${isActive ? "is-active" : ""}${
-                  dropHint?.id === t.id ? ` nx-drop-${dropHint.edge}` : ""
-                }${draggingId === t.id ? " nx-drag-source" : ""}`}
-                onClick={() => {
-                  if (draggingId === t.id) return;
-                  setActiveTab(t.id);
-                }}
-                onDragStart={(e) => {
-                  beginTabDrag({ tabId: t.id, paneId: pane.id, paneTabCount: pane.tabs.length });
-                  e.dataTransfer.setData(TAB_DRAG_MIME, t.id);
-                  e.dataTransfer.effectAllowed = "move";
-                }}
-                onDragEnd={() => {
-                  endTabDrag();
-                  setDropHint(null);
-                }}
-                onDragOver={(e) => {
-                  const source = tabDragFrom(e.dataTransfer);
-                  if (!source || source.tabId === t.id) return;
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = "move";
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const edge = e.clientX < rect.left + rect.width / 2 ? "before" : "after";
-                  setDropHint((hint) => (hint?.id === t.id && hint.edge === edge ? hint : { id: t.id, edge }));
-                }}
-                onDragLeave={() => {
-                  setDropHint((hint) => (hint?.id === t.id ? null : hint));
-                }}
-                onDrop={(e) => {
-                  const source = tabDragFrom(e.dataTransfer);
-                  if (!source) return;
-                  e.preventDefault();
-                  setDropHint(null);
-                  if (source.tabId === t.id) return;
-                  const over = pane.tabs.findIndex((x) => x.id === t.id);
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const before = e.clientX < rect.left + rect.width / 2;
-                  endTabDrag();
-                  if (source.paneId !== pane.id) {
-                    // A tab from another pane lands beside the tab it was dropped on.
-                    moveTabToPane(source.tabId, pane.id, before ? over : over + 1);
-                    return;
-                  }
-                  const from = pane.tabs.findIndex((x) => x.id === source.tabId);
-                  if (from < 0 || over < 0) return;
-                  moveTab(from, before ? (from < over ? over - 1 : over) : from < over ? over : over + 1);
-                }}
-                onKeyDown={(e) => {
-                  if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
+          <div
+            className={`nx-tabstrip-scroll${overflow.left ? " has-overflow-left" : ""}${overflow.right ? " has-overflow-right" : ""}`}
+            ref={tabScrollRef}
+            // A tab from another pane dropped on the strip but not on a tab joins the end of this pane.
+            onDragOver={(e) => {
+              const source = tabDragFrom(e.dataTransfer);
+              if (!source || source.paneId === pane.id || e.isDefaultPrevented()) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(e) => {
+              const source = tabDragFrom(e.dataTransfer);
+              if (!source || source.paneId === pane.id || e.isDefaultPrevented()) return;
+              e.preventDefault();
+              endTabDrag();
+              moveTabToPane(source.tabId, pane.id);
+            }}
+          >
+          {pane.tabs.length === 0 && (
+            <span className="px-1 text-xs text-neutral-500">{tr("该窗格暂无标签页")}</span>
+          )}
+          <div role="tablist" aria-label={tr("标签页")} className="flex items-center gap-[3px]">
+            {pane.tabs.map((t) => {
+              const Icon = tabIcon(t);
+              const isActive = t.id === activeTabId;
+              return (
+                <TabStripItem key={t.id} tab={t} active={isActive}>
+                  {(unread, persistence, attention) => (
+                    <div
+                  role="tab"
+                  data-tab-id={t.id}
+                  id={`nx-tab-${idPrefix}-${t.id}`}
+                  aria-selected={isActive}
+                  aria-controls={`nx-tab-panel-${idPrefix}-${t.id}`}
+                  tabIndex={isActive ? 0 : -1}
+                  // Touch shells move tabs from the tab menu and the palette instead of dragging.
+                  draggable={!isTouchShell()}
+                  className={`nx-tab ${isActive ? "is-active" : ""}${
+                    dropHint?.id === t.id ? ` nx-drop-${dropHint.edge}` : ""
+                  }${draggingId === t.id ? " nx-drag-source" : ""}`}
+                  onClick={() => {
+                    if (draggingId === t.id) return;
+                    setActiveTab(t.id);
+                  }}
+                  onDragStart={(e) => {
+                    beginTabDrag({ tabId: t.id, paneId: pane.id, paneTabCount: pane.tabs.length });
+                    e.dataTransfer.setData(TAB_DRAG_MIME, t.id);
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
+                  onDragEnd={() => {
+                    endTabDrag();
+                    setDropHint(null);
+                  }}
+                  onDragOver={(e) => {
+                    const source = tabDragFrom(e.dataTransfer);
+                    if (!source || source.tabId === t.id) return;
                     e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
                     const rect = e.currentTarget.getBoundingClientRect();
-                    openTabMenu(t, rect.left, rect.bottom);
-                    return;
-                  }
-                  handleTablistKeyDown(
-                    e,
-                    pane.tabs.map((x) => x.id),
-                    t.id,
-                    setActiveTab,
-                    moveTab,
-                  );
-                }}
-                onAuxClick={(e) => {
-                  if (e.button !== 1) return;
-                  e.preventDefault();
-                  if (t.closable) void requestCloseTab(t.id);
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  openTabMenu(t, e.clientX, e.clientY);
-                }}
-                title={tabTooltip(t, unread, persistence, attention)}
-              >
-                <span className="flex shrink-0">
-                  <Icon size={13} />
-                </span>
-                <TabPersistenceMark tab={t} part="icon" />
-                <TabAttentionBadge badge={attention} />
-                {t.kind === "terminal" && !t.exited && <TabProgress tabId={t.tabId} />}
-                <TabStripTitle tab={t} />
-                {t.kind === "terminal" && <TabProductionBadge sessionId={t.sessionId} />}
-                {t.closeError && (
-                  <span className="flex shrink-0 items-center text-red-400" role="img" aria-label={tr("关闭失败：{closeError}", { closeError: t.closeError })}>
-                    <IconAlert size={11} />
+                    const edge = e.clientX < rect.left + rect.width / 2 ? "before" : "after";
+                    setDropHint((hint) => (hint?.id === t.id && hint.edge === edge ? hint : { id: t.id, edge }));
+                  }}
+                  onDragLeave={() => {
+                    setDropHint((hint) => (hint?.id === t.id ? null : hint));
+                  }}
+                  onDrop={(e) => {
+                    const source = tabDragFrom(e.dataTransfer);
+                    if (!source) return;
+                    e.preventDefault();
+                    setDropHint(null);
+                    if (source.tabId === t.id) return;
+                    const over = pane.tabs.findIndex((x) => x.id === t.id);
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const before = e.clientX < rect.left + rect.width / 2;
+                    endTabDrag();
+                    if (source.paneId !== pane.id) {
+                      // A tab from another pane lands beside the tab it was dropped on.
+                      moveTabToPane(source.tabId, pane.id, before ? over : over + 1);
+                      return;
+                    }
+                    const from = pane.tabs.findIndex((x) => x.id === source.tabId);
+                    if (from < 0 || over < 0) return;
+                    moveTab(from, before ? (from < over ? over - 1 : over) : from < over ? over : over + 1);
+                  }}
+                  onKeyDown={(e) => {
+                    if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
+                      e.preventDefault();
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      openTabMenu(t, rect.left, rect.bottom);
+                      return;
+                    }
+                    handleTablistKeyDown(
+                      e,
+                      pane.tabs.map((x) => x.id),
+                      t.id,
+                      setActiveTab,
+                      moveTab,
+                    );
+                  }}
+                  onAuxClick={(e) => {
+                    if (e.button !== 1) return;
+                    e.preventDefault();
+                    if (t.closable) void requestCloseTab(t.id);
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    openTabMenu(t, e.clientX, e.clientY);
+                  }}
+                  title={tabTooltip(t, unread, persistence, attention)}
+                >
+                  <span className="flex shrink-0">
+                    <Icon size={13} />
                   </span>
-                )}
-                <TabPersistenceMark tab={t} part="failure" />
-                {unread && (!attention || attention.kind === "unknown") && (
-                  <span
-                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"
-                    role="img"
-                    aria-label={tr("有新输出")}
-                  />
-                )}
-                {t.closable && (
-                  <button
-                    type="button"
-                    className="nx-tab-close"
-                    aria-label={tr("关闭标签页 {title}", { title: t.title })}
-                    title={closeTabHint(t)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void requestCloseTab(t.id);
-                    }}
-                  >
-                    <IconClose size={10} />
-                  </button>
-                )}
-                  </div>
+                  <TabPersistenceMark tab={t} part="icon" />
+                  <TabAttentionBadge badge={attention} />
+                  {t.kind === "terminal" && !t.exited && <TabProgress tabId={t.tabId} />}
+                  <TabStripTitle tab={t} />
+                  {t.kind === "terminal" && <TabProductionBadge sessionId={t.sessionId} />}
+                  {t.closeError && (
+                    <span className="flex shrink-0 items-center text-red-400" role="img" aria-label={tr("关闭失败：{closeError}", { closeError: t.closeError })}>
+                      <IconAlert size={11} />
+                    </span>
+                  )}
+                  <TabPersistenceMark tab={t} part="failure" />
+                  {unread && (!attention || attention.kind === "unknown") && (
+                    <span
+                      className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"
+                      role="img"
+                      aria-label={tr("有新输出")}
+                    />
+                  )}
+                  {t.closable && (
+                    <button
+                      type="button"
+                      className="nx-tab-close"
+                      aria-label={tr("关闭标签页 {title}", { title: t.title })}
+                      title={closeTabHint(t)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void requestCloseTab(t.id);
+                      }}
+                    >
+                      <IconClose size={10} />
+                    </button>
+                  )}
+                    </div>
                 )}
               </TabStripItem>
             );
@@ -661,6 +664,7 @@ export function PaneGroup({
           <IconChevronLeft size={15} className={leftOpen ? "" : "rotate-180"} />
         </button>
       </div>
+      )}
 
       <div className="min-h-0 flex-1">
         {pane.tabs.length === 0 && <WorkspaceEmpty onNew={onNewTerminal} workspaceId={workspaceId} paneId={pane.id} />}
