@@ -123,7 +123,7 @@ vi.mock("../app/DekUnlockBanner", () => ({ DekUnlockBanner: () => null }));
 import App from "../app/App";
 import { setMacPlatform } from "../app/platform";
 import { useShell } from "../app/shell";
-import { useUi } from "../app/store";
+import { openCredentialsTab, useUi } from "../app/store";
 import { resetMobileHomeForTest } from "../app/shell/mobileHome";
 
 interface DeviceProfile {
@@ -401,6 +401,32 @@ describe("app shell modes", () => {
     expect(button("终端总览")?.getAttribute("aria-pressed")).toBe("true");
     act(() => button("终端总览")?.click());
     expect(wall()).toBeNull();
+  });
+
+  it("desktop: choosing a docked sidebar panel from the rail leaves the status wall", async () => {
+    stubDevice(DESKTOP);
+    mounted = mountApp();
+    await flush();
+    const wall = () => document.querySelector("[data-status-wall]");
+    for (const panel of ["资产", "凭据"]) {
+      act(() => button("终端总览")?.click());
+      expect(wall()).not.toBeNull();
+      act(() => button(panel)?.click());
+      await flush();
+      expect(wall()).toBeNull();
+      expect(button("终端总览")?.getAttribute("aria-pressed")).toBe("false");
+    }
+  });
+
+  it("opening the credentials page leaves the status wall", async () => {
+    stubDevice(NARROW_WINDOW);
+    mounted = mountApp();
+    await flush();
+    act(() => button("终端总览")?.click());
+    expect(document.querySelector("[data-status-wall]")).not.toBeNull();
+    act(() => openCredentialsTab());
+    await flush();
+    expect(document.querySelector("[data-status-wall]")).toBeNull();
   });
 
   it("mobile on a wide tablet keeps docked sidebars and still hides the desktop window chrome", async () => {

@@ -72,6 +72,12 @@ export function AppRail({
   const hasHostDetail = hasHost && hostAssetId !== "" &&
     (isHostAssetKind(workspace?.assetKind ?? "") || deviceIdOfHost(hostAssetId) !== null);
 
+  // A docked panel sits beside the status wall, and what it opens lands in the workspaces under the wall, so choosing
+  // one leaves the wall. An overlay drawer opens over the wall and keeps it as the page to return to.
+  const leaveHomeForDockedPanel = () => {
+    if (!overlaySidebars) hideMobileHome();
+  };
+
   const railPanels: {
     key: string;
     label: string;
@@ -87,6 +93,7 @@ export function AppRail({
         : t("管理主机和数据库；双击收起左侧栏"),
       icon: IconServer,
       onClick: () => {
+        leaveHomeForDockedPanel();
         if (showLeftPanel("assets", leftDockOpen)) setLeftOpen(true);
       },
     },
@@ -96,6 +103,7 @@ export function AppRail({
       hint: t("管理密码和私钥；双击收起左侧栏"),
       icon: IconKey,
       onClick: () => {
+        leaveHomeForDockedPanel();
         if (showLeftPanel("credentials", leftDockOpen)) setLeftOpen(true);
       },
     },

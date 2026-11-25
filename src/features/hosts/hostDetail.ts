@@ -1,5 +1,6 @@
 import { dbKindOf, deviceAssetId, useUi, type Workspace } from "../../app/store";
 import type { Asset } from "../../ipc/commands";
+import { hideMobileHome } from "../../app/shell/mobileHome";
 import { t } from "../../i18n";
 
 // Each host gets its own detail tab; opening a host that already has one focuses it.
@@ -41,6 +42,7 @@ export function deviceIdOfHost(assetId: string): string | null {
 // terminal: the page offers that as an explicit action.
 export function openHostDetail(assetId: string): void {
   if (!assetId) return;
+  hideMobileHome();
   // Reopening a host whose page is already open keeps its resolved title.
   const current = findHostDetailTab(assetId);
   useUi.getState().addTab({

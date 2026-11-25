@@ -7,6 +7,7 @@ import { regularTerminalReason } from "./durableReadiness";
 import { isWorkspaceToolTab, nextTabId } from "./model";
 import type { AppTab, LeftMode, SessionRuntimeInfo, UiState, Workspace } from "./types";
 import { useUi } from "./useUi";
+import { hideMobileHome } from "../shell/mobileHome";
 import { clipText } from "../../ui/textClip";
 import { t as tr } from "../../i18n";
 
@@ -308,6 +309,7 @@ export function openCredentialsSidebar() {
 }
 
 export function openCredentialsTab(credId?: string) {
+  hideMobileHome();
   useUi.getState().addTab({
     id: "tab-credentials",
     kind: "credentials",
