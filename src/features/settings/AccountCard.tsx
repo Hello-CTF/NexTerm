@@ -1,6 +1,6 @@
-// Superadmin card: user management (create / disable / reset) and the open-registration switch. Visible to superadmins only.
+// Superadmin card: user management (create / disable / reset / delete) and the open-registration switch. Visible to superadmins only.
 // The desktop identity comes from the "account sync" link session (../auth/desktopAccount.ts); user management goes through the
-// remoteAccountApi proxy; the registration switch and MFA policy are not covered by the proxy, so they are honestly hidden with a browser-management note.
+// remoteAccountApi proxy; the registration switch, MFA policy and user deletion are not covered by the proxy, so they are honestly hidden with a browser-management note.
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { adminApi, authApi, type AccountUser, type AdminSettings } from "../../ipc/authApi";
@@ -18,7 +18,7 @@ import {
   IconShield,
   IconXCircle,
 } from "../../ui/icons";
-import { t } from "../../i18n";
+import { t, translateMessage } from "../../i18n";
 
 function stateBadge(user: AccountUser): { text: string; tone: string } {
   if (user.state === "disabled") return { text: t("已禁用"), tone: "nx-badge-red" };
@@ -179,6 +179,33 @@ export function AccountCard() {
     }
   };
 
+  const deleteUser = async (target: AccountUser) => {
+    const actionIdentity = identity;
+    const actionEpoch = identityEpoch.current;
+    const stillCurrent = () => currentIdentity.current === actionIdentity && identityEpoch.current === actionEpoch;
+    const ok = await ask(
+      t("确定要永久删除用户「{username}」吗？\n\n该账号及其在服务端的全部数据（资产、凭据、同步密文、终端记录、AI 会话与定时任务、已登记的设备和共享）将被立即删除，无法恢复。\n对方的所有会话和设备连接会立即断开。", { username: target.username }),
+      { title: t("删除用户"), kind: "warning", confirmLabel: t("永久删除") },
+    );
+    if (!ok || !stillCurrent()) return;
+    try {
+      const result = await adminApi.deleteUser(target.id);
+      if (!stillCurrent()) return;
+      const warnings = (result.warnings ?? []).map(translateMessage);
+      if (warnings.length > 0) {
+        pushToast("error", t("已删除「{username}」，但部分清理未完成：{warnings}", { username: target.username, warnings: warnings.join("；") }));
+      } else {
+        pushToast("success", t("已删除「{username}」", { username: target.username }));
+      }
+      await load();
+    } catch (e) {
+      if (!stillCurrent()) return;
+      pushToast("error", describeError(e));
+      // A delete that failed after its first step leaves the user disabled; show that state.
+      await load();
+    }
+  };
+
   const saveSettings = async () => {
     if (!settings) return;
     const actionIdentity = identity;
@@ -225,7 +252,9 @@ export function AccountCard() {
       </div>
 
       <p className="nx-hint mb-3">
-        {t("超级管理员创建的用户可使用初始密码登录。禁用会使用户的所有会话立即失效；重置会清除数据密钥、所有会话和两步验证绑定，用户下次登录须设置新密码，并重新同步服务端密文。超级管理员无法获取或解密用户数据。")}
+        {DESKTOP
+          ? t("超级管理员创建的用户可使用初始密码登录。禁用会使用户的所有会话立即失效；重置会清除数据密钥、所有会话和两步验证绑定，用户下次登录须设置新密码，并重新同步服务端密文。超级管理员无法获取或解密用户数据。")
+          : t("超级管理员创建的用户可使用初始密码登录。禁用会使用户的所有会话立即失效；重置会清除数据密钥、所有会话和两步验证绑定，用户下次登录须设置新密码，并重新同步服务端密文；删除会永久移除该用户及其在服务端的全部数据，无法恢复。超级管理员无法获取或解密用户数据。")}
       </p>
 
       {createOpen && (
@@ -320,6 +349,15 @@ export function AccountCard() {
                     onClick={() => void resetUser(u)}
                   >
                     {t("重置")}
+                  </button>
+                )}
+                {!isSelf && !DESKTOP && (
+                  <button
+                    className="nx-btn nx-btn-danger nx-btn-sm shrink-0"
+                    title={t("永久删除该用户及其在服务端的全部数据")}
+                    onClick={() => void deleteUser(u)}
+                  >
+                    {t("删除")}
                   </button>
                 )}
               </div>

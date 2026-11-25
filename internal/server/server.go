@@ -61,6 +61,12 @@ type AccountCleanupFunc func(ctx context.Context, ownerID, cleanupID string, ses
 // committing an empty event and can retry with the same event id.
 type AccountCleanupPrepareFunc func(ctx context.Context, ownerID, cleanupID string) (commit func(sessionIDs ...string), rollback func(), err error)
 
+// AccountPurgeFunc stops the live server-side state an account owns (terminal sessions and tabs, port
+// forwards) before an administrator deletes the account, so nothing keeps running or writing for it.
+// Failures are returned so they stay visible; the deletion continues because the account is already
+// disabled and every row it owns is removed afterwards.
+type AccountPurgeFunc func(ctx context.Context, ownerID string) error
+
 type Config struct {
 	Options    Options
 	Dispatcher *ipc.Dispatcher
@@ -94,10 +100,12 @@ type Config struct {
 	RemoteDesktop         RemoteDesktopServer
 	AccountCleanup        AccountCleanupFunc
 	AccountCleanupPrepare AccountCleanupPrepareFunc
-	Version               string
-	MaxRPCBytes           int64
-	Logger                *slog.Logger
-	WebSocket             WebSocketConfig
+	// AccountPurge stops an account's live server-side state when an administrator deletes it; nil skips it.
+	AccountPurge AccountPurgeFunc
+	Version      string
+	MaxRPCBytes  int64
+	Logger       *slog.Logger
+	WebSocket    WebSocketConfig
 }
 
 type Server struct {
@@ -141,13 +149,16 @@ type Server struct {
 	accountSocketRevalidateNanos atomic.Int64
 	// sessionRecheck merges the periodic rechecks of the sockets of one login session; sessionCheckFn replaces the
 	// account lookup (nil uses Accounts.CheckSession) and is set by tests before sockets open.
-	sessionRecheck            sessionRechecker
-	sessionCheckFn            func(context.Context, string) (*account.Identity, error)
-	db                        DBHealthSource
-	accountConnections        AccountConnectionCloser
-	remoteDesktop             RemoteDesktopServer
-	accountCleanup            AccountCleanupFunc
-	accountCleanupPrepare     AccountCleanupPrepareFunc
+	sessionRecheck        sessionRechecker
+	sessionCheckFn        func(context.Context, string) (*account.Identity, error)
+	db                    DBHealthSource
+	accountConnections    AccountConnectionCloser
+	remoteDesktop         RemoteDesktopServer
+	accountCleanup        AccountCleanupFunc
+	accountCleanupPrepare AccountCleanupPrepareFunc
+	accountPurge          AccountPurgeFunc
+	// blobStore is the staging store mounted under /files/blob, purged per owner when an account is deleted.
+	blobStore                 *BlobStore
 	accountRevocationMu       *sync.Mutex
 	revokeUserSessions        func(context.Context, string, string, ...func() error) ([]string, error)
 	accountExecutionAdmission func(context.Context, string, *account.Identity, func() error) error
@@ -320,6 +331,7 @@ func New(config Config) (*Server, error) {
 		remoteDesktop:             config.RemoteDesktop,
 		accountCleanup:            config.AccountCleanup,
 		accountCleanupPrepare:     config.AccountCleanupPrepare,
+		accountPurge:              config.AccountPurge,
 		metrics:                   newServerMetrics(),
 	}
 	if config.Accounts != nil {
@@ -408,6 +420,7 @@ func (s *Server) routes(config Config) http.Handler {
 	if blobs == nil && s.options.DataDir != "" {
 		blobs = NewBlobStore(s.options.DataDir, s.logger)
 	}
+	s.blobStore = blobs
 	if blobs != nil {
 		// When any identity-less admission path exists (auth=off/loopback listen/gateway), the ownership concept does not hold,
 		// and staged blobs allow ownerless entries; owner equality is kept only when every admitted request carries an account session identity.

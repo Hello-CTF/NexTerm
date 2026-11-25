@@ -138,6 +138,7 @@ func (s *Server) adminRoutes() []adminRoute {
 		{name: "create_user", pattern: "POST /admin/users", csrfRequired: true, handler: s.serveAdminUserCreate},
 		{name: "disable_user", pattern: "POST /admin/users/{id}/disable", csrfRequired: true, handler: s.serveAdminUserDisable},
 		{name: "reset_user", pattern: "POST /admin/users/{id}/reset", csrfRequired: true, handler: s.serveAdminUserReset},
+		{name: "delete_user", pattern: "DELETE /admin/users/{id}", csrfRequired: true, handler: s.serveAdminUserDelete},
 		{name: "put_settings", pattern: "PUT /admin/settings", csrfRequired: true, handler: s.serveAdminSettingsPut},
 		{name: "get_preferences", pattern: "GET /admin/preferences", handler: s.serveAdminPreferencesGet},
 		{name: "put_preferences", pattern: "PUT /admin/preferences", csrfRequired: true, handler: s.serveAdminPreferencesPut},
@@ -974,6 +975,83 @@ func (s *Server) serveAdminUserReset(w http.ResponseWriter, r *http.Request) {
 	noteAdminAudit(r, r.PathValue("id"), "state", "must_change_password", "data_key", "totp", "sessions")
 	s.closeUserConnections(r.PathValue("id"), "")
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// accountAdminDeleteView reports a completed deletion; Warnings lists the cleanup steps that did not finish.
+type accountAdminDeleteView struct {
+	OK       bool     `json:"ok"`
+	Warnings []string `json:"warnings"`
+}
+
+// serveAdminUserDelete irreversibly deletes an account and everything it owns on the server. Under the
+// revocation lock the account is disabled with its sessions revoked (the only reversible step; its blocked
+// listeners kick its devices while their rows still exist) and its live connections, batches and runbooks
+// end. Outside the lock, so a slow host or upload cannot stall every login, its remaining terminals and
+// forwards stop; the purge transaction then runs under the lock again, is repeated once for rows a late
+// writer added, and finally the account's staged and persisted blobs go. A failure after the disable leaves
+// the account disabled and is audited, so the administrator sees it and can retry.
+func (s *Server) serveAdminUserDelete(w http.ResponseWriter, r *http.Request) {
+	identity := accountIdentityFrom(r.Context())
+	target := r.PathValue("id")
+	if identity == nil || target == identity.UserID {
+		writeAccountError(w, http.StatusBadRequest, ipc.NewError(ipc.CodeBadParam, "不能删除当前登录账号"))
+		return
+	}
+	ctx := context.WithoutCancel(r.Context())
+	err := func() error {
+		s.accountRevocationMu.Lock()
+		defer s.accountRevocationMu.Unlock()
+		commit, rollback, err := s.prepareAccountCleanup(ctx, target, "delete:"+target)
+		if err != nil {
+			rollback()
+			return err
+		}
+		if _, err := s.accounts.BeginDeleteUser(ctx, target); err != nil {
+			rollback()
+			return err
+		}
+		commit()
+		return nil
+	}()
+	if err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
+	s.closeUserConnections(target, "")
+	if s.mfaLock != nil {
+		s.mfaLock.clear(target)
+	}
+	warnings := []string{}
+	if s.accountPurge != nil {
+		if err := s.accountPurge(ctx, target); err != nil {
+			s.logger.Warn("stop live state of deleted account", "user", target, "error", err)
+			warnings = append(warnings, "部分终端会话或端口转发未能正常停止")
+		}
+	}
+	if err := func() error {
+		s.accountRevocationMu.Lock()
+		defer s.accountRevocationMu.Unlock()
+		if err := s.accounts.PurgeUser(ctx, target); err != nil {
+			return err
+		}
+		// Writers admitted before the disable may land rows after the first purge commits; the purge is
+		// idempotent, so a second sweep removes those. It is best effort: owner columns carry no foreign
+		// key to the account, so a writer later still can leave orphan rows no account can reach.
+		return s.accounts.PurgeUser(ctx, target)
+	}(); err != nil {
+		s.logger.Error("purge deleted account", "user", target, "error", err)
+		s.auditAuth(r, identity.UserID, "admin_delete_user_incomplete", map[string]any{
+			"actor_id": identity.UserID, "route": "delete_user", "target_user_id": target, "fields": []string{"state", "sessions"},
+		})
+		writeAccountFailure(w, err)
+		return
+	}
+	if removed, err := s.blobStore.PurgeOwner(target); err != nil {
+		s.logger.Warn("remove files of deleted account", "user", target, "removed", removed, "error", err)
+		warnings = append(warnings, "部分服务端暂存或持久化文件未能删除，请检查数据目录")
+	}
+	noteAdminAudit(r, target, "account", "data")
+	writeAccountJSON(w, http.StatusOK, accountAdminDeleteView{OK: true, Warnings: warnings})
 }
 
 type accountAdminSettingsView struct {

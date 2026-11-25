@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => {
     createUser: vi.fn(),
     disableUser: vi.fn(),
     resetUser: vi.fn(),
+    deleteUser: vi.fn(),
     settingsGet: vi.fn(),
     settingsPut: vi.fn(),
     status: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock("../ipc/authApi", async (importOriginal) => {
       createUser: mocks.createUser,
       disableUser: mocks.disableUser,
       resetUser: mocks.resetUser,
+      deleteUser: mocks.deleteUser,
       settingsGet: mocks.settingsGet,
       settingsPut: mocks.settingsPut,
     },
@@ -102,6 +104,7 @@ beforeEach(() => {
   mocks.createUser.mockResolvedValue({ user: ALICE });
   mocks.disableUser.mockResolvedValue({ ok: true });
   mocks.resetUser.mockResolvedValue({ ok: true });
+  mocks.deleteUser.mockResolvedValue({ ok: true, warnings: [] });
   mocks.status.mockResolvedValue({ initialized: true, registration_open: true, auth: "on" });
   mocks.ask.mockResolvedValue(true);
 });
@@ -149,9 +152,9 @@ describe("AccountCard superadmin user management", () => {
       return [...(row?.querySelectorAll("button") ?? [])].map((b) => b.textContent?.trim());
     };
     expect(actionLabels("root")).toEqual([]);
-    expect(actionLabels("alice")).toEqual(["禁用", "重置"]);
-    expect(actionLabels("disabled")).toEqual(["重置"]);
-    expect(actionLabels("reset")).toEqual(["重置"]);
+    expect(actionLabels("alice")).toEqual(["禁用", "重置", "删除"]);
+    expect(actionLabels("disabled")).toEqual(["重置", "删除"]);
+    expect(actionLabels("reset")).toEqual(["重置", "删除"]);
   });
 
   it("submits the username and initial password when creating a user", async () => {
@@ -212,6 +215,62 @@ describe("AccountCard superadmin user management", () => {
     expect(question).toContain("服务端密文需从仍持有数据的设备重新同步");
     await flushUntil(() => mocks.resetUser.mock.calls.length > 0);
     expect(mocks.resetUser).toHaveBeenCalledWith("u-alice");
+  });
+});
+
+describe("AccountCard user deletion", () => {
+  function otherRow(container: HTMLElement): Element {
+    return [...container.querySelectorAll("div")].find(
+      (d) => d.textContent?.includes("alice") && !d.textContent?.includes("（我）"),
+    )!;
+  }
+
+  it("offers delete for other users only", async () => {
+    mounted = mountCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("alice"));
+    const selfRow = [...mounted.container.querySelectorAll("div.border-b")].find((d) => d.textContent?.includes("（我）"));
+    expect([...selfRow!.querySelectorAll("button")].some((b) => b.textContent?.trim() === "删除")).toBe(false);
+    expect([...otherRow(mounted.container).querySelectorAll("button")].some((b) => b.textContent?.trim() === "删除")).toBe(true);
+    expect(mounted.container.textContent).toContain("删除会永久移除该用户及其在服务端的全部数据");
+  });
+
+  it("warns that deletion is irreversible, names the user, then deletes and refreshes", async () => {
+    mounted = mountCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("alice"));
+    const deleteBtn = [...otherRow(mounted.container).querySelectorAll("button")].find((b) => b.textContent?.trim() === "删除")!;
+    act(() => deleteBtn.click());
+    await flushUntil(() => mocks.ask.mock.calls.length > 0);
+    const [question, options] = mocks.ask.mock.calls[0] as [string, { kind?: string }];
+    expect(question).toContain("alice");
+    expect(question).toContain("无法恢复");
+    expect(question).toContain("服务端的全部数据");
+    expect(options.kind).toBe("warning");
+    await flushUntil(() => mocks.deleteUser.mock.calls.length > 0);
+    expect(mocks.deleteUser).toHaveBeenCalledWith("u-alice");
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("alice"));
+    await flushUntil(() => mocks.users.mock.calls.length > 1);
+  });
+
+  it("does not delete when confirmation is canceled", async () => {
+    mocks.ask.mockResolvedValue(false);
+    mounted = mountCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("alice"));
+    const deleteBtn = [...otherRow(mounted.container).querySelectorAll("button")].find((b) => b.textContent?.trim() === "删除")!;
+    act(() => deleteBtn.click());
+    await flushUntil(() => mocks.ask.mock.calls.length > 0);
+    await flush();
+    expect(mocks.deleteUser).not.toHaveBeenCalled();
+  });
+
+  it("surfaces cleanup steps the server could not finish", async () => {
+    mocks.deleteUser.mockResolvedValue({ ok: true, warnings: ["部分服务端暂存或持久化文件未能删除，请检查数据目录"] });
+    mounted = mountCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("alice"));
+    const deleteBtn = [...otherRow(mounted.container).querySelectorAll("button")].find((b) => b.textContent?.trim() === "删除")!;
+    act(() => deleteBtn.click());
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("部分服务端暂存或持久化文件未能删除"));
   });
 });
 

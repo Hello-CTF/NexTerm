@@ -186,6 +186,7 @@ describe("adminApi production contract", () => {
     await adminApi.createUser("bob", "bob-pw-123", "Bob");
     await adminApi.disableUser("u-2");
     await adminApi.resetUser("u-2");
+    await adminApi.deleteUser("u-3");
     await adminApi.settingsGet();
     await adminApi.settingsPut({ registrationOpen: true });
 
@@ -194,12 +195,14 @@ describe("adminApi production contract", () => {
       "POST /admin/users",
       "POST /admin/users/u-2/disable",
       "POST /admin/users/u-2/reset",
+      "DELETE /admin/users/u-3",
       "GET /admin/settings",
       "PUT /admin/settings",
     ]);
     expect(calls[1]?.body).toEqual({ username: "bob", password: "bob-pw-123", display_name: "Bob" });
-    expect(calls[5]?.body).toEqual({ registration_open: true });
+    expect(calls[6]?.body).toEqual({ registration_open: true });
     expect(calls[2]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
+    expect(calls[4]?.headers["X-NexTerm-CSRF"]).toBe("csrf-9");
   });
 });
 

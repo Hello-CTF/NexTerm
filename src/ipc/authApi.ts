@@ -366,6 +366,10 @@ export const adminApi = {
   resetUser: (id: string) =>
     request<{ ok: boolean }>("POST", `/admin/users/${encodeURIComponent(id)}/reset`, {}, { csrf: true }),
 
+  // Irreversibly deletes the account and all of its server-side data; warnings lists cleanup steps that did not finish.
+  deleteUser: (id: string) =>
+    request<{ ok: boolean; warnings?: string[] | null }>("DELETE", `/admin/users/${encodeURIComponent(id)}`, undefined, { csrf: true }),
+
   settingsGet: () => request<AdminSettings>("GET", "/admin/settings"),
 
   settingsPut: (settings: { registrationOpen: boolean; mfaRequired?: boolean }) =>

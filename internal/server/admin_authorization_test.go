@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func adminAuthorizationRequest(route adminRoute, disableTargetID, resetTargetID string) (string, string, any) {
+func adminAuthorizationRequest(route adminRoute, disableTargetID, resetTargetID, deleteTargetID string) (string, string, any) {
 	method, path, _ := strings.Cut(route.pattern, " ")
 	var body any
 	switch route.pattern {
@@ -17,6 +17,8 @@ func adminAuthorizationRequest(route adminRoute, disableTargetID, resetTargetID 
 		path = "/admin/users/" + disableTargetID + "/disable"
 	case "POST /admin/users/{id}/reset":
 		path = "/admin/users/" + resetTargetID + "/reset"
+	case "DELETE /admin/users/{id}":
+		path = "/admin/users/" + deleteTargetID
 	case "PUT /admin/settings":
 		body = map[string]any{"registration_open": true}
 	case "PUT /admin/preferences":
@@ -41,13 +43,17 @@ func TestAdminRouteAuthorizationMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	deleteTarget, err := fixture.accounts.CreateUser(context.Background(), "delete-target", "", "delete-password1")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	routes := fixture.server.adminRoutes()
-	if got, want := len(routes), 8; got != want {
+	if got, want := len(routes), 9; got != want {
 		t.Errorf("admin route count = %d, want %d; update the ratchet only for an intentional route surface change", got, want)
 	}
 	for _, route := range routes {
-		method, path, body := adminAuthorizationRequest(route, disableTarget.ID, resetTarget.ID)
+		method, path, body := adminAuthorizationRequest(route, disableTarget.ID, resetTarget.ID, deleteTarget.ID)
 		t.Run(route.name, func(t *testing.T) {
 			adminWithoutCSRFStatus := http.StatusOK
 			if method != http.MethodGet && method != http.MethodHead {

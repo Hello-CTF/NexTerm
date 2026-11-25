@@ -27,6 +27,8 @@ export const KIND_LABELS: Record<string, string> = {
   admin_create_user: t("超级管理员创建用户"),
   admin_disable_user: t("超级管理员禁用用户"),
   admin_reset_user: t("超级管理员重置用户"),
+  admin_delete_user: t("超级管理员删除用户"),
+  admin_delete_user_incomplete: t("超级管理员删除用户未完成"),
   admin_put_settings: t("超级管理员修改账号设置"),
   admin_put_preferences: t("超级管理员修改默认偏好"),
 };

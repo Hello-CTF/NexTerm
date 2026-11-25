@@ -442,6 +442,7 @@ func run(args []string) int {
 		RemoteDesktop:         remoteDesktopServer(application.Services.RemoteDesktop),
 		AccountCleanup:        application.CleanupAccount,
 		AccountCleanupPrepare: application.PrepareAccountCleanup,
+		AccountPurge:          accountPurgeFor(application.Services.Sessions, accountForwardsFor(application.Services.Forward)),
 		Settings:              settings,
 		AuditFunc:             audit,
 		AssetOwnerFunc:        assetOwner,
