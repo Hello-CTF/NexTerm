@@ -148,6 +148,7 @@ const CLOSE_ACTION_OPTIONS: { value: TerminalCloseAction; label: string }[] = [
   { value: "ask", label: t("每次询问") },
   { value: "kill", label: t("直接关闭") },
   { value: "detach", label: t("转到后台") },
+  { value: "detach-disconnect", label: t("转到后台并断开") },
 ];
 
 const GPU_ACCELERATION_OPTIONS: { value: TerminalGpuAcceleration; label: string }[] = [
@@ -185,6 +186,7 @@ const CLOSE_ACTION_HINTS: Record<TerminalCloseAction, string> = {
   ask: t("关闭前询问转到后台还是结束进程。"),
   kill: t("直接结束进程。"),
   detach: t("进程转入后台，可在「后台会话」接管。"),
+  "detach-disconnect": t("进程转入后台，可在「后台会话」接管；关闭工作区时一并断开主机连接，重新连接前不更新这些终端的状态和提醒。"),
 };
 
 const GPU_ACCELERATION_HINTS: Record<TerminalGpuAcceleration, string> = {

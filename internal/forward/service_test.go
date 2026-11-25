@@ -342,3 +342,25 @@ func TestCreateDuringDisconnectDoesNotLeaveActiveForward(t *testing.T) {
 		t.Fatalf("forward from failed create remained visible: %+v", listed)
 	}
 }
+
+func TestInUseTracksRunningForwardsOfASession(t *testing.T) {
+	service := newLoopbackService(t, &switchProvider{dialer: &recordingDialer{upstream: startEchoServer(t)}})
+	spec, err := service.CreateLocal(t.Context(), CreateLocalArgs{SessionID: "session-1", TargetHost: "remote.invalid", TargetPort: 80})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !service.InUse("session-1") || service.InUse("session-2") {
+		t.Fatalf("InUse(session-1) = %v, InUse(session-2) = %v; want only the forward's session in use",
+			service.InUse("session-1"), service.InUse("session-2"))
+	}
+	service.FailSession("session-1", "lost")
+	if service.InUse("session-1") {
+		t.Fatal("a failed forward still keeps its session in use")
+	}
+	if err := service.Remove(spec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if service.InUse("session-1") {
+		t.Fatal("a removed forward still keeps its session in use")
+	}
+}

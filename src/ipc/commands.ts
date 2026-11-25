@@ -384,6 +384,10 @@ export const sessionApi = {
     call("session_connect_device", { args: { deviceId, name } }) as Promise<SessionInfo>,
   disconnect: (sessionId: string) =>
     ignoreResult(call("session_disconnect", { sessionId })),
+  // Disconnects and removes a connected session nothing uses any more. keepDurable keeps it while it has background
+  // terminals or its host holds persistent ones. Resolves whether the session was released.
+  releaseIdle: (sessionId: string, keepDurable: boolean) =>
+    call("session_release_idle", { sessionId, keepDurable }) as Promise<boolean>,
   reconnect: (sessionId: string) => call("session_reconnect", { sessionId }),
   // Checks the session's connection now: a dead connection reconnects at once and a pending
   // reconnect backoff is cut short. Results also arrive as session status events.

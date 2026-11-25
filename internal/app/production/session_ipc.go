@@ -79,6 +79,12 @@ type sessionIDRequest struct {
 	SessionID string `json:"sessionId"`
 }
 
+type sessionReleaseRequest struct {
+	SessionID string `json:"sessionId"`
+	// KeepDurable keeps the session connected while it has background terminals or its host holds persistent ones.
+	KeepDurable bool `json:"keepDurable"`
+}
+
 type sessionProbeRequest struct {
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
@@ -526,6 +532,19 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					s.closeDockerSession(ctx, input.SessionID)
 				}
 				return nil, nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "session_release_idle", func(ctx context.Context, _ *ipc.Call, input sessionReleaseRequest) (bool, error) {
+				ctx = productionSessionRequestContext(ctx)
+				released, err := s.sessions.ReleaseIdleFor(ctx, input.SessionID, input.KeepDurable)
+				if released && s.docker != nil {
+					s.closeDockerSession(ctx, input.SessionID)
+				}
+				if err != nil {
+					return released, terminalIPCError(err)
+				}
+				return released, nil
 			})
 		},
 		func() error {

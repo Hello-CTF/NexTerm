@@ -126,23 +126,36 @@ function withoutZoom(zoomedPanes: Record<string, string>, ...workspaceIds: (stri
 // releaseDeadSession asks the backend to drop the session of a closed workspace when its connection is already
 // gone and no other workspace uses it. The backend removes it only when it holds no terminal, so a session still
 // carrying watched terminals is left as it is.
-function releaseDeadSession(
-  sessionId: string | undefined,
+// releaseUnusedSessions ends the connections of a closed workspace that no remaining workspace of this client uses. A
+// failed or disconnected session is removed. A connected one is released by the backend, which keeps it while another
+// client watches one of its terminals or a port forward runs on it, and with keepDurable also while it has background
+// terminals or its host holds persistent ones that the connection keeps monitored.
+function releaseUnusedSessions(
+  closed: Workspace,
   workspaces: Workspace[],
   sessions: UiState["sessions"],
   get: UiGet,
+  keepDurable: boolean,
 ): void {
-  if (!sessionId) return;
-  const status = sessions.find((session) => session.id === sessionId)?.status;
-  if (status !== "failed" && status !== "disconnected") return;
-  const used = workspaces.some((workspace) =>
-    workspace.sessionId === sessionId ||
-    workspace.panes.some((pane) => pane.tabs.some((tab) => tab.sessionId === sessionId)));
-  if (used) return;
-  void sessionApi
-    .disconnect(sessionId)
-    .then(() => get().resyncSessions({ silent: true }))
-    .catch(() => undefined);
+  const ids = new Set<string>();
+  if (closed.sessionId) ids.add(closed.sessionId);
+  for (const pane of closed.panes) {
+    for (const tab of pane.tabs) if (tab.sessionId) ids.add(tab.sessionId);
+  }
+  for (const sessionId of ids) {
+    const used = workspaces.some((workspace) =>
+      workspace.sessionId === sessionId ||
+      workspace.panes.some((pane) => pane.tabs.some((tab) => tab.sessionId === sessionId)));
+    if (used) continue;
+    const status = sessions.find((session) => session.id === sessionId)?.status;
+    const release = status === "failed" || status === "disconnected"
+      ? sessionApi.disconnect(sessionId)
+      : status === "connected"
+        ? sessionApi.releaseIdle(sessionId, keepDurable)
+        : null;
+    if (!release) continue;
+    void release.then(() => get().resyncSessions({ silent: true })).catch(() => undefined);
+  }
 }
 
 // workspaceAfterClose picks the workspace that takes over from a closed active one: its right neighbour in the order
@@ -300,7 +313,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       }
       const preconfirmed = typeof mode === "object" ? mode : undefined;
       if (!(preconfirmed && applyPreconfirmedClose(closePlan, preconfirmed)) &&
-        !(await confirmWorkspaceClose(closePlan, currentTarget.title, mode === "detach"))) return false;
+        !(await confirmWorkspaceClose(closePlan, currentTarget.title, mode === "detach", undefined, mode !== "detach"))) return false;
       if (get().workspaceRuntimeEpoch !== epoch) return false;
       for (const tab of closePlan.runningAiTabs) {
         const cancelAndConfirm = aiTabRunControls.get(tab.id);
@@ -407,7 +420,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
         }
         const board = latest.aiBoards[id];
         if (board) clearAiTabRuns(board.tabs.map((tab) => tab.id));
-        releaseDeadSession(latestTarget.sessionId, nextWorkspaces, latest.sessions, get);
+        releaseUnusedSessions(latestTarget, nextWorkspaces, latest.sessions, get, !closePlan.disconnectAfterDetach);
       }
       if (outcome.failed === 0) pushWorkspaceCloseToast(target.title, outcome, deleteWorkspace);
       return deleteWorkspace;

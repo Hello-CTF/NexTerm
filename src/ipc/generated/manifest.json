@@ -1873,6 +1873,12 @@
       "channel": false,
       "stream": "none"
     },
+    "session_release_idle": {
+      "scope": "session",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "snippet_create": {
       "scope": "snippet",
       "nested": false,

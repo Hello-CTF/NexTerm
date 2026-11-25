@@ -276,7 +276,9 @@ export function useInputPrefs(): InputPrefs {
   return useSyncExternalStore(subscribeInputPrefs, getInputPrefs);
 }
 
-export type TerminalCloseAction = "ask" | "kill" | "detach";
+// detach-disconnect moves running terminals to the background like detach and, when a workspace closes, also ends
+// the host connection instead of keeping it to monitor them.
+export type TerminalCloseAction = "ask" | "kill" | "detach" | "detach-disconnect";
 export type TerminalDefaultMode = "durable" | "regular";
 // auto loads WebGL unless the GPU is a software renderer; on always tries it; off keeps the DOM renderer.
 export type TerminalGpuAcceleration = "auto" | "on" | "off";
@@ -400,7 +402,7 @@ function loadTerminal(): TerminalPrefs {
     ? accountOverrides[TERMINAL_DURABLE_HISTORY_KEY] ?? accountDefaults[TERMINAL_DURABLE_HISTORY_KEY]
     : undefined;
   return {
-    closeAction: value === "kill" || value === "detach" ? value : TERMINAL_DEFAULTS.closeAction,
+    closeAction: value === "kill" || value === "detach" || value === "detach-disconnect" ? value : TERMINAL_DEFAULTS.closeAction,
     defaultMode: defaultMode === "regular" ? "regular" : TERMINAL_DEFAULTS.defaultMode,
     gpuAcceleration: gpu === "on" || gpu === "off" ? gpu : TERMINAL_DEFAULTS.gpuAcceleration,
     linkActivation: links === "click" ? "click" : TERMINAL_DEFAULTS.linkActivation,

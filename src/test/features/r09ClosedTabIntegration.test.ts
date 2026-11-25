@@ -29,6 +29,7 @@ vi.mock("../../ipc/commands", () => ({
     connect: mocks.sessionConnect,
     reconnect: mocks.sessionReconnect,
     disconnect: vi.fn(async () => undefined),
+    releaseIdle: vi.fn(async () => true),
   },
   terminalApi: {
     closeTab: mocks.closeTab,

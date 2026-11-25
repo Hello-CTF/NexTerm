@@ -75,6 +75,9 @@ type Manager struct {
 
 	hookMu        sync.RWMutex
 	userInputHook func(string)
+	// inUseProbes report sessions that something other than a terminal tab still relies on, such as a running port
+	// forward. Neither the idle sweep nor a release disconnects such a session.
+	inUseProbes []func(sessionID string) bool
 
 	idleTimeout time.Duration
 	// durableKillTimeout bounds ending a durable process on close, so a host that stopped answering
@@ -809,16 +812,36 @@ func (m *Manager) disconnect(id string, expectedIdle *time.Time) error {
 		}
 		return m.reap(id, *expectedIdle)
 	}
+	m.mu.Unlock()
+	var guard func(*Session) bool
+	if expectedIdle != nil {
+		guard = func(session *Session) bool {
+			return session.status == StatusConnected && len(session.tabs) == 0 && session.idleSince.Equal(*expectedIdle)
+		}
+	}
+	_, err := m.disconnectIf(id, guard)
+	return err
+}
+
+// disconnectIf disconnects a reconnectable session when guard, checked under the session lock, still holds; a nil
+// guard always holds. It reports whether this call disconnected the session.
+func (m *Manager) disconnectIf(id string, guard func(*Session) bool) (bool, error) {
+	m.mu.Lock()
+	session := m.sessions[id]
+	if session == nil || !reconnectable(session.asset.Kind) {
+		m.mu.Unlock()
+		return false, nil
+	}
 	session.mu.Lock()
-	if expectedIdle != nil && (session.status != StatusConnected || len(session.tabs) != 0 || !session.idleSince.Equal(*expectedIdle)) {
+	if guard != nil && !guard(session) {
 		session.mu.Unlock()
 		m.mu.Unlock()
-		return nil
+		return false, nil
 	}
 	if session.closed || session.status == StatusDisconnected {
 		session.mu.Unlock()
 		m.mu.Unlock()
-		return nil
+		return false, nil
 	}
 	session.status = StatusDisconnected
 	session.closed = false
@@ -847,7 +870,87 @@ func (m *Manager) disconnect(id string, expectedIdle *time.Time) error {
 	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
 	m.transcriptEnded(session)
 	m.releaseUnwatchedDurables(session)
-	return closeErr
+	return true, closeErr
+}
+
+// AddSessionInUseProbe registers a check for sessions that something other than a terminal tab still uses.
+func (m *Manager) AddSessionInUseProbe(probe func(sessionID string) bool) {
+	if probe == nil {
+		return
+	}
+	m.hookMu.Lock()
+	m.inUseProbes = append(m.inUseProbes, probe)
+	m.hookMu.Unlock()
+}
+
+// sessionInUse asks the registered probes; the caller holds no manager or session lock, since a probe may call back
+// into the manager.
+func (m *Manager) sessionInUse(id string) bool {
+	m.hookMu.RLock()
+	probes := append([]func(string) bool(nil), m.inUseProbes...)
+	m.hookMu.RUnlock()
+	for _, probe := range probes {
+		if probe(id) {
+			return true
+		}
+	}
+	return false
+}
+
+// ReleaseIdleFor disconnects and removes a connected session its caller no longer uses, such as one whose last
+// workspace was just closed. The session stays when a port forward or another probe still uses it. With keepDurable it
+// also stays while it has any terminal tab, including terminals moved to the background, or while its host holds
+// persistent terminals, which the connection keeps monitored. Without keepDurable it only stays while some client is
+// attached to one of its terminals; background persistent terminals keep running on the host and are listed again by
+// the next connection. It reports whether the session was released.
+func (m *Manager) ReleaseIdleFor(ctx context.Context, id string, keepDurable bool) (bool, error) {
+	if _, err := m.SessionFor(ctx, id); err != nil {
+		return false, err
+	}
+	m.mu.Lock()
+	session := m.sessions[id]
+	m.mu.Unlock()
+	if session == nil {
+		return false, nil
+	}
+	session.mu.Lock()
+	kind, status, tabs, idleSince := session.asset.Kind, session.status, len(session.tabs), session.idleSince
+	session.mu.Unlock()
+	if !reconnectable(kind) || status != StatusConnected || m.sessionInUse(id) {
+		return false, nil
+	}
+	var guard func(*Session) bool
+	if keepDurable {
+		if tabs != 0 || idleSince.IsZero() || m.holdsDurable(ctx, session) {
+			return false, nil
+		}
+		guard = func(session *Session) bool {
+			return session.status == StatusConnected && len(session.tabs) == 0 && session.idleSince.Equal(idleSince)
+		}
+	} else {
+		guard = func(session *Session) bool {
+			if session.status != StatusConnected {
+				return false
+			}
+			for _, tab := range session.tabs {
+				tab.mu.Lock()
+				watched := len(tab.subscribers) > 0
+				tab.mu.Unlock()
+				if watched {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	released, err := m.disconnectIf(id, guard)
+	if !released {
+		return false, err
+	}
+	if _, removeErr := m.removeDeadSession(id); removeErr != nil {
+		err = errors.Join(err, removeErr)
+	}
+	return true, err
 }
 
 func (s *Session) detachChannelsLocked() []*channelHandle {
@@ -1013,7 +1116,7 @@ func (m *Manager) SweepIdle(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if m.holdsDurable(ctx, candidate.session) {
+		if m.sessionInUse(candidate.id) || m.holdsDurable(ctx, candidate.session) {
 			continue
 		}
 		if err := m.disconnect(candidate.id, &candidate.idle); err != nil && !errors.Is(err, ErrSessionNotFound) {

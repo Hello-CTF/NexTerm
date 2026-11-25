@@ -98,7 +98,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"appearance.terminalCustomSchemes":  {kind: preferenceKindCustomSchemes},
 	"appearance.accent":                 {kind: preferenceKindEnumString, strings: []string{"indigo", "blue", "teal", "green", "violet"}},
 	"input.selectionAutoCopy":           {kind: preferenceKindBool},
-	"terminal.closeAction":              {kind: preferenceKindEnumString, strings: []string{"ask", "kill", "detach"}},
+	"terminal.closeAction":              {kind: preferenceKindEnumString, strings: []string{"ask", "kill", "detach", "detach-disconnect"}},
 	"terminal.defaultMode":              {kind: preferenceKindEnumString, strings: []string{"durable", "regular"}},
 	"terminal.gpuAcceleration":          {kind: preferenceKindEnumString, strings: []string{"auto", "on", "off"}},
 	"terminal.linkActivation":           {kind: preferenceKindEnumString, strings: []string{"modifier", "click"}},

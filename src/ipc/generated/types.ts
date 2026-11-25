@@ -3057,6 +3057,11 @@ export type SessionProgress = {
   value?: number | null;
 };
 
+export type SessionReleaseRequest = {
+  sessionId: string;
+  keepDurable: boolean;
+};
+
 export type ShellProfile = {
   id: string;
   name: string;

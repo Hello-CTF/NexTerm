@@ -111,6 +111,10 @@ export interface WorkspaceCloseSummary extends ClosePreferencePlan {
   runningAiTabs: AiCloseTab[];
   aiBoardKey: string;
   aiTabIds: Set<string>;
+  // Set when the user chose to disconnect after moving terminals to the background: the closed workspace's session is
+  // then released even though its host still holds persistent terminals, which stop being monitored until it
+  // reconnects.
+  disconnectAfterDetach?: boolean;
 }
 
 interface WorkspaceCloseOutcome {
@@ -233,6 +237,7 @@ export function applyPreconfirmedClose(plan: WorkspaceCloseSummary, preconfirmed
   if (!closeCoveredBy(plan, preconfirmed.confirmed)) return false;
   plan.confirmBlocked = false;
   applyCloseDecision(plan, preconfirmed.action);
+  plan.disconnectAfterDetach = preconfirmed.confirmed.disconnectAfterDetach;
   return true;
 }
 
@@ -242,17 +247,20 @@ export function confirmedCloseAction(summary: WorkspaceCloseSummary): "detach" |
 }
 
 // confirmWorkspaceClose merges unsaved content, terminal close consequences and, when the preference asks, the
-// background-or-end choice into one dialog; on cancel, no IPC is issued and no tab is closed.
+// background-or-end choice into one dialog; on cancel, no IPC is issued and no tab is closed. offerDisconnect adds the
+// choice to also disconnect the host once its terminals are in the background, for closes that end a workspace.
 export async function confirmWorkspaceClose(
   summary: WorkspaceCloseSummary,
   title: string,
   detachOnly = false,
   dialogTitle = tr("关闭「{title}」", { title }),
+  offerDisconnect = false,
 ): Promise<boolean> {
   const action = detachOnly ? "detach" : getTerminalPrefs().closeAction;
   summary.confirmBlocked = action !== "kill" && !detachOnly;
   if (detachOnly) summary.preferredKills = [];
   if (action === "kill") applyCloseDecision(summary, "kill");
+  summary.disconnectAfterDetach = offerDisconnect && action === "detach-disconnect";
   const choose = action === "ask" && summary.detachable.length > 0;
   const lines = workspaceCloseLines(summary, !choose);
   const confirmBlocked = summary.blocked.length > 0 && summary.confirmBlocked;
@@ -263,7 +271,7 @@ export async function confirmWorkspaceClose(
     const question = tr("{length} 个终端的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。", { length: summary.detachable.length });
     const result = await askChoiceRemember(lines.length > 0 ? `${question}\n\n${lines.join("\n")}` : question, {
       title: dialogTitle,
-      choices: CLOSE_CHOICE_OPTIONS,
+      choices: offerDisconnect ? WORKSPACE_CLOSE_CHOICE_OPTIONS : CLOSE_CHOICE_OPTIONS,
       rememberLabel: tr("以后都按此选择"),
       // Either choice also discards what the lines name, so the dialog warns and Enter does not pick a choice.
       ...(destructive ? { level: "warning" as const, focusCancel: true } : {}),
@@ -271,7 +279,8 @@ export async function confirmWorkspaceClose(
     if (!result) return false;
     const decided = result.key === "kill" ? "kill" : "detach";
     applyCloseDecision(summary, decided);
-    if (result.remember) setTerminalCloseAction(decided);
+    summary.disconnectAfterDetach = result.key === "detach-disconnect";
+    if (result.remember) setTerminalCloseAction(result.key === "detach-disconnect" ? "detach-disconnect" : decided);
     return true;
   }
   if (!destructive && unconfirmed === 0) return true;
@@ -390,7 +399,7 @@ export function closeActionHint(t: AppTab): string | undefined {
   if (block === "regular" || block === "unknown") return tr("结束进程");
   const action = getTerminalPrefs().closeAction;
   if (action === "kill") return tr("结束进程");
-  if (action === "detach") return tr("转入后台");
+  if (action === "detach" || action === "detach-disconnect") return tr("转入后台");
   return tr("转入后台或结束进程");
 }
 
@@ -405,6 +414,18 @@ export function closeTabHint(t: AppTab): string {
 
 const CLOSE_CHOICE_OPTIONS: ChoiceOption[] = [
   { key: "detach", label: tr("转入后台"), hint: tr("进程继续运行，可在「后台会话」随时接管"), primary: true },
+  { key: "kill", label: tr("直接关闭"), hint: tr("结束进程，无法恢复"), danger: true },
+];
+
+// A workspace close can also end the connection: background terminals keep running on the host, but their state and
+// alerts pause until the host is connected again.
+const WORKSPACE_CLOSE_CHOICE_OPTIONS: ChoiceOption[] = [
+  { key: "detach", label: tr("转入后台"), hint: tr("进程继续运行，保持连接以更新状态和提醒"), primary: true },
+  {
+    key: "detach-disconnect",
+    label: tr("转入后台并断开连接"),
+    hint: tr("进程继续在主机上运行，重新连接前不更新状态和提醒"),
+  },
   { key: "kill", label: tr("直接关闭"), hint: tr("结束进程，无法恢复"), danger: true },
 ];
 
@@ -646,9 +667,10 @@ export async function closeWorkspaces(ids: string[]): Promise<void> {
   }
   if (summaries.size === 0) return;
   const merged = mergeWorkspaceCloseSummaries([...summaries.values()]);
-  if (!(await confirmWorkspaceClose(merged, "", false, tr("关闭 {length} 个工作区", { length: summaries.size })))) return;
+  if (!(await confirmWorkspaceClose(merged, "", false, tr("关闭 {length} 个工作区", { length: summaries.size }), true))) return;
   const action = confirmedCloseAction(merged);
   for (const [id, confirmed] of summaries) {
+    confirmed.disconnectAfterDetach = merged.disconnectAfterDetach;
     await useUi.getState().closeWorkspace(id, { action, confirmed });
   }
 }

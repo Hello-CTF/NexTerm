@@ -351,6 +351,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Policy:  forward.Policy{Desktop: config.Desktop},
 		OnError: func(err error) { config.Config.Logger.Warn("forward lifecycle error", "error", err) },
 	})
+	sessionManager.AddSessionInUseProbe(forwardService.InUse)
 	// The forward runtime drives auto-start rules on connect, opt-in startup
 	// recovery, and the crash staging reaper over the chunked-upload registry's
 	// known staging directories; upload begin resumes crashed staging through

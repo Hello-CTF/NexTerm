@@ -11,12 +11,13 @@ const mocks = vi.hoisted(() => ({
   listDurable: vi.fn(),
   sessionList: vi.fn(),
   disconnect: vi.fn(),
+  releaseIdle: vi.fn(),
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoice: mocks.askChoice, askChoiceRemember: mocks.askChoiceRemember }));
 vi.mock("../../ipc/commands", () => ({
   dbApi: {},
   vaultApi: {},
-  sessionApi: { list: mocks.sessionList, disconnect: mocks.disconnect },
+  sessionApi: { list: mocks.sessionList, disconnect: mocks.disconnect, releaseIdle: mocks.releaseIdle },
   terminalApi: { closeTab: mocks.closeTab, listLive: mocks.listLive, listDurable: mocks.listDurable },
 }));
 
@@ -91,6 +92,7 @@ beforeEach(() => {
   mocks.listDurable.mockResolvedValue([]);
   mocks.sessionList.mockResolvedValue([session()]);
   mocks.disconnect.mockResolvedValue(undefined);
+  mocks.releaseIdle.mockResolvedValue(true);
   mocks.closeTab.mockResolvedValue(undefined);
   setTerminalCloseAction("ask");
   useUi.setState({ sessions: [session()], workspaces: [], activeWorkspaceId: null, toasts: [], workspaceRuntime: {} });
@@ -338,5 +340,64 @@ describe("notices about processes left running", () => {
     useUi.getState().pushToast("info", "newest");
     expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("newest");
     expect(useUi.getState().toasts.filter((toast) => toast.persistent)).toHaveLength(5);
+  });
+});
+
+describe("releasing the connection of a closed workspace", () => {
+  async function flushReleases(): Promise<void> {
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+  }
+
+  it("asks the backend to release the session, keeping it for background terminals by default", async () => {
+    useUi.setState({ workspaces: [workspace("w1", [audit("a1")])], activeWorkspaceId: "w1" });
+    await useUi.getState().closeWorkspace("w1");
+    await flushReleases();
+    expect(workspaceIds()).toEqual([]);
+    expect(mocks.releaseIdle).toHaveBeenCalledWith("s", true);
+  });
+
+  it("keeps the session while another workspace still uses it", async () => {
+    useUi.setState({ workspaces: [workspace("w1", [audit("a1")]), workspace("w2", [audit("a2")])], activeWorkspaceId: "w1" });
+    await useUi.getState().closeWorkspace("w1");
+    await flushReleases();
+    expect(workspaceIds()).toEqual(["w2"]);
+    expect(mocks.releaseIdle).not.toHaveBeenCalled();
+  });
+
+  it("offers to disconnect after moving terminals to the background and releases the session when chosen", async () => {
+    useUi.setState({ workspaces: [workspace("w1", [terminal("t1")])], activeWorkspaceId: "w1" });
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "detach-disconnect", remember: false });
+    await useUi.getState().closeWorkspace("w1");
+    await flushReleases();
+    const choices = (mocks.askChoiceRemember.mock.calls[0][1] as { choices: { key: string }[] }).choices.map((c) => c.key);
+    expect(choices).toEqual(["detach", "detach-disconnect", "kill"]);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s");
+    expect(mocks.releaseIdle).toHaveBeenCalledWith("s", false);
+    expect(getTerminalPrefs().closeAction).toBe("ask");
+  });
+
+  it("remembers the disconnect choice and applies it to the next close without asking", async () => {
+    useUi.setState({ workspaces: [workspace("w1", [terminal("t1")])], activeWorkspaceId: "w1" });
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "detach-disconnect", remember: true });
+    await useUi.getState().closeWorkspace("w1");
+    expect(getTerminalPrefs().closeAction).toBe("detach-disconnect");
+
+    mocks.releaseIdle.mockClear();
+    useUi.setState({ workspaces: [workspace("w2", [terminal("t2")])], activeWorkspaceId: "w2" });
+    await useUi.getState().closeWorkspace("w2");
+    await flushReleases();
+    expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "detach", "s");
+    expect(mocks.releaseIdle).toHaveBeenCalledWith("s", false);
+  });
+
+  it("does not offer to disconnect when closing a single terminal tab", async () => {
+    useUi.setState({ workspaces: [workspace("w1", [terminal("t1"), audit("a1")])], activeWorkspaceId: "w1" });
+    mocks.askChoiceRemember.mockResolvedValueOnce({ key: "detach", remember: false });
+    await requestCloseTab("t1");
+    await flushReleases();
+    const options = mocks.askChoiceRemember.mock.calls[0]?.[1] as { choices: { key: string }[] } | undefined;
+    expect(options?.choices.map((c) => c.key) ?? []).not.toContain("detach-disconnect");
+    expect(mocks.releaseIdle).not.toHaveBeenCalled();
   });
 });

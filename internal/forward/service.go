@@ -384,6 +384,19 @@ func (s *Service) list(owner string) []Spec {
 	return result
 }
 
+// InUse reports whether a forward that is running or reconnecting relies on the session, so the session must stay
+// connected even without a terminal tab.
+func (s *Service) InUse(sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, f := range s.forwards {
+		if f.sessionID == sessionID && (f.spec.Status == StatusActive || f.spec.Status == StatusReconnecting) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) Remove(id string) error {
 	if ruleID, ok := s.savedRuntime(id); ok {
 		_, err := s.StopRule(context.Background(), ruleID)
