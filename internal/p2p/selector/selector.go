@@ -150,6 +150,15 @@ func (s *Selector) Reset() {
 	s.healthySince, s.slowSince = time.Time{}, time.Time{}
 }
 
+// Leave records that the streams left the leg for a reason outside the measurements (the leg closed, the app
+// went to the background); it is not a degradation and does not count toward a pin.
+func (s *Selector) Leave(now time.Time) {
+	if s.Path() == PathDirect {
+		s.switchTo(now, PathRelay, "")
+	}
+	s.Reset()
+}
+
 // Pinned reports whether the device is held on the relay at now.
 func (s *Selector) Pinned(now time.Time) bool {
 	return !s.pinnedTill.IsZero() && now.Before(s.pinnedTill)

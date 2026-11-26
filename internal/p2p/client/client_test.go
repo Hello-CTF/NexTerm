@@ -1,0 +1,315 @@
+package client
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
+	"github.com/Hello-CTF/NexTerm/internal/p2p/agentside"
+	"github.com/Hello-CTF/NexTerm/internal/p2p/legtest"
+	"github.com/Hello-CTF/NexTerm/internal/p2p/natprobe"
+	"github.com/Hello-CTF/NexTerm/internal/p2p/selector"
+)
+
+const transferSize = 2 << 20
+
+// A stream starts on the relay, moves to the direct leg mid-transfer, and every byte arrives exactly once.
+func TestMigratesToDirectMidTransfer(t *testing.T) {
+	h := newHarness(t)
+	stream := h.dial("terminal")
+	tr := startTransfer(t, stream, transferSize)
+	tr.write(t, 0, transferSize/2)
+	h.waitPath(PathDirect, "")
+	h.waitDirect(1)
+	tr.write(t, transferSize/2, transferSize)
+	tr.finish(t)
+	h.mu.Lock()
+	resumes := h.resumes
+	h.mu.Unlock()
+	if resumes == 0 {
+		t.Fatal("the agent saw no resume: the stream never moved")
+	}
+	// New streams open on the preferred leg.
+	h.mu.Lock()
+	relayDials := h.relayDials
+	h.mu.Unlock()
+	second := h.dial("forward")
+	h.mu.Lock()
+	if h.relayDials != relayDials {
+		t.Fatal("a new stream used the relay while the direct leg is preferred")
+	}
+	h.mu.Unlock()
+	if _, direct := h.mgr.Counts(testDevice); direct != 2 {
+		t.Fatalf("direct streams = %d, want 2", direct)
+	}
+	_ = second.Close()
+	_ = stream.Close()
+}
+
+// A leg that dies mid-transfer leaves the stream on the relay without loss.
+func TestLegDeathFallsBackToRelay(t *testing.T) {
+	h := newHarness(t)
+	stream := h.dial("terminal")
+	h.waitDirect(1)
+	tr := startTransfer(t, stream, transferSize)
+	tr.write(t, 0, transferSize/3)
+	for _, l := range h.net.Legs() {
+		_ = l.Close()
+	}
+	tr.write(t, transferSize/3, transferSize)
+	tr.finish(t)
+	h.waitPath(PathRelay, ReasonConnectFailed)
+	h.waitDirect(0)
+	// The next attempt waits out the backoff.
+	dials, _ := h.net.Dials()
+	h.tick(time.Minute)
+	if again, _ := h.net.Dials(); again != dials {
+		t.Fatalf("leg dials went from %d to %d inside the backoff", dials, again)
+	}
+	h.tickUntilDirect(1, BackoffMin+selector.RecoverHealthy+selector.MinDwell)
+	_ = stream.Close()
+}
+
+// A revoke on the agent ends the session; the streams resume on the relay.
+func TestRevokeFallsBackToRelay(t *testing.T) {
+	h := newHarness(t)
+	stream := h.dial("terminal")
+	h.waitDirect(1)
+	tr := startTransfer(t, stream, transferSize)
+	tr.write(t, 0, transferSize/2)
+	h.svc.Revoke("grant-1", "session_revoked")
+	tr.write(t, transferSize/2, transferSize)
+	tr.finish(t)
+	h.waitPath(PathRelay, ReasonServerDisabled)
+	h.waitDirect(0)
+	if h.svc.Sessions() != 0 {
+		t.Fatal("the agent kept the revoked session")
+	}
+	_ = stream.Close()
+}
+
+// relay -> auto -> direct -> relay, each applied to the live stream without reconnecting.
+func TestModeSwitches(t *testing.T) {
+	h := newHarness(t, func(h *harness) { h.mode = selector.ModeRelay })
+	stream := h.dial("terminal")
+	h.waitPath(PathRelay, ReasonModeRelay)
+	if dials, _ := h.net.Dials(); dials != 0 {
+		t.Fatalf("relay mode dialed %d legs", dials)
+	}
+	h.set(func(h *harness) { h.mode = selector.ModeAuto })
+	h.mgr.ModeChanged(testDevice)
+	h.waitDirect(1)
+	if status := h.mgr.Status(context.Background(), testDevice); status.Mode != "auto" || status.Path != PathDirect {
+		t.Fatalf("auto status = %+v", status)
+	}
+	h.set(func(h *harness) { h.mode = selector.ModeDirect })
+	h.mgr.ModeChanged(testDevice)
+	h.waitFor("mode direct", func() bool { return h.mgr.Status(context.Background(), testDevice).Mode == "direct" })
+	// Direct mode ignores loss that would degrade auto.
+	for _, l := range h.net.Legs() {
+		l.SetLoss(0.5)
+	}
+	h.tick(2 * selector.MinDwell)
+	if status := h.mgr.Status(context.Background(), testDevice); status.Path != PathDirect {
+		t.Fatalf("direct mode left the leg on loss: %+v", status)
+	}
+	tr := startTransfer(t, stream, transferSize)
+	tr.write(t, 0, transferSize/2)
+	h.set(func(h *harness) { h.mode = selector.ModeRelay })
+	h.mgr.ModeChanged(testDevice)
+	tr.write(t, transferSize/2, transferSize)
+	tr.finish(t)
+	h.waitPath(PathRelay, ReasonModeRelay)
+	h.waitDirect(0)
+	h.waitFor("agent session closed", func() bool { return h.svc.Sessions() == 0 })
+	_ = stream.Close()
+}
+
+// In auto mode, sustained loss moves the streams to the relay after the dwell, and they return after the leg
+// stays healthy.
+func TestDegradesOnLossAndRecovers(t *testing.T) {
+	h := newHarness(t)
+	stream := h.dial("terminal")
+	h.waitDirect(1)
+	legs := h.net.Legs()
+	legs[len(legs)-1].SetLoss(0.2)
+	h.tick(selector.MinDwell + 2*time.Second)
+	h.waitPath(PathRelay, ReasonUnstable)
+	h.waitDirect(0)
+	legs[len(legs)-1].SetLoss(0)
+	h.tick(selector.MinDwell + selector.RecoverHealthy + 5*time.Second)
+	h.waitPath(PathDirect, "")
+	h.waitDirect(1)
+	_ = stream.Close()
+}
+
+// Grants renew through the signal bridge before they expire; a renewal the server refuses moves the streams to
+// the relay before the agent's grace runs out.
+func TestGrantRenewalAndExpiry(t *testing.T) {
+	h := newHarness(t)
+	stream := h.dial("terminal")
+	h.waitDirect(1)
+	h.tick(4 * time.Minute)
+	h.mu.Lock()
+	grants := h.grants
+	h.mu.Unlock()
+	if grants < 2 {
+		t.Fatalf("grants issued = %d, want a renewal", grants)
+	}
+	// The original grant expired and its grace passed: the agent must still hold the session through the
+	// renewed grant.
+	h.tick(3 * time.Minute)
+	if h.svc.Sessions() != 1 {
+		t.Fatal("the agent ended a renewed session")
+	}
+	if status := h.mgr.Status(context.Background(), testDevice); status.Path != PathDirect {
+		t.Fatalf("status after renewals = %+v", status)
+	}
+	h.set(func(h *harness) { h.grantErr = errForbidden })
+	h.tick(grantTTLForTest)
+	h.waitPath(PathRelay, ReasonServerDisabled)
+	h.waitDirect(0)
+	h.waitFor("agent session closed", func() bool { return h.svc.Sessions() == 0 })
+	_ = stream.Close()
+}
+
+const grantTTLForTest = 5 * time.Minute
+
+// A manual proxy keeps the device on the relay, as do a disabled server, a pending device key and the
+// background; a network change or return to the foreground retries at once.
+func TestSkipReasons(t *testing.T) {
+	cases := []struct {
+		name   string
+		apply  func(*harness)
+		reason string
+	}{
+		{"proxy", func(h *harness) { h.proxied = true }, ReasonProxy},
+		{"server disabled", func(h *harness) { h.enabled = false }, ReasonServerDisabled},
+		{"key pending", func(h *harness) { h.keyState = agent.P2PKeyStatePending }, ReasonKeyPending},
+		{"device unsupported", func(h *harness) { h.keyState = "" }, ReasonDeviceUnsupported},
+		{"grant offline", func(h *harness) { h.grantErr = offlineErr }, ReasonOffline},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, tc.apply)
+			stream := h.dial("terminal")
+			h.waitPath(PathRelay, tc.reason)
+			if dials, _ := h.net.Dials(); dials != 0 {
+				t.Fatalf("dialed %d legs", dials)
+			}
+			_ = stream.Close()
+		})
+	}
+}
+
+func TestBackgroundAndNetworkChange(t *testing.T) {
+	h := newHarness(t)
+	stream := h.dial("terminal")
+	h.waitDirect(1)
+	h.mgr.SetBackground(true)
+	h.waitPath(PathRelay, ReasonBackground)
+	h.waitDirect(0)
+	if dials, _ := h.net.Dials(); dials != 1 {
+		t.Fatalf("leg dials in the background = %d", dials)
+	}
+	h.mgr.SetBackground(false)
+	h.tickUntilDirect(1, ForegroundDelay+selector.RecoverHealthy+selector.MinDwell)
+
+	// A failed attempt backs off; a network change retries at once.
+	h.net.SetFail(errors.New("no path"))
+	for _, l := range h.net.Legs() {
+		_ = l.Close()
+	}
+	h.waitPath(PathRelay, ReasonConnectFailed)
+	h.clock.Advance(BackoffMin)
+	h.waitFor("the failed attempt", func() bool { dials, _ := h.net.Dials(); return dials == 3 })
+	h.net.SetFail(nil)
+	h.mgr.NetworkChanged()
+	h.waitFor("the retry after the network change", func() bool { dials, _ := h.net.Dials(); return dials >= 4 })
+	h.tickUntilDirect(1, selector.RecoverHealthy+selector.MinDwell)
+	_ = stream.Close()
+}
+
+// With every STUN server unreachable the probe reports blocked, the attempt is host-only, and the relay stream
+// works meanwhile.
+func TestUnreachableSTUNIsHostOnly(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.stun = []agent.P2PEndpoint{{Host: "127.0.0.1", Port: 9}, {Host: "127.0.0.1", Port: 19}}
+		h.probe = defaultProbe
+	})
+	h.net.SetFail(errors.New("host candidates only"))
+	started := time.Now()
+	stream := h.dial("terminal")
+	tr := startTransfer(t, stream, 64<<10)
+	tr.write(t, 0, 64<<10)
+	tr.finish(t)
+	if elapsed := time.Since(started); elapsed > natprobe.DefaultTimeout {
+		t.Fatalf("the relay stream took %s, it must not wait for the probe", elapsed)
+	}
+	h.waitFor("host-only attempt", func() bool { dials, _ := h.net.Dials(); return dials > 0 })
+	_, configs := h.net.Dials()
+	if !configs[0].HostOnly {
+		t.Fatalf("leg config = %+v, want host-only", configs[0])
+	}
+	if !slices.Equal(configs[0].STUN, []string{"127.0.0.1:9", "127.0.0.1:19"}) {
+		t.Fatalf("STUN = %v", configs[0].STUN)
+	}
+	if elapsed := time.Since(started); elapsed > natprobe.DefaultTimeout+time.Second {
+		t.Fatalf("the probe took %s, more than its timeout", elapsed)
+	}
+	h.waitPath(PathRelay, ReasonConnectFailed)
+	diag := h.mgr.Diagnostics(context.Background(), testDevice)
+	if diag.LocalNAT != string(natprobe.Blocked) || diag.STUNReachable {
+		t.Fatalf("diagnostics = %+v", diag)
+	}
+	_ = stream.Close()
+}
+
+// Streams outside the grant scope stay on the relay; every direct stream is reported to the audit.
+func TestScopeAndAudit(t *testing.T) {
+	h := newHarness(t, func(h *harness) { h.scope = []string{"terminal"} })
+	terminal := h.dial("terminal")
+	h.waitDirect(1)
+	forward := h.dial("forward")
+	if total, direct := h.mgr.Counts(testDevice); total != 2 || direct != 1 {
+		t.Fatalf("streams total %d direct %d, want the forward stream on the relay", total, direct)
+	}
+	tr := startTransfer(t, terminal, 4096)
+	tr.write(t, 0, 4096)
+	tr.finish(t)
+	_ = terminal.Close()
+	_ = forward.Close()
+	h.waitFor("streams closed", func() bool { total, _ := h.mgr.Counts(testDevice); return total == 0 })
+	h.waitFor("audit upload", func() bool {
+		h.clock.Advance(agentside.AuditFlushInterval)
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.audits) > 0
+	})
+	h.mu.Lock()
+	record := h.audits[0]
+	h.mu.Unlock()
+	if record.GrantID != "grant-1" || record.Purpose != "terminal" || record.Outcome != "" || record.BytesIn < 4096 || record.BytesOut < 4096 || record.EndedAt < record.StartedAt {
+		t.Fatalf("audit record = %+v", record)
+	}
+}
+
+// Diagnostics report the selected pair, RTT and policy.
+func TestDiagnostics(t *testing.T) {
+	h := newHarness(t)
+	stream := h.dial("terminal")
+	h.waitDirect(1)
+	diag := h.mgr.Diagnostics(context.Background(), testDevice)
+	if diag.Status.Path != PathDirect || diag.SelectedPair == nil || diag.DirectRTTMS == nil || !diag.Policy.Server || !diag.Policy.Device || diag.Policy.Mode != "auto" {
+		t.Fatalf("diagnostics = %+v", diag)
+	}
+	if len(diag.RecentSwitches) == 0 || diag.RecentSwitches[len(diag.RecentSwitches)-1].To != PathDirect {
+		t.Fatalf("switches = %+v", diag.RecentSwitches)
+	}
+	_ = stream.Close()
+}
+
+var _ = legtest.ErrPingLost
