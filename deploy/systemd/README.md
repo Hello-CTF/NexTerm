@@ -529,6 +529,38 @@ Device agents report their direct streams to the server after the fact, so
 the audit log can miss streams of an agent that was killed; disable direct
 connections where every stream must be recorded by the server.
 
+## Relay sessions
+
+The full server also offers a multiplexed relay: an app or device agent that
+supports it keeps one session to the server and carries each device
+operation as a stream of that session, instead of opening a websocket per
+operation. Every stream is authorized and audited like a relayed bridge.
+
+- The QUIC carrier shares the STUN UDP sockets: each `NEXTERM_STUN_LISTEN`
+  port answers STUN and QUIC at once, so the UDP port you already opened for
+  STUN is the only one it needs. `NEXTERM_RELAY_QUIC` (default on) set to `0`
+  turns QUIC off. With the STUN responder disabled, QUIC listens on
+  `NEXTERM_RELAY_QUIC_LISTEN` (comma-separated UDP addresses, default empty:
+  no QUIC).
+- The websocket carrier uses `/relay/ws` on the HTTPS port and needs nothing
+  extra behind Caddy or another reverse proxy that already forwards
+  websockets for `/ws/device`. Where UDP is blocked, the relay client
+  switches to it after a 300 ms head start for QUIC and skips QUIC for that
+  server for the next 10 minutes.
+- QUIC endpoints given to apps and agents are the host name they used to
+  reach the server with each relay port, unless that name is a loopback,
+  private or single-label one. `NEXTERM_RELAY_QUIC_ADVERTISE`
+  (comma-separated `host:port`) replaces them, for example when a CDN in
+  front of the server does not forward UDP.
+- The QUIC certificate is self-signed by default: its key is
+  `relay-quic.key` in the data directory, and apps learn its pin over the
+  signed-in HTTPS connection, so they never trust a QUIC server the HTTPS
+  connection did not vouch for. `NEXTERM_RELAY_QUIC_CERT` and
+  `NEXTERM_RELAY_QUIC_KEY` (PEM files, set together) present a publicly
+  trusted certificate for the advertised host name instead. Apps that reach
+  the server over plain HTTP or without certificate verification use only
+  the websocket carrier.
+
 ## Tuning and diagnostics
 
 These optional variables go in the env file of either unit:
