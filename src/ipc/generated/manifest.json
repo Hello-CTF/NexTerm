@@ -1584,6 +1584,12 @@
       "channel": false,
       "stream": "none"
     },
+    "remote_fleet_device_p2p_key_confirm": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
     "remote_fleet_device_revoke": {
       "scope": "remote",
       "nested": true,

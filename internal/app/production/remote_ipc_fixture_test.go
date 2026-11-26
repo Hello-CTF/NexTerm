@@ -202,6 +202,16 @@ func newRemoteTestMux(t *testing.T, f *remoteTestAccounts) http.Handler {
 		}
 		remoteTestWriteJSON(w, http.StatusOK, map[string]any{"ok": true, "terminal_enabled": request.Enabled})
 	}))))
+	mux.Handle("POST /fleet/devices/{id}/p2p/key/confirm", session(csrf(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			PublicKey string `json:"public_key"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.PublicKey != "pending-key" {
+			remoteTestWriteError(w, http.StatusBadRequest, ipc.CodeBadParam, "设备没有与之匹配的待确认直连密钥")
+			return
+		}
+		remoteTestWriteJSON(w, http.StatusOK, map[string]any{"ok": true, "state": "bound", "public_key": request.PublicKey})
+	}))))
 	mux.Handle("/", realServer.Handler())
 	return mux
 }

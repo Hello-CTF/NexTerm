@@ -2019,6 +2019,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteMetricsRequest", ts: "RemoteMetricsRequest" },
       output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteMetricsSamples", ts: "RemoteMetricsSamples | null" },
     },
+    "remote_fleet_device_p2p_key_confirm": {
+      scope: "remote",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteP2PKeyConfirmRequest", ts: "RemoteP2PKeyConfirmRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteP2PKeyConfirmResult", ts: "RemoteP2PKeyConfirmResult" },
+    },
     "remote_fleet_device_revoke": {
       scope: "remote",
       nested: true,
@@ -4393,6 +4401,10 @@ export interface IPCCommandTypeMap {
   "remote_fleet_device_metrics": {
     input: contractTypes.RemoteMetricsRequest;
     output: contractTypes.RemoteMetricsSamples | null;
+  };
+  "remote_fleet_device_p2p_key_confirm": {
+    input: contractTypes.RemoteP2PKeyConfirmRequest;
+    output: contractTypes.RemoteP2PKeyConfirmResult;
   };
   "remote_fleet_device_revoke": {
     input: contractTypes.RemoteDeviceRequest;

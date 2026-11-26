@@ -823,7 +823,8 @@ func serverProcessEnv(t *testing.T, extra ...string) []string {
 		}
 		env = append(env, entry)
 	}
-	return append(append(env, "TMPDIR="+shared), extra...)
+	// Test servers never bind the default STUN port; a test that needs the responder sets its own address.
+	return append(append(env, "TMPDIR="+shared, "NEXTERM_STUN_LISTEN="), extra...)
 }
 
 func startServerProcess(t *testing.T, binary, dataDir string, syncOnly bool, extraArgs ...string) (*testServerProcess, string) {

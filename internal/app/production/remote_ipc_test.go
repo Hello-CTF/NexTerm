@@ -83,6 +83,24 @@ func TestRemoteCommandsDesktopFlow(t *testing.T) {
 		t.Fatalf("terminal access = %+v", terminalAccess)
 	}
 
+	response = dispatchHostKeyTest(t, production, "remote_fleet_device_p2p_key_confirm", `{"args":{"deviceId":"d-1","publicKey":"pending-key"}}`)
+	var keyConfirm struct {
+		OK        bool   `json:"ok"`
+		PublicKey string `json:"public_key"`
+	}
+	requireStoreTestResponse(t, response, &keyConfirm)
+	if !keyConfirm.OK || keyConfirm.PublicKey != "pending-key" {
+		t.Fatalf("p2p key confirm = %+v", keyConfirm)
+	}
+	response = dispatchHostKeyTest(t, production, "remote_fleet_device_p2p_key_confirm", `{"args":{"deviceId":"d-1","publicKey":"stale-key"}}`)
+	if response.OK || response.Error == nil || response.Error.Code != "bad_param" {
+		t.Fatalf("stale p2p key confirm = %+v, want bad_param", response)
+	}
+	response = dispatchHostKeyTest(t, production, "remote_fleet_device_p2p_key_confirm", `{"args":{"deviceId":"d-1"}}`)
+	if response.OK || response.Error == nil || response.Error.Code != "bad_param" {
+		t.Fatalf("p2p key confirm without key = %+v, want bad_param", response)
+	}
+
 	response = dispatchHostKeyTest(t, production, "remote_fleet_device_revoke", `{"args":{"deviceId":""}}`)
 	if response.OK || response.Error == nil || response.Error.Code != "bad_param" {
 		t.Fatalf("empty deviceId = %+v, want bad_param", response)

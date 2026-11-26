@@ -261,6 +261,11 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 2
 	}
+	p2pSettings, err := fleetserver.ParseP2PEnv(os.LookupEnv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+		return 2
+	}
 	broker := server.NewEventBroker()
 	if queueSize > 0 {
 		broker.QueueSize = queueSize
@@ -332,10 +337,13 @@ func run(args []string) int {
 			Accounts: accounts,
 			AuthOff:  invocation.Auth == core.AuthOff,
 			Events:   broker,
-		})
+		}, fleetserver.WithP2P(p2pSettings))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 			return 1
+		}
+		if stun := startSTUNServer(p2pSettings, fleetService, logger.Logger); stun != nil {
+			defer func() { _ = stun.Close() }()
 		}
 		previewService, err = sharing.New(sharing.Config{
 			DB:       application.Services.Store.GORM(),

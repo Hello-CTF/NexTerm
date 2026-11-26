@@ -497,6 +497,38 @@ Both units allow 60 seconds for a stop: on shutdown the server sends open
 WebSockets a going-away close (code 1001) and drops connections that have
 not closed after a short grace period (10 seconds at most).
 
+## Direct device connections
+
+The full server signs short-lived grants that authorize a direct connection
+between an account's own desktop or mobile app and that account's device
+agents, and answers STUN Binding requests so both ends can learn their public
+UDP addresses. A connection the server does not grant stays on the relay
+through this server; the server never grants one for a host share or for a
+device of another account. The sync-only peer does none of this.
+
+- `NEXTERM_P2P` (default on): set `0` to refuse every grant. The STUN
+  responder does not start either.
+- `NEXTERM_STUN_LISTEN` (default `:3478`): comma-separated UDP addresses of
+  the built-in STUN responder, for example `:3478,:5349`. Set it to an empty
+  value to disable the responder. An address that cannot be bound is logged
+  as a warning and skipped; the server still starts.
+- `NEXTERM_STUN_ADVERTISE`: comma-separated `host:port` STUN addresses given
+  to apps and agents. When unset, they get the host name they used to reach
+  the server with each port the responder listens on. Behind a reverse proxy
+  or CDN that does not forward UDP, that name does not reach the responder;
+  set this to an address that does, or connections are limited to local
+  network and directly reachable addresses.
+- `NEXTERM_STUN_EXTERNAL`: comma-separated additional STUN servers (`host` or
+  `host:port`, default port 3478). No third-party STUN server is used unless
+  it is listed here; listed servers see the public addresses of the apps and
+  agents that query them.
+
+The responder answers only Binding requests, rate limited per source IP, and
+relays no traffic. Open the listed UDP ports in the firewall to use it.
+Device agents report their direct streams to the server after the fact, so
+the audit log can miss streams of an agent that was killed; disable direct
+connections where every stream must be recorded by the server.
+
 ## Tuning and diagnostics
 
 These optional variables go in the env file of either unit:

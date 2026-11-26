@@ -103,6 +103,9 @@ type Service struct {
 
 	// afterAuthenticate is a test seam fired between a successful device authentication and channel registration.
 	afterAuthenticate func(deviceID string)
+
+	// p2p holds the direct-connection settings, signing keys and live grants.
+	p2p *p2pService
 }
 
 type Option func(*Service)
@@ -151,6 +154,7 @@ func New(config Config, options ...Option) (*Service, error) {
 
 		shareRevalidateInterval: defaultShareRevalidateInterval,
 		bridges:                 newBridgeSessions(config.Accounts.CheckSession),
+		p2p:                     newP2PService(),
 	}
 	sharingService, err := sharing.New(sharing.Config{DB: config.DB, Accounts: config.Accounts},
 		sharing.WithAgentProbe(func(ctx context.Context, deviceID string) error {
@@ -655,6 +659,7 @@ func (s *Service) kickUserDevices(userID string) {
 	if err != nil {
 		return
 	}
+	s.revokeP2PGrants(func(entry *activeGrant) bool { return entry.userID == userID }, p2pRevokeOwner, false)
 	for _, row := range rows {
 		s.registry.kickDevice(row.ID, agent.ErrorCodeOwnerUnavailable)
 		s.deviceOffline(row.ID)
@@ -769,6 +774,7 @@ func (s *Service) RevokeDevice(ctx context.Context, identity *account.Identity, 
 		return err
 	}
 	s.accounts.BumpEpoch(grant.userID)
+	s.revokeP2PGrants(func(entry *activeGrant) bool { return entry.deviceID == deviceID }, p2pRevokeDevice, false)
 	s.registry.KickDevice(deviceID)
 	// Revocation means offline: after the control channel is kicked there is no more unregistration callback (KickDevice already removed it from the table),
 	// so one offline transition is made up here, keeping the audit timeline and the device://status push complete.
@@ -851,6 +857,9 @@ func (s *Service) SetTerminalEnabled(ctx context.Context, identity *account.Iden
 	}
 	if updated.RowsAffected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
+	}
+	if !enabled {
+		s.revokeP2PGrants(func(entry *activeGrant) bool { return entry.deviceID == deviceID }, p2pRevokeTerminal, true)
 	}
 	s.pushDesiredConfig(ctx, deviceID)
 	return nil

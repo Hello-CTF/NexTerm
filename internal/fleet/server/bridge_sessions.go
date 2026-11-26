@@ -163,6 +163,7 @@ func (b *bridgeSessions) revokeMatching(match func(string, *bridgeSession) bool)
 func (s *Service) CloseAccountSession(sessionID string) error {
 	if sessionID != "" {
 		s.bridges.revokeSession(sessionID)
+		s.revokeP2PGrants(func(entry *activeGrant) bool { return entry.sessionID == sessionID }, p2pRevokeSession, true)
 	}
 	return nil
 }
@@ -172,6 +173,9 @@ func (s *Service) CloseAccountSession(sessionID string) error {
 func (s *Service) CloseAccountUser(userID, exceptSession string) {
 	if userID != "" {
 		s.bridges.revokeUser(userID, exceptSession)
+		s.revokeP2PGrants(func(entry *activeGrant) bool {
+			return entry.userID == userID && ipc.MatchesRevoked(entry.sessionID, exceptSession)
+		}, p2pRevokeSession, true)
 	}
 }
 
@@ -179,5 +183,8 @@ func (s *Service) CloseAccountUser(userID, exceptSession string) {
 func (s *Service) CloseAccountDevice(userID, deviceID string) {
 	if userID != "" && deviceID != "" {
 		s.bridges.revokeDevice(userID, deviceID)
+		s.revokeP2PGrants(func(entry *activeGrant) bool {
+			return entry.userID == userID && entry.loginDeviceID == deviceID
+		}, p2pRevokeSession, true)
 	}
 }

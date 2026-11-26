@@ -9,4 +9,5 @@ var AllModels = []any{
 	AgentOutcomeRow{}, AgentEvidenceKeyRow{}, AgentEvidenceAnchorRow{},
 	StateRuleRow{},
 	DeviceAlertSettings{}, DeviceAlertState{}, DeviceAlertEvent{}, AlertEvaluatorState{},
+	P2PSigningKey{}, DeviceP2PKey{},
 }

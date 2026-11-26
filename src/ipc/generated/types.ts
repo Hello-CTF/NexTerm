@@ -2682,6 +2682,7 @@ export type RemoteFleetAgent = {
   last_seen_at: number;
   state_digest?: string;
   helper_instance_id?: string;
+  p2p_key?: RemoteFleetP2PKey | null;
 };
 
 export type RemoteFleetAlert = {
@@ -2733,6 +2734,13 @@ export type RemoteFleetDevices = {
 export type RemoteFleetOwner = {
   id: string;
   username: string;
+};
+
+export type RemoteFleetP2PKey = {
+  state: string;
+  public_key?: string;
+  pending_key?: string;
+  pending_at?: number;
 };
 
 export type RemoteFleetServiceState = {
@@ -2805,6 +2813,16 @@ export type RemoteMetricsSamples = {
 
 export type RemoteOK = {
   ok: boolean;
+};
+
+export type RemoteP2PKeyConfirmRequest = {
+  deviceId: string;
+  publicKey: string;
+};
+
+export type RemoteP2PKeyConfirmResult = {
+  ok: boolean;
+  public_key: string;
 };
 
 export type RemotePasswordChangeResult = {

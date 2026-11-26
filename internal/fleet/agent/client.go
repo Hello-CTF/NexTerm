@@ -191,6 +191,10 @@ func (c *EndpointClient) ReportCurrentURL(ctx context.Context, deviceID, secret,
 }
 
 func (c *EndpointClient) doJSON(ctx context.Context, method, path string, request, response any) error {
+	return c.doJSONWithHeaders(ctx, method, path, nil, request, response)
+}
+
+func (c *EndpointClient) doJSONWithHeaders(ctx context.Context, method, path string, headers http.Header, request, response any) error {
 	var body io.Reader
 	if request != nil {
 		encoded, err := json.Marshal(request)
@@ -207,6 +211,9 @@ func (c *EndpointClient) doJSON(ctx context.Context, method, path string, reques
 		httpRequest.Header.Set("Content-Type", "application/json")
 	}
 	httpRequest.Header.Set("Accept", "application/json")
+	for key, values := range headers {
+		httpRequest.Header[key] = values
+	}
 	httpResponse, err := c.http.Do(httpRequest)
 	if err != nil {
 		return err

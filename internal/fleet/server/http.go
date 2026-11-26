@@ -97,6 +97,12 @@ var fleetRoutePatterns = []string{
 	"POST /share/host-shares/{id}/revoke",
 	"GET /share/public/{token}",
 	"GET /share/devices/{id}/terminal",
+	"GET /fleet/p2p/config",
+	"POST /fleet/devices/{id}/p2p/grant",
+	"POST /fleet/devices/{id}/p2p/key/confirm",
+	"GET /agent/p2p/config",
+	"POST /agent/p2p/key",
+	"POST /agent/p2p/audit",
 }
 
 // Handler returns the standalone HTTP entry for fleet device management; under --auth=off all routes get 403.
@@ -167,6 +173,8 @@ func (s *Service) mountRoutes(mux routeRegistrar) {
 	// request so an old URL can neither fall through to the SPA shell nor reach any data path.
 	mux.HandleFunc("GET /share/public/{token}", serveSharePublicGone)
 	session("GET /share/devices/{id}/terminal", s.serveShareTerminalOpen)
+
+	s.mountP2PRoutes(mux)
 }
 
 // fleetGuard enforces the --auth=off hard boundary (fleet depends on attributable identity; everything is closed when off),
@@ -343,6 +351,8 @@ type agentView struct {
 	// HelperInstanceID is the random id of the device's helper state directory (not a credential); empty when
 	// offline or reported by an older agent.
 	HelperInstanceID string `json:"helper_instance_id,omitempty"`
+	// P2PKey is the device's direct-connection key state; pending means the owner must confirm a changed key.
+	P2PKey *p2pKeyView `json:"p2p_key,omitempty"`
 }
 
 // deviceListView is the GET /fleet/devices body.
@@ -384,6 +394,15 @@ func (s *Service) serveDeviceList(w http.ResponseWriter, r *http.Request) {
 		writeFleetFailure(w, err)
 		return
 	}
+	deviceIDs := make([]string, 0, len(devices))
+	for _, device := range devices {
+		deviceIDs = append(deviceIDs, device.ID)
+	}
+	keys, err := s.p2pKeyViews(r.Context(), deviceIDs)
+	if err != nil {
+		writeFleetFailure(w, err)
+		return
+	}
 	views := make([]deviceView, 0, len(devices))
 	for _, device := range devices {
 		view := newDeviceView(device)
@@ -394,6 +413,7 @@ func (s *Service) serveDeviceList(w http.ResponseWriter, r *http.Request) {
 			if id, ok := s.registry.HelperInstanceID(device.ID); ok {
 				view.Agent.HelperInstanceID = id
 			}
+			view.Agent.P2PKey = keys[device.ID]
 		}
 		views = append(views, view)
 	}

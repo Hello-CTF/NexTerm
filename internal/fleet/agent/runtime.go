@@ -159,6 +159,8 @@ type Runtime struct {
 	healthyOnce sync.Once
 	// purposeHandlers serves non-terminal bridge purposes; terminal is built in and never enters the map.
 	purposeHandlers map[string]PurposeHandler
+	// p2pRevoke receives p2p_revoke control frames (guarded by mu); nil until direct connections are wired.
+	p2pRevoke func(grantID, reason string)
 
 	runCtx     context.Context
 	loopWg     sync.WaitGroup
@@ -955,6 +957,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		r.followServerVersion(ctx, channel.ServerVersion())
 		r.ownerRecovered()
 		r.notifyCurrentURL(ctx, client)
+		r.registerP2PKeyAfterConnect(ctx, client)
 		backoff = retrySleep
 		r.reportChannel(true)
 		channelCtx, channelCancel := context.WithCancel(ctx)
@@ -970,9 +973,10 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 			channelCancel()
 		}
 		err = channel.Run(channelCtx, channelHandlers{
-			onConfig: r.applyDesired,
-			onBridge: r.handleBridge,
-			onRevoke: r.revoke,
+			onConfig:    r.applyDesired,
+			onBridge:    r.handleBridge,
+			onRevoke:    r.revoke,
+			onP2PRevoke: r.handleP2PRevoke,
 		})
 		moved := channelCtx.Err() != nil && ctx.Err() == nil
 		channelCancel()

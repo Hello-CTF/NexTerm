@@ -94,6 +94,7 @@ type serverMessage struct {
 	TerminalEnabled   *bool  `json:"terminal_enabled,omitempty"`
 	BridgeID          string `json:"bridge_id,omitempty"`
 	Purpose           string `json:"purpose,omitempty"`
+	GrantID           string `json:"grant_id,omitempty"`
 }
 
 // ProtocolMismatchError is the runtime error form of the version_mismatch control frame:
@@ -117,6 +118,9 @@ type channelHandlers struct {
 	onConfig func(ConfigUpdate)
 	onBridge func(bridgeID, purpose string)
 	onRevoke func()
+	// onP2PRevoke closes the direct session of a revoked grant. The server sends p2p_revoke only to agents that
+	// advertise CapabilityP2P, so older agents never see the frame.
+	onP2PRevoke func(grantID, reason string)
 }
 
 type Channel struct {
@@ -212,6 +216,10 @@ func (c *Channel) Run(ctx context.Context, handlers channelHandlers) error {
 		case "bridge":
 			if handlers.onBridge != nil && message.BridgeID != "" {
 				handlers.onBridge(message.BridgeID, message.Purpose)
+			}
+		case "p2p_revoke":
+			if handlers.onP2PRevoke != nil && message.GrantID != "" {
+				handlers.onP2PRevoke(message.GrantID, message.Reason)
 			}
 		case "revoke":
 			if message.Reason == ErrorCodeOwnerUnavailable {
