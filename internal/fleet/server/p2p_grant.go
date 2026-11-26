@@ -170,12 +170,21 @@ type p2pGrantDenied struct {
 	err    error
 }
 
+// p2pAuditedDenials are the denials written to the audit log: like the relay, the ownership decisions, plus a
+// device key awaiting confirmation. Switch, presence and capability refusals are not, because clients retry
+// them in the background and would fill the log.
+var p2pAuditedDenials = map[string]bool{"not_found": true, "device_revoked": true, "not_owner": true, "device_key_pending": true}
+
 // IssueP2PGrant runs the relay checks (owner, revocation, terminal switch, online, capability) plus the P2P
-// policy (server switch, trusted device key) and signs a grant for clientPub. The first grant of a session is
-// audited as p2p_open; renewals are not. Every denial is audited.
-func (s *Service) IssueP2PGrant(ctx context.Context, identity *account.Identity, deviceID string, clientPub grant.Key) (*p2pGrantView, error) {
-	view, denied := s.issueP2PGrant(ctx, identity, deviceID, clientPub)
+// policy (server switch, per-device relay choice, trusted device key) and signs a grant for clientPub. The first
+// grant of a session is audited as p2p_open; renewals are not. token is the login session cookie, rechecked after
+// the grant is registered so a logout that races the request either fails it or reaches the registered grant.
+func (s *Service) IssueP2PGrant(ctx context.Context, identity *account.Identity, deviceID string, clientPub grant.Key, token string) (*p2pGrantView, error) {
+	view, denied := s.issueP2PGrant(ctx, identity, deviceID, clientPub, token)
 	if denied != nil {
+		if !p2pAuditedDenials[denied.reason] {
+			return nil, denied.err
+		}
 		_ = s.audit(ctx, auditKindDeviceTerminal, auditPayload{
 			Action: auditActionP2POpen, DeviceID: deviceID, Requester: identity.UserID, Outcome: "deny", Reason: denied.reason,
 		})
@@ -184,7 +193,7 @@ func (s *Service) IssueP2PGrant(ctx context.Context, identity *account.Identity,
 	return view, nil
 }
 
-func (s *Service) issueP2PGrant(ctx context.Context, identity *account.Identity, deviceID string, clientPub grant.Key) (*p2pGrantView, *p2pGrantDenied) {
+func (s *Service) issueP2PGrant(ctx context.Context, identity *account.Identity, deviceID string, clientPub grant.Key, token string) (*p2pGrantView, *p2pGrantDenied) {
 	if !s.P2PEnabled() {
 		return nil, &p2pGrantDenied{"p2p_disabled", ipc.NewError(ipc.CodeForbidden, "服务器已关闭直连")}
 	}
@@ -204,6 +213,18 @@ func (s *Service) issueP2PGrant(ctx context.Context, identity *account.Identity,
 	}
 	if !desired.TerminalEnabled {
 		return nil, &p2pGrantDenied{"terminal_disabled", ipc.NewError(ipc.CodeForbidden, "设备已关闭远程访问")}
+	}
+	s.p2p.mu.Lock()
+	forceRelay := s.p2p.forceRelay
+	s.p2p.mu.Unlock()
+	if forceRelay != nil {
+		relay, err := forceRelay(ctx, identity.UserID, deviceID)
+		if err != nil {
+			return nil, &p2pGrantDenied{"db_error", err}
+		}
+		if relay {
+			return nil, &p2pGrantDenied{"force_relay", ipc.NewError(ipc.CodeForbidden, "该设备已设置为始终使用中转")}
+		}
 	}
 	if !s.registry.AgentOnline(deviceID) {
 		return nil, &p2pGrantDenied{"offline", ipc.NewError(ipc.CodeDisconnected, errDeviceOffline.Error())}
@@ -239,7 +260,11 @@ func (s *Service) issueP2PGrant(ctx context.Context, identity *account.Identity,
 	now := s.now()
 	expiresAt := now + grant.DefaultTTL.Milliseconds()
 	entry, created := s.p2p.grants.upsert(now, grantKey{sessionID: identity.SessionID, deviceID: deviceID, clientPub: clientPub.String()}, identity, expiresAt)
-	token, err := grant.Issue(signing, grant.Claims{
+	if s.bridges.sessionInvalid(ctx, identity, token) {
+		s.p2p.grants.take(func(candidate *activeGrant) bool { return candidate == entry })
+		return nil, &p2pGrantDenied{"session_revoked", errP2PSessionRevoked}
+	}
+	signed, err := grant.Issue(signing, grant.Claims{
 		GrantID: entry.id, DeviceID: deviceID, OwnerID: identity.UserID,
 		ClientPub: clientPub, AgentPub: agentPub, Scope: scope,
 		IssuedAt: now, ExpiresAt: expiresAt,
@@ -257,7 +282,7 @@ func (s *Service) issueP2PGrant(ctx context.Context, identity *account.Identity,
 		}
 	}
 	return &p2pGrantView{
-		Grant: token, GrantID: entry.id, KID: signing.KID, DeviceID: deviceID, AgentPub: agentPub,
+		Grant: signed, GrantID: entry.id, KID: signing.KID, DeviceID: deviceID, AgentPub: agentPub,
 		Scope: scope, IssuedAt: now, ExpiresAt: expiresAt, RenewAfterMS: p2pRenewAfter.Milliseconds(),
 	}, nil
 }

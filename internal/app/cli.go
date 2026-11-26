@@ -293,6 +293,12 @@ Server environment (serve only):
   NEXTERM_WS_COMPRESSION  WebSocket compression override: takeover, nocontext or off
   NEXTERM_EVENT_QUEUE_SIZE, NEXTERM_EVENT_BUFFER_SIZE
                       Per-subscriber event queue and replay buffer length (defaults 64, 256)
+  NEXTERM_P2P         1/0; sign direct device connection grants (default 1)
+  NEXTERM_STUN_LISTEN  UDP addresses of the STUN responder, comma separated (default :3478;
+                      empty disables it)
+  NEXTERM_STUN_ADVERTISE  host:port STUN addresses given to apps and agents (default: the
+                      host name they reached the server by, with each listening port)
+  NEXTERM_STUN_EXTERNAL  Additional STUN servers, host[:port] comma separated (default none)
   NEXTERM_PPROF_CONTENTION  With pprof enabled, sample block/mutex profiles at rate N
                       (1 records every event; default 0 = off)
 

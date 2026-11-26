@@ -33,6 +33,7 @@ require (
 	github.com/meguminnnnnnnnn/go-openai v0.1.6
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.2
+	github.com/pion/stun/v4 v4.0.1
 	github.com/pkg/sftp v1.13.12
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
@@ -113,7 +114,6 @@ require (
 	github.com/pelletier/go-toml/v2 v2.0.9 // indirect
 	github.com/pion/dtls/v3 v3.1.9 // indirect
 	github.com/pion/logging v0.2.4 // indirect
-	github.com/pion/stun/v4 v4.0.1 // indirect
 	github.com/pion/transport/v5 v5.0.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

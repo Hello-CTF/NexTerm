@@ -1,6 +1,7 @@
 package fleetserver
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -157,6 +158,17 @@ func WithP2P(settings P2PSettings) Option {
 	}
 }
 
+// WithP2PForceRelay installs the per-device "always use the relay" check: forceRelay reports whether userID
+// chose the relay for deviceID, and a true answer refuses the grant. Without it the server does not consult any
+// per-device choice; the client then has to honor its own stored setting by not asking for a grant.
+func WithP2PForceRelay(forceRelay func(ctx context.Context, userID, deviceID string) (bool, error)) Option {
+	return func(s *Service) {
+		s.p2p.mu.Lock()
+		s.p2p.forceRelay = forceRelay
+		s.p2p.mu.Unlock()
+	}
+}
+
 // SetP2PSTUNPorts records the UDP ports the built-in STUN responder actually listens on; the config
 // endpoints advertise them under the caller's host name when NEXTERM_STUN_ADVERTISE is unset.
 func (s *Service) SetP2PSTUNPorts(ports []int) {
@@ -229,9 +241,10 @@ func requestHostname(r *http.Request) string {
 
 // p2pService holds the direct-connection state of the fleet service.
 type p2pService struct {
-	mu        sync.Mutex
-	settings  P2PSettings
-	stunPorts []int
+	mu         sync.Mutex
+	settings   P2PSettings
+	stunPorts  []int
+	forceRelay func(ctx context.Context, userID, deviceID string) (bool, error)
 
 	keys   *p2pKeyRing
 	grants *p2pGrants

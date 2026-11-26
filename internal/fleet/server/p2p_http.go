@@ -10,6 +10,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/p2p/grant"
 )
 
+var errP2PSessionRevoked = errors.New("login session revoked")
+
 // mountP2PRoutes registers the direct-connection routes; their patterns are listed in fleetRoutePatterns.
 func (s *Service) mountP2PRoutes(mux routeRegistrar) {
 	mux.Handle("GET /fleet/p2p/config", s.requireFleetSession(http.HandlerFunc(s.serveP2PConfig)))
@@ -45,7 +47,15 @@ func (s *Service) serveP2PGrant(w http.ResponseWriter, r *http.Request) {
 		writeFleetFailure(w, ipc.BadParam(errors.New("client_pub 必须是 base64url 编码的 Ed25519 公钥")))
 		return
 	}
-	view, err := s.IssueP2PGrant(r.Context(), identityFrom(r), r.PathValue("id"), clientPub)
+	var token string
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		token = cookie.Value
+	}
+	view, err := s.IssueP2PGrant(r.Context(), identityFrom(r), r.PathValue("id"), clientPub, token)
+	if errors.Is(err, errP2PSessionRevoked) {
+		writeFleetJSON(w, http.StatusUnauthorized, ipc.Failure(ipc.NewError(ipc.CodeForbidden, bridgeSessionReloginMessage)))
+		return
+	}
 	if err != nil {
 		writeFleetFailure(w, err)
 		return

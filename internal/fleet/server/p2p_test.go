@@ -192,8 +192,8 @@ func TestP2PGrantPolicy(t *testing.T) {
 		if config.status != http.StatusOK || config.body["enabled"] != false || len(config.body["grant_keys"].([]any)) != 0 || len(config.body["stun"].([]any)) != 0 {
 			t.Fatalf("config with P2P off: %v", config.body)
 		}
-		if denials := p2pAudits(t, f.httpFixture, "device_terminal", auditActionP2POpen); len(denials) != 1 || denials[0]["reason"] != "p2p_disabled" {
-			t.Fatalf("denial audits = %v", denials)
+		if denials := p2pAudits(t, f.httpFixture, "device_terminal", auditActionP2POpen); len(denials) != 0 {
+			t.Fatalf("a switch refusal was audited: %v", denials)
 		}
 	})
 
@@ -258,10 +258,8 @@ func TestP2PGrantPolicy(t *testing.T) {
 	for _, row := range p2pAudits(t, f.httpFixture, "device_terminal", auditActionP2POpen) {
 		reasons[row["reason"].(string)] = true
 	}
-	for _, want := range []string{"not_owner", "terminal_disabled", "offline", "capability_missing", "device_key_missing"} {
-		if !reasons[want] {
-			t.Fatalf("no %s denial audit in %v", want, reasons)
-		}
+	if len(reasons) != 1 || !reasons["not_owner"] {
+		t.Fatalf("denial audits = %v, want only the ownership denial", reasons)
 	}
 }
 

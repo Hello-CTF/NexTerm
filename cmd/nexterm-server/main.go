@@ -342,8 +342,11 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 			return 1
 		}
-		if stun := startSTUNServer(p2pSettings, fleetService, logger.Logger); stun != nil {
-			defer func() { _ = stun.Close() }()
+		// Under --auth off every fleet route is closed, so no grant can be issued and STUN would only open a port.
+		if invocation.Auth != core.AuthOff {
+			if stun := startSTUNServer(p2pSettings, fleetService, logger.Logger); stun != nil {
+				defer func() { _ = stun.Close() }()
+			}
 		}
 		previewService, err = sharing.New(sharing.Config{
 			DB:       application.Services.Store.GORM(),
