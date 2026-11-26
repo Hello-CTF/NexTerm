@@ -972,6 +972,7 @@
   "与「{name}」共用持久终端": "Comparte el terminal persistente con «{name}»",
   "与上传目录相同": "Igual que el directorio de subida",
   "与原资产共用凭据": "Comparte las credenciales con el recurso original",
+  "与服务器的连接未验证证书": "La conexión con el servidor no verifica el certificado",
   "与服务端保持连接": "Mantener la conexión con el servidor",
   "与本机终端共用持久终端": "Comparte el terminal persistente con el terminal local",
   "与终端按键的冲突": "Conflicto con las teclas del terminal",

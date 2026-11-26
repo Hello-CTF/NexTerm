@@ -180,6 +180,7 @@ describe("devicePathTooltip", () => {
     [{ reason: "key_pending" }, "经中转（设备密钥已变化，待确认）"],
     [{ reason: "browser_or_share" }, "经中转（浏览器和分享连接只经中转）"],
     [{ reason: "proxy" }, "经中转（经代理连接服务器）"],
+    [{ reason: "insecure" }, "经中转（与服务器的连接未验证证书）"],
     [{ reason: "offline" }, null],
     [{ mode: "direct", path: "direct" }, "直连"],
     [{ mode: "direct", reason: "nat_blocked" }, "直连不可用，当前经中转（当前网络无法直连）"],

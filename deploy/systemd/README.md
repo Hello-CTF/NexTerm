@@ -526,6 +526,11 @@ device of another account. The sync-only peer does none of this.
 The responder answers only Binding requests, rate limited per source IP, and
 relays no traffic. Open the listed UDP ports in the firewall to use it.
 
+Apps and agents that reach the server over plain HTTP, without certificate
+verification or through a proxy (configured or from the `HTTPS_PROXY` style
+environment variables) never connect directly and stay on the relay; agents
+in that case do not register a device key either.
+
 Behind a reverse proxy (Caddy, nginx and similar): only the relay and the
 signaling go through the proxy, over HTTPS/WSS on 443. The direct QUIC
 connection runs peer to peer between the app and the agent on ephemeral UDP

@@ -59,13 +59,26 @@ func (p *RemoteProxy) DeviceP2PKeyState(ctx context.Context, deviceID string) (s
 	return "", ipc.NewError(ipc.CodeNotFound, "设备不存在或已撤销")
 }
 
-// P2PEndpoint is the linked server URL and whether a manual proxy is configured for it.
+// P2PEndpoint is the linked server URL, whether the API goes through a proxy (manual or from the environment),
+// and whether the connection is plain HTTP or skips TLS verification: the relay checks the same.
 func (p *RemoteProxy) P2PEndpoint(ctx context.Context) (p2pclient.Endpoint, error) {
 	config, err := p.service.remoteConfig(ctx)
 	if err != nil {
 		return p2pclient.Endpoint{}, err
 	}
-	return p2pclient.Endpoint{URL: config.URL, Proxied: config.Proxy.Enabled()}, nil
+	return p2pEndpoint(config), nil
+}
+
+func p2pEndpoint(config RemoteConfig) p2pclient.Endpoint {
+	base, err := normalizeBase(config.URL)
+	if err != nil {
+		base = config.URL
+	}
+	return p2pclient.Endpoint{
+		URL:      config.URL,
+		Proxied:  proxiedBase(base, config.Proxy),
+		Insecure: !agent.P2PEndpointVerified(base, config.Insecure),
+	}
 }
 
 // DialDeviceBridgeCarrier dials one relay bridge offering a stream carrier; stream reports whether the server and

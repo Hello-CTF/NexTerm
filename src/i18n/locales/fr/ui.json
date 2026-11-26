@@ -963,6 +963,7 @@
   "与「{name}」共用持久终端": "Partage le terminal persistant avec « {name} »",
   "与上传目录相同": "Identique au répertoire d'envoi",
   "与原资产共用凭据": "Partage les identifiants avec la ressource d'origine",
+  "与服务器的连接未验证证书": "La connexion au serveur ne vérifie pas le certificat",
   "与服务端保持连接": "Reste connecté au serveur",
   "与本机终端共用持久终端": "Partage le terminal persistant avec le terminal local",
   "与终端按键的冲突": "Conflits avec les touches du terminal",

@@ -327,16 +327,17 @@ func (s *Service) serveOffer(ctx context.Context, sc *signal.Conn, offer signal.
 		return s.refuse(ctx, sc, "terminal_disabled", errors.New("terminal access is disabled"))
 	}
 	config, endpoint, err := s.loadConfig(ctx)
-	if err != nil {
-		return s.refuse(ctx, sc, "config", err)
-	}
 	switch {
+	case errors.Is(err, agent.ErrP2PKeyInsecureEndpoint):
+		return s.refuse(ctx, sc, "insecure", err)
+	case err != nil:
+		return s.refuse(ctx, sc, "config", err)
 	case !config.Enabled:
 		return s.refuse(ctx, sc, "server_disabled", errors.New("the server turned direct connections off"))
 	case endpoint.Proxied:
-		return s.refuse(ctx, sc, "proxy", errors.New("the endpoint uses a manual proxy"))
+		return s.refuse(ctx, sc, "proxy", errors.New("the endpoint uses a proxy"))
 	case endpoint.Insecure:
-		return s.refuse(ctx, sc, "insecure", errors.New("the endpoint skips TLS verification"))
+		return s.refuse(ctx, sc, "insecure", errors.New("the endpoint is plain HTTP or skips TLS verification"))
 	}
 	key, err := s.host.P2PKey()
 	if err != nil {

@@ -25,6 +25,7 @@ export type DevicePathReason =
   | "unstable"
   | "background"
   | "proxy"
+  | "insecure"
   | "offline"
   | "";
 

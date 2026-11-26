@@ -116,7 +116,7 @@ export function useDevicePathNote(workspace: Workspace | undefined): string | nu
 }
 
 // Reasons that keep a device on the relay whatever the network does; the tooltip names them even in automatic mode.
-const POLICY_REASONS = new Set(["server_disabled", "device_unsupported", "key_pending", "browser_or_share", "proxy"]);
+const POLICY_REASONS = new Set(["server_disabled", "device_unsupported", "key_pending", "browser_or_share", "proxy", "insecure"]);
 
 export function devicePathReasonText(reason: string): string {
   switch (reason) {
@@ -140,6 +140,8 @@ export function devicePathReasonText(reason: string): string {
       return t("应用在后台");
     case "proxy":
       return t("经代理连接服务器");
+    case "insecure":
+      return t("与服务器的连接未验证证书");
     case "offline":
       return t("设备离线");
     default:

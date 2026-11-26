@@ -960,6 +960,7 @@
   "与「{name}」共用持久终端": "Shares the persistent terminal with \"{name}\"",
   "与上传目录相同": "Same as the upload directory",
   "与原资产共用凭据": "Shares credentials with the original asset",
+  "与服务器的连接未验证证书": "Server connection does not verify the certificate",
   "与服务端保持连接": "Stay connected to the server",
   "与本机终端共用持久终端": "Shares the persistent terminal with the local terminal",
   "与终端按键的冲突": "Conflicts with terminal keys",

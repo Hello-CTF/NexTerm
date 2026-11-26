@@ -13,6 +13,7 @@ import (
 	urlpkg "net/url"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
 	"github.com/Hello-CTF/NexTerm/internal/relaymux"
 	"github.com/Hello-CTF/NexTerm/internal/relaymux/relayclient"
 	"github.com/Hello-CTF/NexTerm/internal/rstream"
@@ -309,14 +310,23 @@ func (c *remoteClient) relaySession() relayclient.Session {
 
 // proxied reports whether the API goes through a proxy, manual or from the environment.
 func (c *remoteClient) proxied() bool {
-	if c.proxy.Enabled() {
+	return proxiedBase(c.base, c.proxy)
+}
+
+// proxyFromEnvironment is http.ProxyFromEnvironment, replaceable in tests (it reads the environment once per
+// process and never proxies loopback hosts).
+var proxyFromEnvironment = http.ProxyFromEnvironment
+
+// proxiedBase reports whether requests to base go through a proxy, manual or from the environment.
+func proxiedBase(base string, manual netproxy.Manual) bool {
+	if manual.Enabled() {
 		return true
 	}
-	request, err := http.NewRequest(http.MethodGet, c.base, nil)
+	request, err := http.NewRequest(http.MethodGet, base, nil)
 	if err != nil {
 		return false
 	}
-	proxy, err := http.ProxyFromEnvironment(request)
+	proxy, err := proxyFromEnvironment(request)
 	return err == nil && proxy != nil
 }
 

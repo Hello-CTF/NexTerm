@@ -156,8 +156,8 @@ func (d *device) connect() (*directSession, string) {
 	if err != nil {
 		return nil, grantReason(err)
 	}
-	if endpoint.Proxied {
-		return nil, ReasonProxy
+	if reason := endpointReason(endpoint); reason != "" {
+		return nil, reason
 	}
 	g, err := m.backend.Grant(ctx, d.id, m.key.Public().(ed25519.PublicKey))
 	if err != nil {

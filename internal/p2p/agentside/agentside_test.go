@@ -37,6 +37,8 @@ type fakeHost struct {
 	grants   [][]string
 	failUp   error
 	terminal bool
+	// configErr fails FetchP2PConfig, as the runtime does for an endpoint without TLS verification.
+	configErr error
 }
 
 func (h *fakeHost) DeviceID() string                    { return "dev-1" }
@@ -48,6 +50,12 @@ func (h *fakeHost) TerminalEnabled() bool {
 }
 
 func (h *fakeHost) FetchP2PConfig(context.Context) (*agent.P2PConfig, agent.P2PEndpointInfo, error) {
+	h.mu.Lock()
+	err := h.configErr
+	h.mu.Unlock()
+	if err != nil {
+		return nil, agent.P2PEndpointInfo{URL: "http://nx.example.com", Insecure: true}, err
+	}
 	return &agent.P2PConfig{Enabled: true, GrantKeys: []grant.PublicKey{h.signing.Public()}}, agent.P2PEndpointInfo{URL: "https://nx.example.com"}, nil
 }
 
@@ -345,6 +353,19 @@ func TestOfferRefusals(t *testing.T) {
 		if refused == nil || refused.Reason != signal.CloseRefused {
 			t.Fatalf("%s: offer accepted", name)
 		}
+	}
+	if f.svc.Sessions() != 0 {
+		t.Fatal("a refused offer left a session")
+	}
+}
+
+func TestOfferRefusedOverUnverifiedEndpoint(t *testing.T) {
+	f := newFixture(t)
+	f.host.mu.Lock()
+	f.host.configErr = agent.ErrP2PKeyInsecureEndpoint
+	f.host.mu.Unlock()
+	if _, _, refused := f.open(f.issue([]string{"terminal"}, grant.DefaultTTL, nil)); refused == nil || refused.Reason != signal.CloseRefused {
+		t.Fatal("offer accepted over an endpoint without TLS verification")
 	}
 	if f.svc.Sessions() != 0 {
 		t.Fatal("a refused offer left a session")

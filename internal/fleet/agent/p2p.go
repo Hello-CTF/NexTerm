@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/p2p/grant"
@@ -47,9 +49,38 @@ const (
 	p2pKeyTimeout = 15 * time.Second
 )
 
-// ErrP2PKeyInsecureEndpoint reports that a device key was not registered because the endpoint skips TLS
-// verification, so trust on first use would not be meaningful.
-var ErrP2PKeyInsecureEndpoint = errors.New("p2p device key is not registered over an endpoint without TLS verification")
+// ErrP2PKeyInsecureEndpoint reports that the device key was not registered, or the direct-connection
+// configuration not fetched, because the endpoint is plain HTTP or skips TLS verification: trust on first use and
+// the trusted grant keys would not be meaningful.
+var ErrP2PKeyInsecureEndpoint = errors.New("direct connections need an HTTPS endpoint with TLS verification")
+
+var plainHTTPP2PForTesting atomic.Bool
+
+// AllowPlainHTTPP2PForTesting lets direct connections use plain http:// endpoints, for tests whose servers are
+// httptest servers without a trusted certificate. Only test code calls it; it does not check, so that the agent
+// binary does not link the testing package.
+func AllowPlainHTTPP2PForTesting() {
+	plainHTTPP2PForTesting.Store(true)
+}
+
+// P2PEndpointVerified reports whether baseURL reaches the server over HTTPS with certificate verification. Only
+// such an endpoint vouches for the keys of a direct connection (the device key, the trusted grant keys, a
+// grant's agent key), so both the agent and the client negotiate direct connections through no other, like the
+// relay keeps QUIC to verified HTTPS.
+func P2PEndpointVerified(baseURL string, insecure bool) bool {
+	if insecure {
+		return false
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	return parsed.Scheme == "https" || parsed.Scheme == "http" && plainHTTPP2PForTesting.Load()
+}
+
+func (c *EndpointClient) p2pVerified() bool {
+	return P2PEndpointVerified(c.base, c.Insecure())
+}
 
 // P2PKeyRequest is the POST /agent/p2p/key body.
 type P2PKeyRequest struct {
@@ -179,10 +210,10 @@ func LoadOrCreateP2PKey(path string) (ed25519.PrivateKey, error) {
 	return ed25519.NewKeyFromSeed(seed), nil
 }
 
-// RegisterP2PKey registers the device public key with the server. It refuses endpoints without TLS
-// verification (ErrP2PKeyInsecureEndpoint).
+// RegisterP2PKey registers the device public key with the server. It refuses plain HTTP endpoints and endpoints
+// without TLS verification (ErrP2PKeyInsecureEndpoint).
 func (c *EndpointClient) RegisterP2PKey(ctx context.Context, deviceID, secret string, public ed25519.PublicKey) (*P2PKeyResponse, error) {
-	if c.Insecure() {
+	if !c.p2pVerified() {
 		return nil, ErrP2PKeyInsecureEndpoint
 	}
 	var response P2PKeyResponse
@@ -193,8 +224,12 @@ func (c *EndpointClient) RegisterP2PKey(ctx context.Context, deviceID, secret st
 	return &response, nil
 }
 
-// P2PConfig fetches the direct-connection configuration for this device.
+// P2PConfig fetches the direct-connection configuration for this device. Like RegisterP2PKey it refuses
+// plain HTTP endpoints and endpoints without TLS verification, which could replace the trusted grant keys.
 func (c *EndpointClient) P2PConfig(ctx context.Context, deviceID, secret string) (*P2PConfig, error) {
+	if !c.p2pVerified() {
+		return nil, ErrP2PKeyInsecureEndpoint
+	}
 	headers := http.Header{}
 	headers.Set(HeaderDeviceID, deviceID)
 	headers.Set("Authorization", "Bearer "+secret)
@@ -266,9 +301,10 @@ func (r *Runtime) servesP2P() bool {
 type P2PEndpointInfo struct {
 	// URL is the server base URL the agent connects to.
 	URL string
-	// Proxied reports a manual proxy on the endpoint: direct UDP would bypass it.
+	// Proxied reports a proxy on the endpoint, manual or from the environment: direct UDP would bypass it.
 	Proxied bool
-	// Insecure reports an endpoint without TLS verification, where the device key is never registered.
+	// Insecure reports a plain HTTP endpoint or one without TLS verification, where the device key is never
+	// registered and the configuration is never fetched.
 	Insecure bool
 }
 
@@ -278,7 +314,10 @@ func (r *Runtime) FetchP2PConfig(ctx context.Context) (*P2PConfig, P2PEndpointIn
 	if client == nil {
 		return nil, P2PEndpointInfo{}, ErrNoEndpoint
 	}
-	info := P2PEndpointInfo{URL: client.BaseURL(), Proxied: client.DialPolicy().Proxy.Enabled(), Insecure: client.Insecure()}
+	info := P2PEndpointInfo{URL: client.BaseURL(), Proxied: client.proxied(), Insecure: !client.p2pVerified()}
+	if info.Insecure {
+		return nil, info, ErrP2PKeyInsecureEndpoint
+	}
 	config, err := client.P2PConfig(ctx, r.deviceID, r.secret)
 	return config, info, err
 }
@@ -313,8 +352,8 @@ func (r *Runtime) registerP2PKeyAfterConnect(ctx context.Context, client *Endpoi
 	if !r.servesP2P() {
 		return
 	}
-	if client.Insecure() {
-		r.logger.Warn("direct connections stay off: the endpoint skips TLS verification", "url", client.BaseURL())
+	if !client.p2pVerified() {
+		r.logger.Warn("direct connections stay off: the endpoint is plain HTTP or skips TLS verification", "url", client.BaseURL())
 		return
 	}
 	r.loopWg.Add(1)

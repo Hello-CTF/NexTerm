@@ -261,8 +261,8 @@ func (d *device) policyReason(mode selector.Mode) string {
 	case mode == selector.ModeRelay:
 		return ReasonModeRelay
 	}
-	if endpoint, err := d.m.backend.Endpoint(d.ctx); err == nil && endpoint.Proxied {
-		return ReasonProxy
+	if endpoint, err := d.m.backend.Endpoint(d.ctx); err == nil {
+		return endpointReason(endpoint)
 	}
 	return ""
 }

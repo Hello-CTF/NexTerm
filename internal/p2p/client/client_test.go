@@ -190,8 +190,8 @@ func TestGrantRenewalAndExpiry(t *testing.T) {
 
 const grantTTLForTest = 5 * time.Minute
 
-// A manual proxy keeps the device on the relay, as do a disabled server, a pending device key and the
-// background; a network change or return to the foreground retries at once.
+// A proxy keeps the device on the relay, as do an unverified server connection, a disabled server, a pending
+// device key and the background; a network change or return to the foreground retries at once.
 func TestSkipReasons(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -199,6 +199,7 @@ func TestSkipReasons(t *testing.T) {
 		reason string
 	}{
 		{"proxy", func(h *harness) { h.proxied = true }, ReasonProxy},
+		{"insecure", func(h *harness) { h.insecure = true }, ReasonInsecure},
 		{"server disabled", func(h *harness) { h.enabled = false }, ReasonServerDisabled},
 		{"key pending", func(h *harness) { h.keyState = agent.P2PKeyStatePending }, ReasonKeyPending},
 		{"device unsupported", func(h *harness) { h.keyState = "" }, ReasonDeviceUnsupported},
@@ -211,6 +212,14 @@ func TestSkipReasons(t *testing.T) {
 			h.waitPath(PathRelay, tc.reason)
 			if dials, _ := h.net.Dials(); dials != 0 {
 				t.Fatalf("dialed %d legs", dials)
+			}
+			if tc.reason == ReasonProxy || tc.reason == ReasonInsecure {
+				h.mu.Lock()
+				grants := h.grants
+				h.mu.Unlock()
+				if grants != 0 {
+					t.Fatalf("requested %d grants", grants)
+				}
 			}
 			_ = stream.Close()
 		})

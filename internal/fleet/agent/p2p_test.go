@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -82,13 +85,55 @@ func TestLoadOrCreateP2PKeyPersistsOneKey(t *testing.T) {
 	}
 }
 
-func TestRegisterP2PKeyRefusesEndpointsWithoutTLSVerification(t *testing.T) {
-	client, err := NewEndpointClient(BaseURLEntry{URL: "https://nexterm.example.com", Insecure: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+// Plain HTTP and unverified TLS endpoints neither register the device key nor fetch the trusted grant keys,
+// and send nothing to the server.
+func TestP2PRefusesEndpointsWithoutTLSVerification(t *testing.T) {
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "unexpected", http.StatusTeapot)
+	}))
+	t.Cleanup(server.Close)
+	tlsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "unexpected", http.StatusTeapot)
+	}))
+	t.Cleanup(tlsServer.Close)
 	public, _, _ := ed25519.GenerateKey(nil)
-	if _, err := client.RegisterP2PKey(context.Background(), "d", "s", public); !errors.Is(err, ErrP2PKeyInsecureEndpoint) {
-		t.Fatalf("err = %v", err)
+	for name, entry := range map[string]BaseURLEntry{
+		"plain http":     {URL: server.URL},
+		"unverified tls": {URL: tlsServer.URL, Insecure: true},
+	} {
+		client, err := NewEndpointClient(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.RegisterP2PKey(context.Background(), "d", "s", public); !errors.Is(err, ErrP2PKeyInsecureEndpoint) {
+			t.Fatalf("%s: register err = %v", name, err)
+		}
+		if _, err := client.P2PConfig(context.Background(), "d", "s"); !errors.Is(err, ErrP2PKeyInsecureEndpoint) {
+			t.Fatalf("%s: config err = %v", name, err)
+		}
+	}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("%d requests reached the server", n)
+	}
+}
+
+func TestP2PEndpointVerified(t *testing.T) {
+	for _, tc := range []struct {
+		url      string
+		insecure bool
+		want     bool
+	}{
+		{"https://nx.example.com", false, true},
+		{"https://nx.example.com", true, false},
+		{"http://nx.example.com", false, false},
+		{"http://127.0.0.1:8080", false, false},
+		{"://bad", false, false},
+	} {
+		if got := P2PEndpointVerified(tc.url, tc.insecure); got != tc.want {
+			t.Errorf("P2PEndpointVerified(%q, %v) = %v", tc.url, tc.insecure, got)
+		}
 	}
 }

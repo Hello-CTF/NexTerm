@@ -48,6 +48,7 @@ type harness struct {
 	mu         sync.Mutex
 	mode       selector.Mode
 	proxied    bool
+	insecure   bool
 	enabled    bool
 	keyState   string
 	scope      []string
@@ -200,7 +201,7 @@ func (h *harness) Mode(context.Context, string) (selector.Mode, error) {
 func (h *harness) Endpoint(context.Context) (Endpoint, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return Endpoint{URL: "https://nx.example.com", Proxied: h.proxied}, nil
+	return Endpoint{URL: "https://nx.example.com", Proxied: h.proxied, Insecure: h.insecure}, nil
 }
 
 // agentside.Host.

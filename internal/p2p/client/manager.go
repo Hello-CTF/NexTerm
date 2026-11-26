@@ -46,6 +46,7 @@ const (
 	ReasonUnstable          = "unstable"
 	ReasonBackground        = "background"
 	ReasonProxy             = "proxy"
+	ReasonInsecure          = "insecure"
 	ReasonOffline           = "offline"
 )
 
@@ -87,8 +88,12 @@ type Grant struct {
 type Endpoint struct {
 	// URL is the server base URL.
 	URL string
-	// Proxied reports a manual proxy: direct UDP would bypass it, so no direct connection is tried.
+	// Proxied reports a proxy, manual or from the environment: direct UDP would bypass it, so no direct
+	// connection is tried.
 	Proxied bool
+	// Insecure reports plain HTTP or unverified TLS to the server, which could not vouch for the agent key of a
+	// grant, so no direct connection is tried.
+	Insecure bool
 }
 
 // Backend is the server surface the manager uses; the sync service's RemoteProxy provides it.
@@ -409,4 +414,15 @@ func grantReason(err error) string {
 		}
 	}
 	return ReasonConnectFailed
+}
+
+// endpointReason is why the way the client reaches the server rules out a direct connection, "" when it does not.
+func endpointReason(endpoint Endpoint) string {
+	switch {
+	case endpoint.Proxied:
+		return ReasonProxy
+	case endpoint.Insecure:
+		return ReasonInsecure
+	}
+	return ""
 }
