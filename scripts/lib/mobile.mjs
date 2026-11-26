@@ -53,7 +53,11 @@ export function mobileVersion(env = process.env) {
 // trims paths, debug keeps inlining disabled for the debugger.
 export function mobileLdflags({ platform, production, version, commit }) {
   if (platform !== "android" && platform !== "ios") throw new Error(`unsupported mobile platform: ${platform || "missing"}`);
-  const stamp = `-X ${VERSION_PACKAGE}.Version=${version} -X ${VERSION_PACKAGE}.Commit=${commit}`;
+  // Android links github.com/wlynxg/anet (pulled in by pion for the direct connection), which reaches
+  // net.zoneCache through go:linkname so interface listing works on Android 11+; the linker only allows that
+  // with its linkname check off, as anet documents.
+  const linkname = platform === "android" ? "-checklinkname=0 " : "";
+  const stamp = `${linkname}-X ${VERSION_PACKAGE}.Version=${version} -X ${VERSION_PACKAGE}.Commit=${commit}`;
   if (production) return `-tags production,${platform} -trimpath -buildvcs=false -ldflags="-s -w ${stamp}"`;
   return `-tags ${platform},debug -buildvcs=false -gcflags=all="-l" -ldflags="${stamp}"`;
 }

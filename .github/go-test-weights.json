@@ -52,6 +52,8 @@
   "internal/mount": [1, 1],
   "internal/outcome": [1, 11],
   "internal/p2p/grant": [1, 1],
+  "internal/p2p/leg": [9, 20],
+  "internal/p2p/natprobe": [1, 2],
   "internal/p2p/stunserver": [1, 2],
   "internal/platform": [1, 1],
   "internal/pprof": [1, 1],
