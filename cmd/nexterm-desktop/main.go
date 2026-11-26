@@ -187,6 +187,9 @@ func run(args []string) int {
 	if production.Services.RemoteDesktop != nil {
 		registerRemoteDesktopStream(wailsApp, production.Services.RemoteDesktop)
 	}
+	if production.Services.DevicePaths != nil {
+		registerMobileLifecycle(wailsApp.Event.OnApplicationEvent, production.Services.DevicePaths)
+	}
 	pprofServer, err := pprof.Start(logger.Logger, invocation.PprofAddr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))

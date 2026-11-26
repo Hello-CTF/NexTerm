@@ -11,6 +11,8 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -269,6 +271,38 @@ func (m *Manager) Diagnostics(ctx context.Context, deviceID string) DeviceP2PDia
 func (m *Manager) ModeChanged(deviceID string) {
 	if d := m.existing(deviceID); d != nil {
 		d.post(event{kind: evMode})
+	}
+}
+
+// WatchNetwork calls NetworkChanged whenever the set of local interface addresses changes, checking every
+// interval until ctx ends. Platforms that refuse to list interfaces simply never report a change.
+func (m *Manager) WatchNetwork(ctx context.Context, interval time.Duration) {
+	snapshot := func() string {
+		addrs, err := net.InterfaceAddrs()
+		if err != nil {
+			return ""
+		}
+		texts := make([]string, 0, len(addrs))
+		for _, addr := range addrs {
+			texts = append(texts, addr.String())
+		}
+		slices.Sort(texts)
+		return strings.Join(texts, ",")
+	}
+	last := snapshot()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if current := snapshot(); current != last && current != "" {
+				last = current
+				m.logger.Info("local network changed; retrying direct connections")
+				m.NetworkChanged()
+			}
+		}
 	}
 }
 

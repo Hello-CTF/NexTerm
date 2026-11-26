@@ -305,10 +305,20 @@ func productionModules(services ProductionServices) []Module {
 		}}
 		if services.DevicePaths != nil {
 			manager := services.DevicePaths
-			module.Component = core.ComponentFuncs{ShutdownFunc: func(context.Context) error {
-				manager.Close()
-				return nil
-			}}
+			stopWatch := func() {}
+			module.Component = core.ComponentFuncs{
+				StartFunc: func(ctx context.Context) error {
+					watchCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+					stopWatch = cancel
+					go manager.WatchNetwork(watchCtx, devicePathNetworkPoll)
+					return nil
+				},
+				ShutdownFunc: func(context.Context) error {
+					stopWatch()
+					manager.Close()
+					return nil
+				},
+			}
 		}
 		modules = append(modules, module)
 	}

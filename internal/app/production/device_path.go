@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -21,6 +22,10 @@ import (
 // the device's group), under deviceConnectionModeOption, so it syncs with the other asset options. The path
 // manager reads it from the store at every decision, never from a session snapshot.
 const deviceConnectionModeOption = "p2pMode"
+
+// devicePathNetworkPoll is how often the local addresses are compared to notice a network change, which resets
+// the direct-connection retry backoff.
+const devicePathNetworkPoll = 15 * time.Second
 
 // deviceModeStore reads and writes the stored connection mode of devices.
 type deviceModeStore struct {
