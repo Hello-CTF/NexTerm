@@ -1147,6 +1147,14 @@ func (r *Runtime) RegisterPurposeHandler(purpose string, handler PurposeHandler)
 	r.purposeHandlers[purpose] = handler
 }
 
+// ServesPurpose reports whether a handler serves purpose, which the hello advertises as a capability.
+func (r *Runtime) ServesPurpose(purpose string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.purposeHandlers[purpose]
+	return ok
+}
+
 // DialPurposeBridge dials one purpose bridge through the current endpoint with this runtime's authenticated hello.
 // The composition root plugs the purpose servers (package purpose imports this package, so they cannot be wired
 // from here) into the runtime through it.
