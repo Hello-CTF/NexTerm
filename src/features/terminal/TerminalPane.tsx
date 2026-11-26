@@ -62,6 +62,7 @@ import { FailedCommandChip, failedCommandBlock } from "./FailedCommandChip";
 import { AiCommandPrompt, type AiCommandContext } from "./AiCommandPrompt";
 import { insertCommandAtPrompt, registerTerminalBufferProbe, type CommandInsertTarget } from "./insertCommand";
 import { explainCommandBlock } from "./commandBlockActions";
+import { askAiAboutSelection } from "./selectionRef";
 import { commandShortcutActive } from "./commandShortcuts";
 import { localSessionIsMac, localSessionIsWindows } from "../../app/platform";
 import {
@@ -73,7 +74,14 @@ import {
   type HelperReplaceFailureInfo,
 } from "../../ipc/commands";
 import type { BroadcastEnvironmentConfirmation, BroadcastProductionChallenge } from "../production/productionChallenge";
-import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
+import {
+  listenEvent,
+  EVENTS,
+  EventVersionGate,
+  type TerminalControlEvent,
+  type TerminalInputSourceEvent,
+  type TerminalThrottledEvent,
+} from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
 import { reattachLostTabs } from "./backgroundSessionsAccess";
@@ -150,6 +158,8 @@ export interface TerminalPaneProps {
 
 const ENCODINGS = ["utf-8", "gbk", "gb18030", "big5", "latin1"];
 const SEARCH_DEBOUNCE_MS = 150;
+// How long the AI input marker stays after the AI last typed into the terminal.
+export const AI_INPUT_MARK_MS = 4_000;
 
 function regexSyntaxError(pattern: string): string | null {
   try {
@@ -376,6 +386,8 @@ export function TerminalPane({
     revision: number;
   } | null>(null);
   const [throttle, setThrottle] = useState<ThrottleState | null>(null);
+  // When the AI last typed into this terminal; the marker shows for AI_INPUT_MARK_MS after it.
+  const [aiInputAt, setAiInputAt] = useState<number | null>(null);
   // While another device owns the PTY size: how this view scales the grid, and whether it fits the rows only.
   const [followerScale, setFollowerScale] = useState<FollowerScale | null>(null);
   const [followerZoom, setFollowerZoom] = useState<FollowerZoomChoice>("auto");
@@ -1044,6 +1056,28 @@ export function TerminalPane({
     };
   }, []);
 
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    void listenEvent<TerminalInputSourceEvent>(EVENTS.terminalInputSource, (p) => {
+      if (p.tabId !== kernelTabIdRef.current || p.source !== "ai") return;
+      setAiInputAt(Date.now());
+    }).then((off) => {
+      if (cancelled) off();
+      else unlisten = off;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (aiInputAt === null) return;
+    const timer = window.setTimeout(() => setAiInputAt(null), AI_INPUT_MARK_MS);
+    return () => window.clearTimeout(timer);
+  }, [aiInputAt]);
+
   useEffect(
     () =>
       onEventsResync(() => {
@@ -1091,6 +1125,24 @@ export function TerminalPane({
         setSearchOpen(true);
       }
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
+    };
+    pane.addEventListener("keydown", onKey, true);
+    return () => pane.removeEventListener("keydown", onKey, true);
+  }, []);
+
+  // Asking the AI about the selection works in a full-screen program too: the selection is the view's, not the program's.
+  const askSelectionRef = useRef({ storeTabId, title, host: sessionName });
+  askSelectionRef.current = { storeTabId, title, host: sessionName };
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || isImeKeyEvent(e)) return;
+      if (!matchKeybinding(e, "askAiSelection")) return;
+      if (e.target instanceof Element && e.target.closest(`[${EARLIER_HISTORY_PANEL_ATTRIBUTE}]`)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      askAiAboutSelection((handleRef.current?.getSelection() ?? "").trim(), askSelectionRef.current);
     };
     pane.addEventListener("keydown", onKey, true);
     return () => pane.removeEventListener("keydown", onKey, true);
@@ -2118,6 +2170,7 @@ export function TerminalPane({
     ...(containerId
       ? ([{ kind: "item", label: execInterrupted ? tr("容器命令已结束") : tr("容器内命令"), disabled: true }] satisfies MenuItem[])
       : []),
+    ...(aiInputAt !== null ? ([{ kind: "item", label: tr("AI 正在输入"), disabled: true }] satisfies MenuItem[]) : []),
     ...(throttleNow?.active
       ? ([{ kind: "item", label: tr("输出未及时送达，画面可能有延迟"), disabled: true }] satisfies MenuItem[])
       : []),
@@ -2365,6 +2418,10 @@ export function TerminalPane({
     setMenu({ x: request.x, y: request.y, title: displayTerminalLink(request.uri), items: buildLinkMenu(request.uri) });
   };
 
+  const askAiSelection = (selected: string) => {
+    askAiAboutSelection(selected, { storeTabId, title, host: sessionName });
+  };
+
   const buildTerminalMenu = (): MenuItem[] => {
     const selected = (handleRef.current?.getSelection() ?? "").trim();
     const hasSel = selected.length > 0;
@@ -2406,6 +2463,14 @@ export function TerminalPane({
         hint: tr("不修改剪贴板"),
         disabled: !hasSel || !kernelTabId,
         onSelect: () => void pasteSelectionBack(),
+      },
+      {
+        kind: "item",
+        label: tr("向 AI 询问选中内容"),
+        icon: <IconSparkles size={13} />,
+        accel: formatBinding(bindings.askAiSelection),
+        disabled: !hasSel,
+        onSelect: () => askAiSelection(selected),
       },
       {
         kind: "item",
@@ -2619,6 +2684,17 @@ export function TerminalPane({
             title={tr("docker exec 终端：关闭标签页即结束，不能转入后台")}
           >
             {execInterrupted ? tr("容器命令已结束") : tr("容器内命令")}
+          </span>
+        )}
+        {aiInputAt !== null && (
+          <span
+            className="nx-badge nx-badge-purple"
+            role="status"
+            data-ai-input-mark=""
+            title={tr("AI 刚刚向此终端写入了输入")}
+          >
+            <IconSparkles size={11} />
+            {tr("AI 正在输入")}
           </span>
         )}
         {throttleNow?.active && (

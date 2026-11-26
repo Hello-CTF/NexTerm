@@ -896,6 +896,9 @@ func (m *Manager) writeInternalLocked(ctx context.Context, tab *Tab, data []byte
 		return err
 	}
 	m.noteInput(tab, data)
+	if len(data) > 0 {
+		m.emitInputSource(ctx, tab)
+	}
 	return nil
 }
 

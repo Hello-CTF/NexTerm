@@ -117,7 +117,7 @@ func TestGeneratedContractMetadata(t *testing.T) {
 		"notificationClick": "app://notification-click", "terminalAttention": "terminal://attention",
 		"inventoryChanged": "inventory://changed", "localHelperStatus": "local://helper-status",
 		"syncRoundComplete": "sync://round-complete", "syncStatus": "sync://status",
-		"terminalControl": "terminal://control", "terminalExit": "terminal://exit", "terminalSessions": "terminal://sessions",
+		"terminalControl": "terminal://control", "terminalInputSource": "terminal://input-source", "terminalExit": "terminal://exit", "terminalSessions": "terminal://sessions",
 		"terminalThrottled": "terminal://throttled", "updateProgress": "update://progress",
 	}
 	if !reflect.DeepEqual(events, wantEvents) {

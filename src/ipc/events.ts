@@ -32,6 +32,7 @@ export const EVENTS = {
   terminalThrottled: "terminal://throttled",
   terminalControl: "terminal://control",
   terminalAttention: "terminal://attention",
+  terminalInputSource: "terminal://input-source",
   terminalSessions: "terminal://sessions",
   fsProgress: "fs://progress",
   fsChanged: "fs://changed",
@@ -167,6 +168,12 @@ export interface UpdateProgressEvent {
   total: number;
   done: boolean;
   error?: string;
+}
+
+// A non-user writer (the AI) typed into a tab; informational only, it carries no input bytes.
+export interface TerminalInputSourceEvent {
+  tabId: string;
+  source: "ai" | (string & {});
 }
 
 export interface TerminalThrottledEvent {

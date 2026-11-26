@@ -48,6 +48,7 @@ const ACTION_AREAS: Record<KeybindingActionId, ShortcutArea> = {
   nextPrompt: "terminal",
   copyLastOutput: "terminal",
   generateCommand: "terminal",
+  askAiSelection: "terminal",
   terminalFontIncrease: "terminal",
   terminalFontDecrease: "terminal",
   terminalFontReset: "terminal",
