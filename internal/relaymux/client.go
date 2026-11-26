@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"time"
 )
 
 // Client keeps one persistent Link to a server and opens device streams on it, redialing when the link ended.
@@ -16,67 +17,73 @@ type Client struct {
 
 	mu      sync.Mutex
 	link    *Link
-	dialing chan struct{}
-	dialErr error
+	pending *clientDial
 	closed  bool
 }
+
+// clientDial is one shared dial; done closes once link or err is set.
+type clientDial struct {
+	done chan struct{}
+	link *Link
+	err  error
+}
+
+// ClientDialTimeout bounds one shared dial, fetching the config included.
+const ClientDialTimeout = 30 * time.Second
 
 // NewClient returns a client that dials with dial on first use and after the link ended.
 func NewClient(dial func(context.Context) (*Link, error)) *Client {
 	return &Client{dial: dial}
 }
 
-// Link returns the live link, dialing one if there is none; concurrent callers share one dial.
+// Link returns the live link, dialing one if there is none. Concurrent callers share one dial, which runs on
+// its own ClientDialTimeout so no caller's cancellation tears it down under the others; each caller waits
+// only as long as its own ctx allows.
 func (c *Client) Link(ctx context.Context) (*Link, error) {
-	for {
-		c.mu.Lock()
-		if c.closed {
-			c.mu.Unlock()
-			return nil, ErrClosed
-		}
-		if c.link != nil && c.link.Err() == nil {
-			link := c.link
-			c.mu.Unlock()
-			return link, nil
-		}
-		if c.dialing == nil {
-			c.dialing = make(chan struct{})
-			dialing := c.dialing
-			c.mu.Unlock()
-			// The dial outlives one caller's cancellation so a shared dial is not torn down under the others.
-			link, err := c.dial(context.WithoutCancel(ctx))
-			c.mu.Lock()
-			c.dialing = nil
-			c.dialErr = err
-			if err == nil {
-				if c.closed {
-					_ = link.Close()
-					err = ErrClosed
-				} else {
-					c.link = link
-				}
-			}
-			close(dialing)
-			c.mu.Unlock()
-			if err != nil {
-				return nil, err
-			}
-			return link, nil
-		}
-		dialing := c.dialing
+	c.mu.Lock()
+	if c.closed {
 		c.mu.Unlock()
-		select {
-		case <-dialing:
-			c.mu.Lock()
-			err := c.dialErr
-			c.mu.Unlock()
-			if err != nil {
-				return nil, err
-			}
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+		return nil, ErrClosed
 	}
+	if c.link != nil && c.link.Err() == nil {
+		link := c.link
+		c.mu.Unlock()
+		return link, nil
+	}
+	pending := c.pending
+	if pending == nil {
+		pending = &clientDial{done: make(chan struct{})}
+		c.pending = pending
+		go c.runDial(pending)
+	}
+	c.mu.Unlock()
+	select {
+	case <-pending.done:
+		if pending.err != nil {
+			return nil, pending.err
+		}
+		return pending.link, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (c *Client) runDial(pending *clientDial) {
+	ctx, cancel := context.WithTimeout(context.Background(), ClientDialTimeout)
+	defer cancel()
+	link, err := c.dial(ctx)
+	c.mu.Lock()
+	c.pending = nil
+	if err == nil && c.closed {
+		_ = link.Close()
+		link, err = nil, ErrClosed
+	}
+	if err == nil {
+		c.link = link
+	}
+	pending.link, pending.err = link, err
+	close(pending.done)
+	c.mu.Unlock()
 }
 
 // OpenDeviceStream opens a stream to header.DeviceID for header.Purpose. A link that turns out dead is
