@@ -22,9 +22,6 @@ function mountDiff(item: Partial<DiffItem>, readOnly = false): MountedView {
       onApprovePlan: vi.fn(),
       onRetry: vi.fn(),
       onEdit: vi.fn(),
-      agentToolCall: null,
-      onAgentApproval: vi.fn(),
-      agentApprovalBusy: false,
       readOnly,
     }),
   );
