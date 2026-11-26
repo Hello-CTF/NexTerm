@@ -5883,6 +5883,7 @@
   "终端程序默认接收": "Received by the terminal program by default",
   "终端编码": "Terminal encoding",
   "终端获得焦点时，下列组合键由应用处理，终端中运行的程序将无法接收；如需将按键保留给终端程序，请清除或修改对应的快捷键。": "While the terminal has focus, the following key combinations are handled by the app, so programs running in the terminal cannot receive them. To keep a key for the terminal program, clear or change the matching shortcut.",
+  "终端订阅": "Terminal subscriptions",
   "终端记录": "Terminal records",
   "终端记录以明文保存在数据库中，可在终端历史中逐条删除。": "Terminal records are stored in plaintext in the database. You can delete them one by one in Terminal history.",
   "终端辅助按键": "Terminal helper keys",

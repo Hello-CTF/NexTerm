@@ -59,6 +59,7 @@ const COMMAND_KIND_LABEL: Record<string, string> = {
   shell_pipe: tr("管道执行"),
   schedule: tr("定时提醒"),
   cron_job: tr("定时任务"),
+  terminal_subscribe: tr("终端订阅"),
   perm: tr("权限与属主变更"),
   shell_history: tr("读取 shell 历史"),
 };

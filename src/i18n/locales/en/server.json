@@ -2691,6 +2691,7 @@
   "终端标签页已存在": "The terminal tab already exists",
   "终端模式无效": "The terminal mode is invalid",
   "终端目标不属于当前 AI 会话范围：可读写当前标签页、terminal_list 中未标记的句柄和本轮 terminal_create 创建的终端；其他连接的终端需用户在输入框用 @ 引用，引用后只能用 read_screen/wait_for 读取": "The terminal target is outside the scope of the current AI session. You can read and write the current tab, unmarked handles from terminal_list, and terminals created by terminal_create in this turn. For terminals of other connections, the user must reference them with @ in the input box, and after that they can only be read with read_screen/wait_for.",
+  "终端订阅": "Terminal subscription",
   "终端订阅未配置": "Terminal subscriptions are not configured",
   "终端输入在确认后已变化，请重新评估": "The terminal input changed after confirmation. Evaluate again.",
   "终端输出积压过多，早期输出无法恢复": "Too much terminal output is backlogged, so earlier output cannot be recovered",

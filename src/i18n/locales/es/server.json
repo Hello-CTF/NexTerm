@@ -2691,6 +2691,7 @@
   "终端标签页已存在": "La pestaña de terminal ya existe",
   "终端模式无效": "El modo de terminal no es válido",
   "终端目标不属于当前 AI 会话范围：可读写当前标签页、terminal_list 中未标记的句柄和本轮 terminal_create 创建的终端；其他连接的终端需用户在输入框用 @ 引用，引用后只能用 read_screen/wait_for 读取": "El terminal de destino no pertenece al ámbito de la sesión de IA actual: se puede leer y escribir en la pestaña actual, en los identificadores no marcados de terminal_list y en los terminales creados con terminal_create en esta ronda; los terminales de otras conexiones requieren que el usuario los referencie con @ en el cuadro de entrada y, tras la referencia, solo se pueden leer con read_screen/wait_for",
+  "终端订阅": "Suscripción de terminal",
   "终端订阅未配置": "Las suscripciones al terminal no están configuradas",
   "终端输入在确认后已变化，请重新评估": "La entrada del terminal cambió tras la confirmación; vuelve a evaluarla",
   "终端输出积压过多，早期输出无法恢复": "Hay demasiada salida de terminal acumulada y no se puede recuperar la salida anterior",

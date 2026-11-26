@@ -2691,6 +2691,7 @@
   "终端标签页已存在": "L'onglet de terminal existe déjà",
   "终端模式无效": "Mode de terminal invalide",
   "终端目标不属于当前 AI 会话范围：可读写当前标签页、terminal_list 中未标记的句柄和本轮 terminal_create 创建的终端；其他连接的终端需用户在输入框用 @ 引用，引用后只能用 read_screen/wait_for 读取": "La cible du terminal n'est pas dans le périmètre de la session IA actuelle : vous pouvez lire et écrire dans l'onglet actuel, les handles non marqués de terminal_list et les terminaux créés par terminal_create lors de ce tour ; les terminaux d'autres connexions doivent être référencés par l'utilisateur avec @ dans la zone de saisie, et ne peuvent ensuite être lus qu'avec read_screen/wait_for",
+  "终端订阅": "Abonnement au terminal",
   "终端订阅未配置": "Les abonnements au terminal ne sont pas configurés",
   "终端输入在确认后已变化，请重新评估": "La saisie du terminal a changé après la confirmation ; évaluez à nouveau",
   "终端输出积压过多，早期输出无法恢复": "Trop de sorties du terminal en attente ; les premières sorties ne peuvent pas être récupérées",

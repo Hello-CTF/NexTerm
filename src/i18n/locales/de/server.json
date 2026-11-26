@@ -2691,6 +2691,7 @@
   "终端标签页已存在": "Der Terminal-Tab existiert bereits.",
   "终端模式无效": "Ungültiger Terminalmodus",
   "终端目标不属于当前 AI 会话范围：可读写当前标签页、terminal_list 中未标记的句柄和本轮 terminal_create 创建的终端；其他连接的终端需用户在输入框用 @ 引用，引用后只能用 read_screen/wait_for 读取": "Das Terminalziel gehört nicht zum Bereich der aktuellen KI-Sitzung: Les- und schreibbar sind der aktuelle Tab, nicht markierte Handles aus terminal_list und in dieser Runde mit terminal_create erstellte Terminals. Terminals anderer Verbindungen muss der Benutzer im Eingabefeld mit @ referenzieren; danach sind nur read_screen/wait_for zum Lesen möglich.",
+  "终端订阅": "Terminal-Abonnement",
   "终端订阅未配置": "Terminalabonnements sind nicht konfiguriert",
   "终端输入在确认后已变化，请重新评估": "Die Terminaleingabe hat sich nach der Bestätigung geändert. Bitte erneut bewerten.",
   "终端输出积压过多，早期输出无法恢复": "Zu viel Terminalausgabe aufgestaut, frühere Ausgaben können nicht wiederhergestellt werden.",

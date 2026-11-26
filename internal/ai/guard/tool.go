@@ -113,7 +113,7 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 	case "send_reminder":
 		return Confirm(KindSchedule, "创建定时提醒，到时间后将在本会话投递消息")
 	case "terminal_subscribe":
-		return Confirm(KindSchedule, "订阅终端事件，触发后将在本会话启动一次无人值守运行")
+		return Confirm(KindTerminalSubscribe, "订阅终端事件，触发后将在本会话启动一次无人值守运行")
 	case "schedule_job":
 		return Confirm(KindCronJob, "创建循环执行的定时任务，每次到点 AI 会在本会话无人值守地运行")
 	case "cancel_scheduled_job":

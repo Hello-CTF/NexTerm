@@ -5886,6 +5886,7 @@
   "终端程序默认接收": "Reçu par défaut par le programme du terminal",
   "终端编码": "Encodage du terminal",
   "终端获得焦点时，下列组合键由应用处理，终端中运行的程序将无法接收；如需将按键保留给终端程序，请清除或修改对应的快捷键。": "Lorsque le terminal a le focus, les combinaisons de touches suivantes sont gérées par l'application et les programmes exécutés dans le terminal ne peuvent pas les recevoir. Pour réserver une touche au programme du terminal, effacez ou modifiez le raccourci correspondant.",
+  "终端订阅": "Abonnements au terminal",
   "终端记录": "Enregistrement du terminal",
   "终端记录以明文保存在数据库中，可在终端历史中逐条删除。": "Les enregistrements du terminal sont stockés en clair dans la base de données et peuvent être supprimés un à un dans l'historique du terminal.",
   "终端辅助按键": "Touches auxiliaires du terminal",

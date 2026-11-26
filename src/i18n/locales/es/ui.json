@@ -5916,6 +5916,7 @@
   "终端程序默认接收": "El programa del terminal lo recibe de forma predeterminada",
   "终端编码": "Codificación del terminal",
   "终端获得焦点时，下列组合键由应用处理，终端中运行的程序将无法接收；如需将按键保留给终端程序，请清除或修改对应的快捷键。": "Cuando el terminal tiene el foco, la aplicación gestiona las siguientes combinaciones de teclas y los programas que se ejecutan en el terminal no podrán recibirlas. Para reservar una tecla para el programa del terminal, borre o cambie el atajo correspondiente.",
+  "终端订阅": "Suscripciones de terminal",
   "终端记录": "Registro del terminal",
   "终端记录以明文保存在数据库中，可在终端历史中逐条删除。": "Los registros del terminal se guardan en texto sin cifrar en la base de datos y se pueden eliminar uno a uno en el historial de terminal.",
   "终端辅助按键": "Teclas auxiliares del terminal",
