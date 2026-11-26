@@ -120,7 +120,7 @@ type Options struct {
 	// LegConfig adjusts every leg config before dialing (test hook).
 	LegConfig func(*leg.Config)
 	// Emit receives every status change.
-	Emit func(Status)
+	Emit func(DevicePathStatus)
 	// Durations; zero selects the constants above.
 	MigrationSpacing time.Duration
 	BackoffMin       time.Duration
@@ -236,12 +236,12 @@ func (m *Manager) Dial(ctx context.Context, deviceID, purpose string) (net.Conn,
 }
 
 // Status reports the device's path; a device never dialed reports the relay with its stored mode.
-func (m *Manager) Status(ctx context.Context, deviceID string) Status {
+func (m *Manager) Status(ctx context.Context, deviceID string) DevicePathStatus {
 	if d := m.existing(deviceID); d != nil {
 		return d.status()
 	}
 	mode, _ := m.backend.Mode(ctx, deviceID)
-	status := Status{DeviceID: deviceID, Mode: string(selector.ParseMode(string(mode))), Path: PathRelay}
+	status := DevicePathStatus{DeviceID: deviceID, Mode: string(selector.ParseMode(string(mode))), Path: PathRelay}
 	if mode == selector.ModeRelay {
 		status.Reason = ReasonModeRelay
 	}
@@ -249,12 +249,12 @@ func (m *Manager) Status(ctx context.Context, deviceID string) Status {
 }
 
 // Diagnostics reports the device's measurements and policy.
-func (m *Manager) Diagnostics(ctx context.Context, deviceID string) Diagnostics {
+func (m *Manager) Diagnostics(ctx context.Context, deviceID string) DeviceP2PDiagnostics {
 	if d := m.existing(deviceID); d != nil {
 		return d.diagnostics()
 	}
 	status := m.Status(ctx, deviceID)
-	diag := Diagnostics{Status: status, LocalNAT: string(natprobe.Unknown), RemoteNAT: string(natprobe.Unknown), RecentSwitches: []Switch{}}
+	diag := DeviceP2PDiagnostics{Status: status, LocalNAT: string(natprobe.Unknown), RemoteNAT: string(natprobe.Unknown), RecentSwitches: []PathSwitch{}}
 	diag.Policy.Mode = status.Mode
 	if config, err := m.loadConfig(ctx); err == nil {
 		diag.Policy.Server = config.Enabled

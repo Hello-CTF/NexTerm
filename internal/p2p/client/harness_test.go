@@ -56,7 +56,7 @@ type harness struct {
 	resumes    int
 	grants     int
 	audits     []agent.P2PAuditRecord
-	statuses   []Status
+	statuses   []DevicePathStatus
 	bridges    map[string]net.Conn
 	bridgeN    int
 	ttl        time.Duration
@@ -93,7 +93,7 @@ func newHarness(t *testing.T, configure ...func(*harness)) *harness {
 	}
 	h.mgr = New(h, Options{
 		Clock: h.clock, DialLeg: h.net.Dial, Probe: probe, MigrationSpacing: time.Millisecond, Logger: logger,
-		Emit: func(status Status) {
+		Emit: func(status DevicePathStatus) {
 			h.mu.Lock()
 			h.statuses = append(h.statuses, status)
 			h.mu.Unlock()

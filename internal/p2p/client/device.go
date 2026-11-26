@@ -86,8 +86,8 @@ type device struct {
 	streams             map[*rstream.Stream]*liveStream
 	session             *directSession
 	direct              bool
-	st                  Status
-	switches            []Switch
+	st                  DevicePathStatus
+	switches            []PathSwitch
 	localNAT, remoteNAT string
 	stunOK              bool
 	directRTT, relayRTT time.Duration
@@ -120,7 +120,7 @@ func newDevice(m *Manager, id string, ctx context.Context) *device {
 	d := &device{
 		m: m, id: id, ctx: ctx, cancel: cancel, events: make(chan event, 64), done: make(chan struct{}),
 		streams: make(map[*rstream.Stream]*liveStream), timers: make(map[eventKind]clock.Timer), pingSent: make(map[uint64]time.Time),
-		st:       Status{DeviceID: id, Mode: string(selector.ModeAuto), Path: PathRelay, Since: m.clock.Now().UnixMilli()},
+		st:       DevicePathStatus{DeviceID: id, Mode: string(selector.ModeAuto), Path: PathRelay, Since: m.clock.Now().UnixMilli()},
 		localNAT: string(natprobe.Unknown), remoteNAT: string(natprobe.Unknown),
 	}
 	m.wg.Add(1)
@@ -181,19 +181,19 @@ func (d *device) cancelTimer(kind eventKind) {
 	}
 }
 
-func (d *device) status() Status {
+func (d *device) status() DevicePathStatus {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.st
 }
 
-func (d *device) diagnostics() Diagnostics {
+func (d *device) diagnostics() DeviceP2PDiagnostics {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	diag := Diagnostics{
+	diag := DeviceP2PDiagnostics{
 		Status: d.st, LocalNAT: d.localNAT, RemoteNAT: d.remoteNAT, STUNReachable: d.stunOK,
-		RecentSwitches: append([]Switch{}, d.switches...),
-		Policy:         Policy{Server: d.serverOn, Device: d.deviceOn, Mode: d.st.Mode},
+		RecentSwitches: append([]PathSwitch{}, d.switches...),
+		Policy:         P2PPolicy{Server: d.serverOn, Device: d.deviceOn, Mode: d.st.Mode},
 	}
 	ms := func(value time.Duration) *float64 {
 		if value <= 0 {
@@ -206,7 +206,7 @@ func (d *device) diagnostics() Diagnostics {
 	if d.session != nil {
 		stats := d.session.leg.Stats()
 		if stats.Local.Address != "" || stats.Remote.Address != "" {
-			diag.SelectedPair = &SelectedPair{
+			diag.SelectedPair = &P2PSelectedPair{
 				Local:  net.JoinHostPort(stats.Local.Address, fmt.Sprint(stats.Local.Port)),
 				Remote: net.JoinHostPort(stats.Remote.Address, fmt.Sprint(stats.Remote.Port)),
 				Type:   stats.Local.Type + "/" + stats.Remote.Type,
@@ -229,7 +229,7 @@ func (d *device) setStatus(path, reason string, mode selector.Mode) {
 	next.Path, next.Reason, next.Mode = path, reason, string(mode)
 	if path != previous.Path {
 		next.Since = now
-		d.switches = append(d.switches, Switch{At: now, From: previous.Path, To: path, Reason: reason})
+		d.switches = append(d.switches, PathSwitch{At: now, From: previous.Path, To: path, Reason: reason})
 		if len(d.switches) > RecentSwitches {
 			d.switches = d.switches[len(d.switches)-RecentSwitches:]
 		}

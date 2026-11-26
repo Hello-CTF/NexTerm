@@ -46,6 +46,7 @@ export const EVENTS = {
   deepLink: "app://deep-link",
   notificationClick: "app://notification-click",
   deviceStatus: "device://status",
+  devicePath: "fleet://device-path",
   filesDropped: "files://dropped",
   layoutChanged: "layout://changed",
   inventoryChanged: "inventory://changed",

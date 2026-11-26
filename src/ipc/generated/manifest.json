@@ -895,6 +895,30 @@
       "channel": false,
       "stream": "none"
     },
+    "fleet_device_connection_mode_get": {
+      "scope": "device-path",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fleet_device_connection_mode_set": {
+      "scope": "device-path",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fleet_device_p2p_diagnostics": {
+      "scope": "device-path",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fleet_device_path_status": {
+      "scope": "device-path",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "forward_create": {
       "scope": "forward",
       "nested": false,

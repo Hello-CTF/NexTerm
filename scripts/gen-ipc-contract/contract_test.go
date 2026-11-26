@@ -110,7 +110,7 @@ func TestGeneratedContractMetadata(t *testing.T) {
 	wantEvents := map[string]string{
 		"aiEvent": "ai://event", "aiNotification": "ai://notification", "aiWatchToolData": "ai://watch-tool-data",
 		"appError": "app://error", "deepLink": "app://deep-link",
-		"connectProgress": "session://connect-progress", "deviceStatus": "device://status",
+		"connectProgress": "session://connect-progress", "deviceStatus": "device://status", "devicePath": "fleet://device-path",
 		"dockerStats": "docker://stats", "filesDropped": "files://dropped",
 		"fsProgress": "fs://progress", "fsChanged": "fs://changed", "fsWatch": "fs://watch", "helperProgress": "session://helper-progress",
 		"layoutChanged": "layout://changed", "sessionStatus": "session://status",

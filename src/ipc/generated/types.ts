@@ -925,6 +925,40 @@ export type DeviceGrant = {
   updatedAt: number;
 };
 
+export type DeviceModeDTO = {
+  mode: string;
+};
+
+export type DeviceModeRequest = {
+  deviceId: string;
+  mode: string;
+};
+
+export type DeviceP2PDiagnostics = {
+  status: DevicePathStatus;
+  localNat: string;
+  remoteNat: string;
+  stunReachable: boolean;
+  selectedPair?: P2PSelectedPair | null;
+  directRttMs?: number | null;
+  relayRttMs?: number | null;
+  lossPct?: number | null;
+  recentSwitches: PathSwitch[];
+  policy: P2PPolicy;
+};
+
+export type DevicePathRequest = {
+  deviceId: string;
+};
+
+export type DevicePathStatus = {
+  deviceId: string;
+  mode: string;
+  path: string;
+  reason: string;
+  since: number;
+};
+
 export type DiagnosticsArmRequest = {
   armed: boolean;
 };
@@ -2265,6 +2299,25 @@ export type OverrideInput = {
 export type Overview = {
   containers: ContainerSummary[];
   hostStats: HostStats;
+};
+
+export type P2PPolicy = {
+  server: boolean;
+  device: boolean;
+  mode: string;
+};
+
+export type P2PSelectedPair = {
+  local: string;
+  remote: string;
+  type: string;
+};
+
+export type PathSwitch = {
+  at: number;
+  from: string;
+  to: string;
+  reason: string;
 };
 
 export type PreferenceScopeView = {

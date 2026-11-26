@@ -1110,6 +1110,38 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetProbeBatchRequest", ts: "AssetProbeBatchRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetProbeBatchDTO", ts: "AssetProbeBatchDTO" },
     },
+    "fleet_device_connection_mode_get": {
+      scope: "device-path",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.devicePathRequest", ts: "DevicePathRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.deviceModeDTO", ts: "DeviceModeDTO" },
+    },
+    "fleet_device_connection_mode_set": {
+      scope: "device-path",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.deviceModeRequest", ts: "DeviceModeRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.deviceModeDTO", ts: "DeviceModeDTO" },
+    },
+    "fleet_device_p2p_diagnostics": {
+      scope: "device-path",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.devicePathRequest", ts: "DevicePathRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/p2p/client.DeviceP2PDiagnostics", ts: "DeviceP2PDiagnostics" },
+    },
+    "fleet_device_path_status": {
+      scope: "device-path",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.devicePathRequest", ts: "DevicePathRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/p2p/client.DevicePathStatus", ts: "DevicePathStatus" },
+    },
     "forward_create": {
       scope: "forward",
       nested: false,
@@ -3868,6 +3900,22 @@ export interface IPCCommandTypeMap {
   "exec_batch_test_login": {
     input: contractTypes.AssetProbeBatchRequest;
     output: contractTypes.AssetProbeBatchDTO;
+  };
+  "fleet_device_connection_mode_get": {
+    input: contractTypes.DevicePathRequest;
+    output: contractTypes.DeviceModeDTO;
+  };
+  "fleet_device_connection_mode_set": {
+    input: contractTypes.DeviceModeRequest;
+    output: contractTypes.DeviceModeDTO;
+  };
+  "fleet_device_p2p_diagnostics": {
+    input: contractTypes.DevicePathRequest;
+    output: contractTypes.DeviceP2PDiagnostics;
+  };
+  "fleet_device_path_status": {
+    input: contractTypes.DevicePathRequest;
+    output: contractTypes.DevicePathStatus;
   };
   "forward_create": {
     input: contractTypes.CreateLocalArgs;

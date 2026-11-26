@@ -46,6 +46,7 @@ var contractScopes = []scopeSpec{
 	{name: "inventory", prefixes: []string{"inventory_"}},
 	{name: "production", prefixes: []string{"production_"}},
 	{name: "remote", prefixes: []string{"remote_"}},
+	{name: "device-path", commands: []string{"fleet_device_connection_mode_get", "fleet_device_connection_mode_set", "fleet_device_path_status", "fleet_device_p2p_diagnostics"}},
 	{name: "remotedesktop", prefixes: []string{"remotedesktop_"}},
 	{name: "wake", prefixes: []string{"wake_"}},
 	{name: "preview-share", prefixes: []string{"preview_share_"}},

@@ -81,7 +81,7 @@ const SYNCED_WRITES = new Set([
   "ai_set_permission", "ai_model_save", "ai_model_delete", "ai_model_activate",
   "ai_grant_set", "ai_grant_revoke", "ai_grant_rule_set", "ai_grant_rule_revoke",
   "sync_preferences_set", "inventory_sync", "transcript_sync_opt_in", "transcript_delete",
-  "transcript_purge",
+  "transcript_purge", "fleet_device_connection_mode_set",
 ]);
 export const SYNC_WAKE_DELAY_MS = 2000;
 let syncWakeTimer: ReturnType<typeof setTimeout> | null = null;

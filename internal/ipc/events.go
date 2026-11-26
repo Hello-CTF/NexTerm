@@ -38,6 +38,8 @@ const (
 	// TopicTerminalSessions carries one host's durable sessions after a
 	// cross-host listing refreshed it.
 	TopicTerminalSessions Topic = "terminal://sessions"
+	// TopicDevicePath carries a device's connection path status (relay or direct and why) after each change.
+	TopicDevicePath Topic = "fleet://device-path"
 )
 
 var ErrEventsUnavailable = errors.New("event adapter is not configured")

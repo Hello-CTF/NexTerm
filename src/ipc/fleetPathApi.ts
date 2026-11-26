@@ -1,61 +1,58 @@
 // Connection path of managed devices (relay or direct P2P) on the desktop and mobile Go core. Browser mode always
-// relays and has none of these commands, so callers hide the whole surface there and never call this module.
+// relays, so callers hide the whole surface there and never call this module.
 
 import { call } from "./commands";
-import { listenEvent, type UnlistenFn } from "./events";
+import { EVENTS, listenEvent, type UnlistenFn } from "./events";
+import type {
+  DeviceP2PDiagnostics as GeneratedDiagnostics,
+  DevicePathStatus as GeneratedStatus,
+  P2PPolicy,
+  P2PSelectedPair,
+  PathSwitch as GeneratedSwitch,
+} from "./generated/types";
 
 export type DeviceConnectionMode = "auto" | "relay" | "direct";
-
 export type DevicePath = "relay" | "direct" | "connecting_direct";
+// Why the path is not direct; "" when it is. Unknown codes from a newer core are kept as strings.
+export type DevicePathReason =
+  | "mode_relay"
+  | "server_disabled"
+  | "device_unsupported"
+  | "key_pending"
+  | "browser_or_share"
+  | "nat_blocked"
+  | "connect_failed"
+  | "unstable"
+  | "background"
+  | "proxy"
+  | "offline"
+  | "";
 
-export interface DevicePathStatus {
-  deviceId: string;
+export type DevicePathStatus = Omit<GeneratedStatus, "mode" | "path" | "reason"> & {
   mode: DeviceConnectionMode;
-  // What live streams use now.
   path: DevicePath;
-  // Why the path is not direct, when it is not: mode_relay, server_disabled, device_unsupported, key_pending,
-  // browser_or_share, nat_blocked, connect_failed, unstable, background, proxy, offline or "".
   reason: string;
-  // Epoch ms of the last path change.
-  since: number;
-}
+};
 
-export interface DevicePathSwitch {
-  at: number;
-  from: DevicePath;
-  to: DevicePath;
-  reason: string;
-}
+export type DevicePathSwitch = Omit<GeneratedSwitch, "from" | "to"> & { from: DevicePath; to: DevicePath };
 
-export interface DeviceP2PDiagnostics {
+export type DeviceP2PDiagnostics = Omit<GeneratedDiagnostics, "status" | "recentSwitches"> & {
   status: DevicePathStatus;
-  // independent | dependent | blocked | unknown
-  localNat: string;
-  remoteNat: string;
-  stunReachable: boolean;
-  selectedPair?: { local: string; remote: string; type: string };
-  directRttMs?: number;
-  relayRttMs?: number;
-  lossPct?: number;
   recentSwitches: DevicePathSwitch[];
-  policy: { server: boolean; device: boolean; mode: string };
-}
+};
 
-export const DEVICE_PATH_EVENT = "fleet://device-path";
+export type { P2PPolicy, P2PSelectedPair };
 
-// The commands and the event are not in the generated IPC contract yet; once it is regenerated, switch these to the
-// typed call() and EVENTS.devicePath.
-function untypedCall<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
-  return (call as unknown as (name: string, input: Record<string, unknown>) => Promise<T>)(cmd, args);
-}
+export const DEVICE_PATH_EVENT = EVENTS.devicePath;
 
 export const fleetPathApi = {
-  getMode: (deviceId: string) =>
-    untypedCall<{ mode: DeviceConnectionMode }>("fleet_device_connection_mode_get", { deviceId }),
-  setMode: (deviceId: string, mode: DeviceConnectionMode) =>
-    untypedCall<{ mode: DeviceConnectionMode }>("fleet_device_connection_mode_set", { deviceId, mode }),
-  status: (deviceId: string) => untypedCall<DevicePathStatus>("fleet_device_path_status", { deviceId }),
-  diagnostics: (deviceId: string) => untypedCall<DeviceP2PDiagnostics>("fleet_device_p2p_diagnostics", { deviceId }),
+  getMode: async (deviceId: string) =>
+    (await call("fleet_device_connection_mode_get", { deviceId })) as { mode: DeviceConnectionMode },
+  setMode: async (deviceId: string, mode: DeviceConnectionMode) =>
+    (await call("fleet_device_connection_mode_set", { deviceId, mode })) as { mode: DeviceConnectionMode },
+  status: async (deviceId: string) => (await call("fleet_device_path_status", { deviceId })) as DevicePathStatus,
+  diagnostics: async (deviceId: string) =>
+    (await call("fleet_device_p2p_diagnostics", { deviceId })) as DeviceP2PDiagnostics,
   onPathChange: (handler: (status: DevicePathStatus) => void): Promise<UnlistenFn> =>
     listenEvent<DevicePathStatus>(DEVICE_PATH_EVENT, (payload) => {
       if (payload && typeof payload.deviceId === "string" && typeof payload.path === "string") handler(payload);

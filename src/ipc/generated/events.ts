@@ -7,6 +7,7 @@ export const ipcEventTopics = {
   "appError": "app://error",
   "connectProgress": "session://connect-progress",
   "deepLink": "app://deep-link",
+  "devicePath": "fleet://device-path",
   "deviceStatus": "device://status",
   "dockerStats": "docker://stats",
   "filesDropped": "files://dropped",
