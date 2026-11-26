@@ -108,7 +108,6 @@ describe("AiSidebar pending references", () => {
     mocks.listDurable.mockResolvedValue([]);
     mocks.listenEvent.mockImplementation(() => Promise.resolve(vi.fn()));
     mocks.call.mockImplementation((cmd: string) => {
-      if (cmd === "ai_roster_list") return Promise.resolve([]);
       if (cmd === "production_settings_get") return Promise.resolve({ productionEnvironments: [] });
       if (cmd === "ai_watch_list") return Promise.resolve([]);
       if (cmd === "ai_watch_targets") return Promise.resolve([]);

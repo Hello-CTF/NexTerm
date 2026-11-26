@@ -21,7 +21,6 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		AgentEvidenceAnchorRow: newAgentEvidenceAnchorRow(db, opts...),
 		AgentEvidenceKeyRow:    newAgentEvidenceKeyRow(db, opts...),
 		AgentOutcomeRow:        newAgentOutcomeRow(db, opts...),
-		AgentRosterRow:         newAgentRosterRow(db, opts...),
 		AgentWatchOutboxRow:    newAgentWatchOutboxRow(db, opts...),
 		AgentWatchRow:          newAgentWatchRow(db, opts...),
 		AgentWatchTargetRow:    newAgentWatchTargetRow(db, opts...),
@@ -88,7 +87,6 @@ type Query struct {
 	AgentEvidenceAnchorRow agentEvidenceAnchorRow
 	AgentEvidenceKeyRow    agentEvidenceKeyRow
 	AgentOutcomeRow        agentOutcomeRow
-	AgentRosterRow         agentRosterRow
 	AgentWatchOutboxRow    agentWatchOutboxRow
 	AgentWatchRow          agentWatchRow
 	AgentWatchTargetRow    agentWatchTargetRow
@@ -158,7 +156,6 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		AgentEvidenceAnchorRow: q.AgentEvidenceAnchorRow.clone(db),
 		AgentEvidenceKeyRow:    q.AgentEvidenceKeyRow.clone(db),
 		AgentOutcomeRow:        q.AgentOutcomeRow.clone(db),
-		AgentRosterRow:         q.AgentRosterRow.clone(db),
 		AgentWatchOutboxRow:    q.AgentWatchOutboxRow.clone(db),
 		AgentWatchRow:          q.AgentWatchRow.clone(db),
 		AgentWatchTargetRow:    q.AgentWatchTargetRow.clone(db),
@@ -233,7 +230,6 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		AgentEvidenceAnchorRow: q.AgentEvidenceAnchorRow.replaceDB(db),
 		AgentEvidenceKeyRow:    q.AgentEvidenceKeyRow.replaceDB(db),
 		AgentOutcomeRow:        q.AgentOutcomeRow.replaceDB(db),
-		AgentRosterRow:         q.AgentRosterRow.replaceDB(db),
 		AgentWatchOutboxRow:    q.AgentWatchOutboxRow.replaceDB(db),
 		AgentWatchRow:          q.AgentWatchRow.replaceDB(db),
 		AgentWatchTargetRow:    q.AgentWatchTargetRow.replaceDB(db),
@@ -298,7 +294,6 @@ type queryCtx struct {
 	AgentEvidenceAnchorRow *agentEvidenceAnchorRowDo
 	AgentEvidenceKeyRow    *agentEvidenceKeyRowDo
 	AgentOutcomeRow        *agentOutcomeRowDo
-	AgentRosterRow         *agentRosterRowDo
 	AgentWatchOutboxRow    *agentWatchOutboxRowDo
 	AgentWatchRow          *agentWatchRowDo
 	AgentWatchTargetRow    *agentWatchTargetRowDo
@@ -363,7 +358,6 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		AgentEvidenceAnchorRow: q.AgentEvidenceAnchorRow.WithContext(ctx),
 		AgentEvidenceKeyRow:    q.AgentEvidenceKeyRow.WithContext(ctx),
 		AgentOutcomeRow:        q.AgentOutcomeRow.WithContext(ctx),
-		AgentRosterRow:         q.AgentRosterRow.WithContext(ctx),
 		AgentWatchOutboxRow:    q.AgentWatchOutboxRow.WithContext(ctx),
 		AgentWatchRow:          q.AgentWatchRow.WithContext(ctx),
 		AgentWatchTargetRow:    q.AgentWatchTargetRow.WithContext(ctx),

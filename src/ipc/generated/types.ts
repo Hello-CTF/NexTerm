@@ -2886,50 +2886,6 @@ export type RevealedCredentialDTO = {
   passphrase: string | null;
 };
 
-export type RosterAttachmentDTO = {
-  entry: RosterEntry;
-  resolution: string;
-  currentIncarnation?: string;
-  assetId: string;
-  host: string;
-  cwd: string;
-};
-
-export type RosterEntry = {
-  id: string;
-  conversationId: string;
-  handle: string;
-  alias: string;
-  tabId: string;
-  state: string;
-  incarnation: string;
-  jobId: string;
-  createdAt: number;
-  updatedAt: number;
-  releasedAt: number | null;
-};
-
-export type RosterListEntry = {
-  entry: RosterEntry;
-  presence: string;
-  assetId: string;
-  host: string;
-  cwd: string;
-};
-
-export type RosterReconcileEntry = {
-  id: string;
-  handle: string;
-  state: string;
-  outcome: string;
-  wrote: boolean;
-  reason: string;
-};
-
-export type RosterReconcileReport = {
-  entries: RosterReconcileEntry[];
-};
-
 export type RunHistoryEntry = {
   runId: string;
   state: string;

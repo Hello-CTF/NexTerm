@@ -8,9 +8,9 @@ import (
 )
 
 // RunRecoveryState classifies an interrupted run's runtime after an
-// absence. It mirrors the roster resolution semantics: disconnected may
-// return, gone requires authoritative absence, and unverifiable never
-// triggers an automatic write and never masquerades as gone.
+// absence: disconnected may return, gone requires authoritative absence, and
+// unverifiable never triggers an automatic write and never masquerades as
+// gone.
 type RunRecoveryState string
 
 const (
@@ -22,9 +22,30 @@ const (
 	RunRecoveryUnverifiable RunRecoveryState = "unverifiable"
 )
 
+// RunRuntimeKind is the authoritative answer of a run runtime probe.
+type RunRuntimeKind string
+
+const (
+	RunRuntimeConnected    RunRuntimeKind = "connected"
+	RunRuntimeDisconnected RunRuntimeKind = "disconnected"
+	RunRuntimeGone         RunRuntimeKind = "gone"
+	RunRuntimeReplaced     RunRuntimeKind = "replaced"
+	RunRuntimeExited       RunRuntimeKind = "exited"
+	RunRuntimeUnverifiable RunRuntimeKind = "unverifiable"
+)
+
+// RunRuntimeStatus carries the probe answer; CurrentIncarnation is set when a
+// replacement incarnation is authoritatively known.
+type RunRuntimeStatus struct {
+	Kind               RunRuntimeKind
+	CurrentIncarnation string
+}
+
 // RunRuntimeProbe authoritatively classifies the runtime behind a run.
+// Implementations must only report RunRuntimeGone on authoritative absence;
+// anything else uncertain maps to RunRuntimeUnverifiable.
 type RunRuntimeProbe interface {
-	ProbeRunRuntime(ctx context.Context, runID string) (RosterRuntimeStatus, error)
+	ProbeRunRuntime(ctx context.Context, runID string) (RunRuntimeStatus, error)
 }
 
 // RunRecoveryStore is the persistence contract of the recovery scan,
@@ -132,24 +153,24 @@ func (r *RunRecovery) examine(ctx context.Context, probe RunRuntimeProbe, run st
 		return entry, false
 	}
 	switch status.Kind {
-	case RosterRuntimeConnected:
+	case RunRuntimeConnected:
 		entry.State = RunRecoveryConnected
 		entry.Reason = "runtime still connected; no recovery write"
-	case RosterRuntimeDisconnected:
+	case RunRuntimeDisconnected:
 		entry.State = RunRecoveryDisconnected
 		entry.Reason = "runtime unreachable; may return without a write"
-	case RosterRuntimeGone:
+	case RunRuntimeGone:
 		entry.State = RunRecoveryGone
 		entry.Wrote = true
 		entry.Reason = "authoritative absence confirmed"
-	case RosterRuntimeExited:
+	case RunRuntimeExited:
 		entry.State = RunRecoveryExited
 		entry.Wrote = true
 		entry.Reason = "runtime exited during the absence"
-	case RosterRuntimeReplaced:
+	case RunRuntimeReplaced:
 		if status.CurrentIncarnation == "" {
 			// A replacement answer without the authoritative current
-			// incarnation cannot write, mirroring the roster contract.
+			// incarnation cannot write.
 			entry.State = RunRecoveryUnverifiable
 			entry.Reason = "replacement reported without a current incarnation: no automatic write"
 			return entry, false

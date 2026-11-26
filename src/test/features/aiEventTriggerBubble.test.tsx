@@ -18,9 +18,6 @@ function mountUser(item: Extract<ChatItem, { role: "user" }>): MountedView {
       onApprovePlan: vi.fn(),
       onRetry: vi.fn(),
       onEdit: vi.fn(),
-      agentToolCall: null,
-      onAgentApproval: vi.fn(),
-      agentApprovalBusy: false,
     }),
   );
   return view;

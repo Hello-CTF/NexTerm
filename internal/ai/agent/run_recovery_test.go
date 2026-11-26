@@ -14,18 +14,18 @@ import (
 
 type fakeRunProbe struct {
 	mu       sync.Mutex
-	statuses map[string]RosterRuntimeStatus
+	statuses map[string]RunRuntimeStatus
 	errors   map[string]error
 }
 
 func newFakeRunProbe() *fakeRunProbe {
-	return &fakeRunProbe{statuses: map[string]RosterRuntimeStatus{}, errors: map[string]error{}}
+	return &fakeRunProbe{statuses: map[string]RunRuntimeStatus{}, errors: map[string]error{}}
 }
 
-func (p *fakeRunProbe) set(runID string, kind RosterRuntimeKind, currentIncarnation string) {
+func (p *fakeRunProbe) set(runID string, kind RunRuntimeKind, currentIncarnation string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.statuses[runID] = RosterRuntimeStatus{Kind: kind, CurrentIncarnation: currentIncarnation}
+	p.statuses[runID] = RunRuntimeStatus{Kind: kind, CurrentIncarnation: currentIncarnation}
 }
 
 func (p *fakeRunProbe) setError(runID string, err error) {
@@ -34,16 +34,16 @@ func (p *fakeRunProbe) setError(runID string, err error) {
 	p.errors[runID] = err
 }
 
-func (p *fakeRunProbe) ProbeRunRuntime(_ context.Context, runID string) (RosterRuntimeStatus, error) {
+func (p *fakeRunProbe) ProbeRunRuntime(_ context.Context, runID string) (RunRuntimeStatus, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if err := p.errors[runID]; err != nil {
-		return RosterRuntimeStatus{}, err
+		return RunRuntimeStatus{}, err
 	}
 	if status, ok := p.statuses[runID]; ok {
 		return status, nil
 	}
-	return RosterRuntimeStatus{Kind: RosterRuntimeUnverifiable}, nil
+	return RunRuntimeStatus{Kind: RunRuntimeUnverifiable}, nil
 }
 
 func recoveryFixture(t *testing.T) (*store.Store, context.Context, string) {
@@ -80,15 +80,15 @@ func TestRunRecoveryClassifiesAndWritesOnlyAuthoritative(t *testing.T) {
 	db, ctx, conversationID := recoveryFixture(t)
 	cases := []struct {
 		runID  string
-		kind   RosterRuntimeKind
+		kind   RunRuntimeKind
 		status string
 	}{
-		{"run-connected", RosterRuntimeConnected, store.RunStatusRunning},
-		{"run-disconnected", RosterRuntimeDisconnected, store.RunStatusInterrupted},
-		{"run-gone", RosterRuntimeGone, store.RunStatusRunning},
-		{"run-exited", RosterRuntimeExited, store.RunStatusInterrupted},
-		{"run-replaced", RosterRuntimeReplaced, store.RunStatusRunning},
-		{"run-unverifiable", RosterRuntimeUnverifiable, store.RunStatusRunning},
+		{"run-connected", RunRuntimeConnected, store.RunStatusRunning},
+		{"run-disconnected", RunRuntimeDisconnected, store.RunStatusInterrupted},
+		{"run-gone", RunRuntimeGone, store.RunStatusRunning},
+		{"run-exited", RunRuntimeExited, store.RunStatusInterrupted},
+		{"run-replaced", RunRuntimeReplaced, store.RunStatusRunning},
+		{"run-unverifiable", RunRuntimeUnverifiable, store.RunStatusRunning},
 	}
 	probe := newFakeRunProbe()
 	for _, caseInfo := range cases {
@@ -188,8 +188,8 @@ func TestRunRecoveryOwnerIsolation(t *testing.T) {
 	}
 	insertRun(t, db, ctxB, "run-b", conversationB.ID, store.RunStatusRunning, false)
 	probe := newFakeRunProbe()
-	probe.set("run-a", RosterRuntimeGone, "")
-	probe.set("run-b", RosterRuntimeGone, "")
+	probe.set("run-a", RunRuntimeGone, "")
+	probe.set("run-b", RunRuntimeGone, "")
 
 	summaryA, err := NewRunRecovery(db).Recover(ctxA, probe)
 	if err != nil {
@@ -214,7 +214,7 @@ func TestRunRecoveryOwnerIsolation(t *testing.T) {
 func TestRunRecoveryLargeSet(t *testing.T) {
 	db, ctx, conversationID := recoveryFixture(t)
 	const total = 120
-	kinds := []RosterRuntimeKind{RosterRuntimeConnected, RosterRuntimeDisconnected, RosterRuntimeGone, RosterRuntimeExited, RosterRuntimeReplaced, RosterRuntimeUnverifiable}
+	kinds := []RunRuntimeKind{RunRuntimeConnected, RunRuntimeDisconnected, RunRuntimeGone, RunRuntimeExited, RunRuntimeReplaced, RunRuntimeUnverifiable}
 	probe := newFakeRunProbe()
 	for i := 0; i < total; i++ {
 		runID := fmt.Sprintf("run-%03d", i)
@@ -283,7 +283,7 @@ func TestRunRecoveryReplacedWithoutIncarnationIsUnverifiable(t *testing.T) {
 	db, ctx, conversationID := recoveryFixture(t)
 	insertRun(t, db, ctx, "run-replaced", conversationID, store.RunStatusRunning, false)
 	probe := newFakeRunProbe()
-	probe.set("run-replaced", RosterRuntimeReplaced, "")
+	probe.set("run-replaced", RunRuntimeReplaced, "")
 
 	summary, err := NewRunRecovery(db).Recover(ctx, probe)
 	if err != nil {
@@ -305,13 +305,13 @@ func TestRunRecoveryReplacedWithoutIncarnationIsUnverifiable(t *testing.T) {
 // gateRunProbe blocks its first probe call until released, forcing the
 // exact recovery-vs-concurrent-finish interleaving.
 type gateRunProbe struct {
-	status  RosterRuntimeStatus
+	status  RunRuntimeStatus
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
 }
 
-func (p *gateRunProbe) ProbeRunRuntime(context.Context, string) (RosterRuntimeStatus, error) {
+func (p *gateRunProbe) ProbeRunRuntime(context.Context, string) (RunRuntimeStatus, error) {
 	p.once.Do(func() { close(p.entered); <-p.release })
 	return p.status, nil
 }
@@ -320,7 +320,7 @@ func TestRunRecoveryConcurrentFinishIsNotCountedAsWrite(t *testing.T) {
 	db, ctx, conversationID := recoveryFixture(t)
 	insertRun(t, db, ctx, "run-race", conversationID, store.RunStatusRunning, false)
 	probe := &gateRunProbe{
-		status:  RosterRuntimeStatus{Kind: RosterRuntimeGone},
+		status:  RunRuntimeStatus{Kind: RunRuntimeGone},
 		entered: make(chan struct{}), release: make(chan struct{}),
 	}
 
@@ -362,7 +362,7 @@ func TestRunRecoveryStaleResumeIsNotTerminallyWritten(t *testing.T) {
 	db, ctx, conversationID := recoveryFixture(t)
 	insertRun(t, db, ctx, "run-resume", conversationID, store.RunStatusInterrupted, false)
 	probe := &gateRunProbe{
-		status:  RosterRuntimeStatus{Kind: RosterRuntimeGone},
+		status:  RunRuntimeStatus{Kind: RunRuntimeGone},
 		entered: make(chan struct{}), release: make(chan struct{}),
 	}
 
@@ -415,8 +415,8 @@ func TestRunRecoveryUnfinishedOnlySkipsFinishedHistory(t *testing.T) {
 	insertRun(t, db, ctx, "run-active-1", conversationID, store.RunStatusRunning, false)
 	insertRun(t, db, ctx, "run-active-2", conversationID, store.RunStatusInterrupted, false)
 	probe := newFakeRunProbe()
-	probe.set("run-active-1", RosterRuntimeConnected, "")
-	probe.set("run-active-2", RosterRuntimeGone, "")
+	probe.set("run-active-1", RunRuntimeConnected, "")
+	probe.set("run-active-2", RunRuntimeGone, "")
 
 	summary, err := NewRunRecovery(db).Recover(ctx, probe)
 	if err != nil {

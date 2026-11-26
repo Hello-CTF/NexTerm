@@ -30,9 +30,6 @@ func TestReferencedTabIsReadableAcrossSessions(t *testing.T) {
 	if !wait.OK {
 		t.Fatalf("referenced wait_for = %+v", wait)
 	}
-	if target, ok := registry.ResolveCallTarget(context.Background(), "job", scope, p1Call("r", "read_screen", `{"tab_id":"t9"}`)); !ok || target.String() != "t/t9/s9" {
-		t.Fatalf("read target = %v ok=%v", target, ok)
-	}
 
 	keys := registry.Execute(context.Background(), "job", scope, p1Call("k", "send_keys", `{"tab_id":"t/t9/s9","keys":"ls"}`), nil)
 	if keys.OK || !strings.Contains(keys.Text, ErrCrossScope.Error()) {
@@ -41,9 +38,6 @@ func TestReferencedTabIsReadableAcrossSessions(t *testing.T) {
 	rename := registry.Execute(context.Background(), "job", scope, p1Call("n", "terminal_rename", `{"tab_id":"t9","title":"x"}`), nil)
 	if rename.OK || !strings.Contains(rename.Text, ErrCrossScope.Error()) {
 		t.Fatalf("rename on referenced tab = %+v", rename)
-	}
-	if _, ok := registry.ResolveCallTarget(context.Background(), "job", scope, p1Call("k", "send_keys", `{"tab_id":"t9"}`)); ok {
-		t.Fatal("send_keys must not resolve a referenced tab")
 	}
 
 	other := registry.Execute(context.Background(), "job2", scope, p1Call("r2", "read_screen", `{"tab_id":"t9"}`), nil)

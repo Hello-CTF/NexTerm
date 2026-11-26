@@ -376,9 +376,6 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 			return err
 		}
 	}
-	if err := r.RegisterRosterCommands(dispatcher); err != nil {
-		return err
-	}
 	if r.config.Memory != nil {
 		if err := r.registerMemoryCommands(dispatcher); err != nil {
 			return err

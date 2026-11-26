@@ -341,10 +341,9 @@ func TestConversationRecoverySummaryTruncatesBeyondRestoreCap(t *testing.T) {
 	}
 }
 
-// RegisterCommands wires the roster surface and the AI-05 history surface for
-// real: roster commands answer unsupported without a configured roster (never
-// "unknown command"), and the legacy ai_run_list contract is unchanged.
-func TestRegisterCommandsWiresRosterAndRunHistory(t *testing.T) {
+// RegisterCommands wires the AI-05 history surface for real, and the legacy
+// ai_run_list contract is unchanged.
+func TestRegisterCommandsWiresRunHistory(t *testing.T) {
 	database, ctx := historyStore(t)
 	conversationID := historyConversation(t, database, ctx)
 	insertHistoryRun(t, database, ctx, "run-a", conversationID, store.RunStatusCompleted, 1, true, "done", "")
@@ -354,14 +353,6 @@ func TestRegisterCommandsWiresRosterAndRunHistory(t *testing.T) {
 	if err := minimal.RegisterCommands(dispatcher); err != nil {
 		t.Fatal(err)
 	}
-	rosterResponse := dispatcher.Dispatch(ctx, ipc.Request{Command: "ai_roster_list", Args: json.RawMessage(`{"conversationId":"` + conversationID + `"}`)}, ipc.Environment{})
-	if rosterResponse.OK {
-		t.Fatal("roster command answered without a configured roster")
-	}
-	if rosterResponse.Error == nil || rosterResponse.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("roster error = %+v", rosterResponse.Error)
-	}
-
 	historyResponse := dispatcher.Dispatch(ctx, ipc.Request{Command: "ai_run_history", Args: json.RawMessage(`{"conversationId":"` + conversationID + `","filter":"all","limit":50}`)}, ipc.Environment{})
 	if !historyResponse.OK {
 		t.Fatalf("ai_run_history = %+v", historyResponse.Error)
@@ -396,23 +387,5 @@ func TestRegisterCommandsWiresRosterAndRunHistory(t *testing.T) {
 	}
 	if len(legacy) != 1 || legacy[0].ID != "run-a" || legacy[0].Status != store.RunStatusCompleted {
 		t.Fatalf("legacy runs = %+v", legacy)
-	}
-
-	withRoster := NewRunner(Config{Store: database, Runs: database, Roster: NewRoster(database, nil)})
-	defer withRoster.Close()
-	rosterDispatcher := ipc.NewDispatcher()
-	if err := withRoster.RegisterCommands(rosterDispatcher); err != nil {
-		t.Fatal(err)
-	}
-	rosterOK := rosterDispatcher.Dispatch(ctx, ipc.Request{Command: "ai_roster_list", Args: json.RawMessage(`{"conversationId":"` + conversationID + `"}`)}, ipc.Environment{})
-	if !rosterOK.OK {
-		t.Fatalf("configured roster list = %+v", rosterOK.Error)
-	}
-	var listed []RosterListEntry
-	if err := json.Unmarshal(rosterOK.Data, &listed); err != nil {
-		t.Fatal(err)
-	}
-	if len(listed) != 0 {
-		t.Fatalf("roster = %+v", listed)
 	}
 }

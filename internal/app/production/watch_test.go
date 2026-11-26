@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/watches"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
@@ -77,7 +76,7 @@ func newWatchTestFixture(t *testing.T) (*store.Store, *session.Manager, *watchEv
 
 func newWatchTestService(t *testing.T, database *store.Store, sessions *session.Manager, events ipc.Emitter, dispatchInterval time.Duration) (*watchService, *ipc.Dispatcher) {
 	t.Helper()
-	service := newWatchService(database, sessions, events, agent.NewRoster(database, nil), nil, nil)
+	service := newWatchService(database, sessions, events, nil, nil)
 	service.dispatchInterval = dispatchInterval
 	service.pollInterval = 5 * time.Millisecond
 	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })

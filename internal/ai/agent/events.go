@@ -36,13 +36,8 @@ type Event struct {
 	Preview      *tools.Preview
 	Question     *tools.Question
 	Terminal     *tools.CreatedTerminal
-	// Handle is the permanent roster handle of the tool call's actual target
-	// tab, emitted only when that target verifiably belongs to a live roster
-	// entry; non-roster or unprovable targets omit it (unknown), never a
-	// fabricated reference.
-	Handle      string
-	Commands    []string
-	RulePattern string
+	Commands     []string
+	RulePattern  string
 	// SessionScope describes what a session approval covers; empty hides the option.
 	SessionScope string
 	// PermanentScope describes what a permanent grant covers; empty hides the option.
@@ -98,17 +93,11 @@ func (e Event) MarshalJSON() ([]byte, error) {
 	case "toolCall":
 		payload["id"], payload["name"], payload["display"] = e.ID, e.Name, e.Display
 		payload["args"] = rawObject(e.Args)
-		if e.Handle != "" {
-			payload["handle"] = e.Handle
-		}
 	case "toolResult":
 		payload["id"], payload["ok"], payload["summary"], payload["text"] = e.ID, e.OK, e.Summary, e.Text
 		payload["truncated"], payload["exitCode"], payload["panic"] = e.Truncated, e.ExitCode, e.Panic
 		if e.Terminal != nil {
 			payload["terminal"] = e.Terminal
-		}
-		if e.Handle != "" {
-			payload["handle"] = e.Handle
 		}
 	case "confirmRequired":
 		payload["id"], payload["tool"], payload["args"], payload["risk"] = e.ID, e.Tool, rawObject(e.Args), e.Risk

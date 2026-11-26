@@ -1,9 +1,7 @@
 import { memo, useState, useMemo, useEffect } from "react";
 import { type ChatItem, type ConfirmItem, type QuestionItem, type SubagentTimeline } from "../conversation";
-import type { AgentToolCall, AgentApprovalDecision } from "../agentTypes";
 import { IconEdit, IconImage, IconAlert, IconRefresh, IconShield, IconLoader, IconCheck, IconXCircle, IconChevronRight, IconBot, IconList, IconPlay, IconLayers } from "../../../ui/icons";
 import { Markdown } from "../Markdown";
-import { AgentToolCard } from "../AgentToolCard";
 import { type EnvironmentConfirmationChallenge, evaluateEnvironmentConfirmation, isManagedDeviceEnvironment, MANAGED_DEVICE_ENVIRONMENT_HINT, targetKey, environmentDisplayLabel } from "../../production/environmentConfirmation";
 import { simpleDiff, hasVisibleChange, diffLineText } from "../diff";
 import { toolLabel, extractUrls, splitUserRefs } from "./aiSidebarShared";
@@ -20,9 +18,6 @@ export const ChatBubble = memo(function ChatBubble({
   onRetry,
   onContinue,
   onEdit,
-  agentToolCall,
-  onAgentApproval,
-  agentApprovalBusy,
   readOnly = false,
 }: {
   item: ChatItem;
@@ -33,9 +28,6 @@ export const ChatBubble = memo(function ChatBubble({
   // onContinue is set on the latest step-limit notice; it starts a new run in the same conversation.
   onContinue?: () => void;
   onEdit: (item: ChatItem) => void;
-  agentToolCall: AgentToolCall | null;
-  onAgentApproval: (requestId: string, decision: AgentApprovalDecision) => void;
-  agentApprovalBusy: boolean;
   // readOnly shows a saved conversation without its actions (edit, retry, plan approval), as in the AI workbench.
   readOnly?: boolean;
 }) {
@@ -181,21 +173,7 @@ export const ChatBubble = memo(function ChatBubble({
   if (item.role === "plan") {
     return <PlanBubble item={item} approved={planApproved} onApprove={onApprovePlan} readOnly={readOnly} />;
   }
-  if (item.role === "tool") {
-    // A tool call with a verified roster handle renders the reviewed agent
-    // tool card (roster-joined identity, run evidence and approval actions);
-    // anything else keeps the plain bubble and claims no roster identity.
-    if (agentToolCall) {
-      return (
-        <AgentToolCard
-          call={agentToolCall}
-          onApproval={onAgentApproval}
-          approvalBusy={agentApprovalBusy}
-        />
-      );
-    }
-    return <ToolBubble item={item} />;
-  }
+  if (item.role === "tool") return <ToolBubble item={item} />;
   return null;
 });
 

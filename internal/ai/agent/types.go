@@ -113,17 +113,12 @@ type Config struct {
 	// request owner and the real asset through the configurable production
 	// classification; nil issues no environment challenge.
 	HITLEnvironmentResolver func(context.Context, string) ([]string, error)
-	// Roster is the conversation's persistent agent roster; nil disables
-	// roster context injection. When configured, every job start loads the
-	// roster and a failed load fails the start closed instead of silently
-	// running without roster context.
-	Roster        *Roster
-	Now           func() time.Time
-	Subagents     *tools.SubagentConfig
-	NewID         func() string
-	MaxTurns      int
-	MaxImages     int
-	MaxImageBytes int
+	Now                     func() time.Time
+	Subagents               *tools.SubagentConfig
+	NewID                   func() string
+	MaxTurns                int
+	MaxImages               int
+	MaxImageBytes           int
 
 	MaxPendingSteers int
 
@@ -294,30 +289,6 @@ type job struct {
 	completed      bool
 	doneCh         chan struct{}
 	doneOnce       sync.Once
-
-	// callHandles remembers the roster handle resolved for each tool call of
-	// this run, so the toolResult event carries the same reference the
-	// toolCall event did.
-	callHandlesMu sync.Mutex
-	callHandles   map[string]string
-}
-
-func (j *job) rememberCallHandle(callID, handle string) {
-	if callID == "" || handle == "" {
-		return
-	}
-	j.callHandlesMu.Lock()
-	defer j.callHandlesMu.Unlock()
-	if j.callHandles == nil {
-		j.callHandles = make(map[string]string)
-	}
-	j.callHandles[callID] = handle
-}
-
-func (j *job) callHandle(callID string) string {
-	j.callHandlesMu.Lock()
-	defer j.callHandlesMu.Unlock()
-	return j.callHandles[callID]
 }
 
 func (j *job) emit(ctx context.Context, event Event) error {

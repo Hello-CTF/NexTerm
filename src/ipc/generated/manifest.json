@@ -222,36 +222,6 @@
       "channel": false,
       "stream": "none"
     },
-    "ai_roster_attach": {
-      "scope": "ai-roster",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "ai_roster_list": {
-      "scope": "ai-roster",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "ai_roster_reconcile": {
-      "scope": "ai-roster",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "ai_roster_release": {
-      "scope": "ai-roster",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "ai_roster_rename": {
-      "scope": "ai-roster",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
     "ai_run_events": {
       "nested": false,
       "channel": false,

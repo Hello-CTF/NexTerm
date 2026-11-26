@@ -1,52 +1,34 @@
 import { useEffect, useState } from "react";
 import { CronPanel } from "../CronPanel";
-import { AgentRosterPanel } from "../AgentRosterPanel";
 import { WatchPanel } from "../WatchPanel";
 import { watchPanelApi } from "../../../ipc/watchApi";
 import type { AiChatCtx } from "./aiChatCtx";
 import { t } from "../../../i18n";
 
 // BackgroundTasksPanel is the one place to see and stop what the AI left
-// running: scheduled jobs, armed watches and sub-agent terminals. The schedule
-// section is always shown for a conversation, so its jobs can be created and
-// managed before the AI has made any. The watch and agent sections are hidden
-// while they have never had anything, but once shown they stay for as long as
-// the panel is open, so finishing or cancelling the last item shows an empty
-// state instead of making the section vanish.
+// running: scheduled jobs and armed watches. The schedule section is always
+// shown for a conversation, so its jobs can be created and managed before the
+// AI has made any. The watch section is hidden while it has never had
+// anything, but once shown it stays for as long as the panel is open, so
+// finishing or cancelling the last item shows an empty state instead of making
+// the section vanish.
 export function BackgroundTasksPanel({ ctx }: { ctx: AiChatCtx }) {
-  const {
-    conversationId,
-    activeWorkspace,
-    backgroundTasks,
-    refreshBackgroundTasks,
-    setTasksOpen,
-    agentRosterApi,
-    mentionAgentHandle,
-    openAgentTerminal,
-    watchOwner,
-  } = ctx;
+  const { conversationId, activeWorkspace, backgroundTasks, refreshBackgroundTasks, setTasksOpen, watchOwner } = ctx;
   const refresh = () => void refreshBackgroundTasks();
-  const [shown, setShown] = useState({ watch: false, agents: false });
+  const [shownWatch, setShownWatch] = useState(false);
   useEffect(() => {
-    setShown((prev) => {
-      const next = {
-        watch: prev.watch || backgroundTasks.watch > 0,
-        agents: prev.agents || backgroundTasks.agents > 0,
-      };
-      return next.watch === prev.watch && next.agents === prev.agents ? prev : next;
-    });
+    if (backgroundTasks.watch > 0) setShownWatch(true);
   }, [backgroundTasks]);
   const showCron = Boolean(conversationId);
-  const showWatch = shown.watch || backgroundTasks.watch > 0;
-  const showAgents = (shown.agents || backgroundTasks.agents > 0) && Boolean(conversationId) && Boolean(agentRosterApi);
+  const showWatch = shownWatch || backgroundTasks.watch > 0;
   return (
     <section
       aria-label={t("后台任务")}
       className="max-h-[60%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60"
     >
-      {!showCron && !showWatch && !showAgents && (
+      {!showCron && !showWatch && (
         <div className="nx-hint px-3 py-3 text-center text-[11.5px]">
-          {t("暂无后台任务。AI 设置的定时任务、监视和子代理会显示在这里。")}
+          {t("暂无后台任务。AI 设置的定时任务和监视会显示在这里。")}
         </div>
       )}
       {showCron && conversationId && (
@@ -58,17 +40,6 @@ export function BackgroundTasksPanel({ ctx }: { ctx: AiChatCtx }) {
         />
       )}
       {showWatch && <WatchPanel api={watchPanelApi} owner={watchOwner} onChanged={refresh} />}
-      {showAgents && conversationId && agentRosterApi && (
-        // Keyed by conversation: a switch remounts the panel, so the composer
-        // can never mention the previous conversation's rows.
-        <AgentRosterPanel
-          key={`roster-${conversationId}`}
-          api={agentRosterApi}
-          onMention={mentionAgentHandle}
-          onOpened={openAgentTerminal}
-          onChanged={refresh}
-        />
-      )}
     </section>
   );
 }

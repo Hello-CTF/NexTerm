@@ -21,7 +21,7 @@ func TestTerminalSubscriptionWakesTheConversationOnANewState(t *testing.T) {
 	executor := &wakeExecutor{results: make(chan error, 4), calls: make(chan cron.Trigger, 4)}
 	waker := newEventWaker(executor, nil, nil)
 	t.Cleanup(waker.Close)
-	service := newWatchService(database, sessions, events, agent.NewRoster(database, nil), nil, waker)
+	service := newWatchService(database, sessions, events, nil, waker)
 	service.dispatchInterval = 5 * time.Millisecond
 	service.pollInterval = 5 * time.Millisecond
 	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })

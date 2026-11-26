@@ -47,13 +47,13 @@ type watchService struct {
 	closed      bool
 }
 
-func newWatchService(storage *store.Store, sessions *session.Manager, events ipc.Emitter, roster *agent.Roster, logger *slog.Logger, waker *eventWaker) *watchService {
+func newWatchService(storage *store.Store, sessions *session.Manager, events ipc.Emitter, logger *slog.Logger, waker *eventWaker) *watchService {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	var consumer *agent.WatchConsumer
-	if roster != nil {
-		consumer = agent.NewWatchConsumer(storage, roster)
+	if storage != nil {
+		consumer = agent.NewWatchConsumer(storage)
 		if waker != nil {
 			consumer.OnFresh(waker.Wake)
 		}

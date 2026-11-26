@@ -129,7 +129,6 @@ var contractScopes = []scopeSpec{
 	{name: "ssh-import", commands: []string{"ssh_import_apply", "ssh_import_preview"}},
 	{name: "vault", prefixes: []string{"vault_"}},
 	{name: "credential", commands: []string{"credential_update"}},
-	{name: "ai-roster", prefixes: []string{"ai_roster_"}},
 	{name: "ai-watch", prefixes: []string{"ai_watch_"}},
 	{name: "ai-run", commands: []string{"ai_run_history", "ai_run_recovery_summary"}},
 	{name: "ai-run-settings", commands: []string{"ai_run_settings_get", "ai_run_settings_set"}},

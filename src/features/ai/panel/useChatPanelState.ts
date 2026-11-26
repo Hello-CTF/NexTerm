@@ -18,24 +18,17 @@ import type { UseChatRunSessionOut } from "./useChatRunSession";
 import { t as tr } from "../../../i18n";
 
 export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
-  const { isLifecycleActive, conversationIdRef, toolHandlesRef, setToolHandleVersion, lastRefreshedHandleVersionRef, restoreBindingRef, restoreGenerationRef, setConversationId, onConversationChangeRef, stream, conv, permScope, pushToast, input, sessionId, workspaces } = p;
+  const { isLifecycleActive, conversationIdRef, restoreBindingRef, restoreGenerationRef, setConversationId, onConversationChangeRef, stream, conv, permScope, pushToast, input, sessionId, workspaces } = p;
 
   const updateConversationId = useCallback((id: string | undefined, title?: string) => {
     if (!isLifecycleActive()) return;
-    if (conversationIdRef.current !== id) {
-      // A real conversation switch invalidates the tool-handle tracking of
-      // the previous conversation; replayed events of the new one re-record.
-      toolHandlesRef.current?.clear();
-      setToolHandleVersion(0);
-      lastRefreshedHandleVersionRef.current = 0;
-    }
     conversationIdRef.current = id;
     restoreBindingRef.current = id === undefined
       ? null
       : { id, generation: restoreGenerationRef.current };
     setConversationId(id);
     onConversationChangeRef.current(id, title);
-  }, [conversationIdRef, isLifecycleActive, lastRefreshedHandleVersionRef, onConversationChangeRef, restoreBindingRef, restoreGenerationRef, setConversationId, setToolHandleVersion, toolHandlesRef]);
+  }, [conversationIdRef, isLifecycleActive, onConversationChangeRef, restoreBindingRef, restoreGenerationRef, setConversationId]);
   const isRestoreActive = useCallback(
     (generation: number, id?: string) =>
       isLifecycleActive() &&

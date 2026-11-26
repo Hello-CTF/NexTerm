@@ -41,8 +41,7 @@ function NoModelHint({ onConfigure }: { onConfigure: () => void }) {
 
 // While the approval card is open it is the only place a pending call appears: the card names the tool, shows the
 // action and the reason, and holds the decision. The call's own bubble and its "waiting" record return once the card
-// is resolved, carrying the result and the decision. A roster agent's tool card holds its own approval actions, so it
-// stays.
+// is resolved, carrying the result and the decision.
 function shownByConfirmCard(item: ChatItem, card: ConfirmItem | null): boolean {
   if (!card) return false;
   if (item.role === "confirm") return item.id === card.id;
@@ -50,7 +49,7 @@ function shownByConfirmCard(item: ChatItem, card: ConfirmItem | null): boolean {
 }
 
 export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
-  const { setScrollEl, messageWindowStart, loadOlderMessages, conv, conversationError, conversationIdRef, restoreConversation, virtual, activeMatchIndex, busy, handleApprovePlan, handleRetryRun, handleEditResend, agentToolCallFor, submitAgentApproval, submittingCardId, confirmCard, confirmCardRef, confirm, productionNames, handleProductionState, productionBlocked, questionCard, answer, questionInput, setQuestionInput, follow, setModelPanelOpen } = ctx;
+  const { setScrollEl, messageWindowStart, loadOlderMessages, conv, conversationError, conversationIdRef, restoreConversation, virtual, activeMatchIndex, busy, handleApprovePlan, handleRetryRun, handleEditResend, submittingCardId, confirmCard, confirmCardRef, confirm, productionNames, handleProductionState, productionBlocked, questionCard, answer, questionInput, setQuestionInput, follow, setModelPanelOpen } = ctx;
   const continueRun = useContinueRun(ctx);
   const continuableId = useMemo(() => continuableOutcomeId(conv.items), [conv.items]);
   const groupAt = useMemo(() => {
@@ -125,9 +124,8 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
             const group = groupAt.get(index);
             const expanded = group ? expandedGroups.has(group.key) : true;
             const showSummary = group !== undefined && index === group.start;
-            const agentToolCall = item.role === "tool" ? agentToolCallFor(item) : null;
             const showItem =
-              !(agentToolCall === null && shownByConfirmCard(item, confirmCard)) &&
+              !shownByConfirmCard(item, confirmCard) &&
               (expanded ||
                 index === activeMatchIndex ||
                 (item.role === "tool" && toolNeedsAttention(item, pendingConfirms)));
@@ -150,9 +148,6 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                 onRetry={handleRetryRun}
                 onContinue={!busy && item.id === continuableId ? continueRun : undefined}
                 onEdit={handleEditResend}
-                agentToolCall={agentToolCall}
-                onAgentApproval={submitAgentApproval}
-                agentApprovalBusy={submittingCardId !== null}
               />
             ) : null;
             return (

@@ -11,7 +11,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
-	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
@@ -20,9 +19,7 @@ import (
 // runs: the restart finishes the non-resumable majority as interrupted, the
 // genuinely pending run stays resumable through its real HITL blob, and the
 // AI-05 surface — the recovery summary and the opaque-cursor run history —
-// reports the recovered set through the real dispatcher. A roster row carried
-// across the restart keeps its episode isolation: never claimed connected
-// without the persisted binding, with unverifiable target evidence.
+// reports the recovered set through the real dispatcher.
 func TestProductionRestartRecoversMoreThanFiftyRunsThroughRealServer(t *testing.T) {
 	ctx := context.Background()
 	// The desktop restart harness is ownerless: every store write and dispatch
@@ -70,21 +67,6 @@ func TestProductionRestartRecoversMoreThanFiftyRunsThroughRealServer(t *testing.
 		if err := firstStore.RunInsert(ctx, run); err != nil {
 			t.Fatal(err)
 		}
-	}
-
-	// A roster row bound to a live (registered) tab crosses the restart without
-	// a recorded episode binding: the runtime is present, but the row may never
-	// claim it without the binding.
-	tab, err := first.Sessions.RegisterRemoteSession(ctx, session.RemoteSessionOptions{OwnerID: "owner-a", AssetID: "asset-1", Title: "agent"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rosterCtx := ipc.WithUserID(ctx, "owner-a")
-	if _, err := firstStore.AgentRosterProvision(rosterCtx, store.AgentRosterRow{
-		ConversationID: conversationID, Handle: "handle-a", Alias: "agent-a", TabID: tab.ID,
-		State: string(agent.RosterStateProvisioning), Incarnation: "inc-1",
-	}); err != nil {
-		t.Fatal(err)
 	}
 
 	first.closeAIRuntime()
@@ -196,31 +178,5 @@ func TestProductionRestartRecoversMoreThanFiftyRunsThroughRealServer(t *testing.
 	}
 	if len(idlePage.Entries) != 1 || idlePage.Entries[0].RunID != response.JobID {
 		t.Fatalf("idle page = %+v, want only the resumable run", idlePage.Entries)
-	}
-
-	// The roster row crossing the restart keeps episode isolation: without the
-	// persisted binding the surviving tab is never claimed as connected, and
-	// the target evidence fails closed.
-	rosterDispatcher := ipc.NewDispatcher()
-	if err := second.Agent.RegisterRosterCommands(rosterDispatcher); err != nil {
-		t.Fatal(err)
-	}
-	rosterResponse := rosterDispatcher.Dispatch(ipc.WithUserID(ctx, "owner-a"), ipc.Request{Command: "ai_roster_list", Args: json.RawMessage(`{"conversationId":"` + conversationID + `"}`)}, ipc.Environment{})
-	if !rosterResponse.OK {
-		t.Fatalf("ai_roster_list = %+v", rosterResponse.Error)
-	}
-	var listed []agent.RosterListEntry
-	if err := json.Unmarshal(rosterResponse.Data, &listed); err != nil {
-		t.Fatal(err)
-	}
-	if len(listed) != 1 {
-		t.Fatalf("listed = %+v", listed)
-	}
-	row := listed[0]
-	if row.Presence != agent.RosterResolutionUnverifiable {
-		t.Fatalf("post-restart presence = %s, want unverifiable without the episode binding", row.Presence)
-	}
-	if row.Host != "" || row.Cwd != "" || row.AssetID != "" {
-		t.Fatalf("post-restart target evidence must fail closed: %+v", row)
 	}
 }

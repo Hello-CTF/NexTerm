@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { deleteConversationGuarded } from "../workbench/workbenchShared";
 import { setChatModelChoice } from "../chatModelChoice";
-import type { AgentRosterEntry } from "../agentTypes";
-import { useUi, nextTabId, type TakeoverState } from "../../../app/store";
-import { terminalApi, aiApi } from "../../../ipc/commands";
+import { useUi, type TakeoverState } from "../../../app/store";
+import { aiApi } from "../../../ipc/commands";
 import { describeError } from "../../../ui/errorText";
 import { aiTabBusyIds, aiTabRunControls, setAiTabBusy, clearAiTabRun, aiRunBlocksStart, type AiRunSlot, isCurrentAiRun, bindAiRunJob, createAiRun, registerAiRunGeneration, finishAiRunSpawn, settleAiRun } from "../runOwnership";
 import { RUN_RESTORE_LIMIT } from "../runRestore";
@@ -35,96 +34,6 @@ export function clipboardImageFiles(data: DataTransfer): File[] {
 
 export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & UseChatPanelStateOut & UseChatRunRecoveryOut & UseChatActionsOut) {
   const { refs, pushToast, requestCancellation, stopRef, tabKey, runControl, cancelWaitersRef, activeRunRef, cancelOperationRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, conversationIdRef, onTitleChange, historyOpen, setHistoryOpen, busy, restoreGenerationRef, isRestoreActive, updateConversationId, resetMessageHistory, setConversationError, setEditing, restoreConversationRuns, clearMessageHistory, setConversationRuns, stream, isLifecycleActive, deletedConversationIdsRef, setInput, setAtOpen, inputRef, setCompacting, restoreConversation, planMode, setPlanMode, compacting, setPermOpen, slashQuery, modelQuery, modelOptions, skillOptions, setRefs, setImages, pushAgentEvent, settleRestoredRun, runChannelRef, tabId, activeRun, takeoverState, active, runSequenceRef, setActiveRun, setBusy, anyAiBusy, beginRun, driveCancellation, bindings, reclaimKeyLabel, unconfirmCancellation } = p;
-
-  const openAgentTerminal = useCallback(
-    (tabId: string, entry: AgentRosterEntry) => {
-      const state = useUi.getState();
-      for (const workspace of state.workspaces) {
-        for (const pane of workspace.panes) {
-          const existing = pane.tabs.find((tab) => tab.tabId === tabId);
-          if (existing) {
-            state.setActiveWorkspace(workspace.id);
-            state.setActivePane(pane.id, workspace.id);
-            state.setActiveTab(existing.id);
-            return;
-          }
-        }
-      }
-      // No live view yet: resolve the owning session through the real backend
-      // tab lists (live first, then durable per session), then attach a
-      // terminal tab bound to that durable backend tab — never a new shell.
-      void (async () => {
-        try {
-          const live = await terminalApi.listLive();
-          const liveMatches = live.filter((tab) => tab.tabId === tabId);
-          if (liveMatches.length > 1) {
-            // Fail closed: ambiguous backend ownership never picks arbitrarily.
-            pushToast("error", t("终端 {handle} 匹配到多个会话，无法确定要打开哪个，请手动打开对应会话", { handle: entry.handle }));
-            return;
-          }
-          let sessionId = liveMatches[0]?.sessionId;
-          if (sessionId === undefined) {
-            // Probe durable tabs only on sessions that can answer (connected,
-            // durable-capable ssh/device), tolerating individual failures so
-            // one broken session never masks another session's hit.
-            const candidates = state.sessions.filter(
-              (session) =>
-                session.status === "connected" && (session.kind === "ssh" || session.kind === "device"),
-            );
-            const probed = await Promise.allSettled(
-              candidates.map(async (session) => {
-                const rows = await terminalApi.listDurable(session.id);
-                return rows.some((row) => row.id === tabId) ? session.id : undefined;
-              }),
-            );
-            const hits = probed
-              .filter((result): result is PromiseFulfilledResult<string | undefined> => result.status === "fulfilled")
-              .map((result) => result.value)
-              .filter((id): id is string => id !== undefined);
-            const failures = probed.length - probed.filter((result) => result.status === "fulfilled").length;
-            if (hits.length > 1) {
-              pushToast("error", t("终端 {handle} 匹配到多个会话，无法确定要打开哪个，请手动打开对应会话", { handle: entry.handle }));
-              return;
-            }
-            if (hits.length === 0) {
-              pushToast(
-                "error",
-                failures > 0
-                  ? t("无法定位子代理 {handle} 的终端会话：已搜索的会话均无匹配，另有 {failures} 个会话搜索失败", { handle: entry.handle, failures })
-                  : t("无法定位子代理 {handle} 的终端会话（可能已断开或退出），请刷新子代理列表", { handle: entry.handle }),
-              );
-              return;
-            }
-            sessionId = hits[0];
-          }
-          const session = state.sessions.find((item) => item.id === sessionId);
-          if (!session) {
-            pushToast("error", t("当前会话列表中无终端 {handle}，请刷新后重试", { handle: entry.handle }));
-            return;
-          }
-          const workspaceId = state.ensureWorkspace({
-            kind: "session",
-            sessionId: session.id,
-            assetId: session.assetId ?? undefined,
-            title: session.name,
-            assetKind: session.kind,
-          });
-          state.setActiveWorkspace(workspaceId);
-          state.addTab({
-            id: nextTabId(`term-${session.id}`),
-            kind: "terminal",
-            title: entry.handle,
-            sessionId: session.id,
-            tabId,
-            closable: true,
-          });
-        } catch (e) {
-          pushToast("error", t("未能打开终端：{value}", { value: describeError(e) }));
-        }
-      })();
-    },
-    [pushToast],
-  );
 
   const stop = () => {
     void requestCancellation(false);
@@ -664,7 +573,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
     }
   };
 
-  return { toggleHistory, newConversation, loadConversations, openConversation, deleteConversation, openAgentTerminal, stop, slashMenuOpen, slashItems, slashEmptyText, pickRef, onInputChange, onPaste, onPickImages, runTakeover };
+  return { toggleHistory, newConversation, loadConversations, openConversation, deleteConversation, stop, slashMenuOpen, slashItems, slashEmptyText, pickRef, onInputChange, onPaste, onPickImages, runTakeover };
 }
 
 export type UseChatAgentsAndHistoryOut = ReturnType<typeof useChatAgentsAndHistory>;

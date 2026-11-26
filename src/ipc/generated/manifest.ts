@@ -237,46 +237,6 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
-    "ai_roster_attach": {
-      scope: "ai-roster",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "struct{Handle string \"json:\\\"handle\\\"\"; JobID string \"json:\\\"jobId\\\"\"}", ts: "{\n  handle: string;\n  jobId: string;\n}" },
-      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterAttachmentDTO", ts: "RosterAttachmentDTO" },
-    },
-    "ai_roster_list": {
-      scope: "ai-roster",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "struct{ConversationID string \"json:\\\"conversationId\\\"\"}", ts: "{\n  conversationId: string;\n}" },
-      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterListEntry", ts: "RosterListEntry[]" },
-    },
-    "ai_roster_reconcile": {
-      scope: "ai-roster",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "struct{ConversationID string \"json:\\\"conversationId\\\"\"}", ts: "{\n  conversationId: string;\n}" },
-      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterReconcileReport", ts: "RosterReconcileReport" },
-    },
-    "ai_roster_release": {
-      scope: "ai-roster",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "struct{Handle string \"json:\\\"handle\\\"\"; CreatedAt int64 \"json:\\\"createdAt\\\"\"; Incarnation string \"json:\\\"incarnation\\\"\"}", ts: "{\n  handle: string;\n  createdAt: number;\n  incarnation: string;\n}" },
-      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterEntry", ts: "RosterEntry" },
-    },
-    "ai_roster_rename": {
-      scope: "ai-roster",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "struct{Handle string \"json:\\\"handle\\\"\"; Alias string \"json:\\\"alias\\\"\"; CreatedAt int64 \"json:\\\"createdAt\\\"\"; Incarnation string \"json:\\\"incarnation\\\"\"}", ts: "{\n  handle: string;\n  alias: string;\n  createdAt: number;\n  incarnation: string;\n}" },
-      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterEntry", ts: "RosterEntry" },
-    },
     "ai_run_events": {
       nested: false,
       channel: false,
@@ -3438,42 +3398,6 @@ export interface IPCCommandTypeMap {
   kinds: string[];
 };
     output: contractTypes.DeviceGrant;
-  };
-  "ai_roster_attach": {
-    input: {
-  handle: string;
-  jobId: string;
-};
-    output: contractTypes.RosterAttachmentDTO;
-  };
-  "ai_roster_list": {
-    input: {
-  conversationId: string;
-};
-    output: contractTypes.RosterListEntry[];
-  };
-  "ai_roster_reconcile": {
-    input: {
-  conversationId: string;
-};
-    output: contractTypes.RosterReconcileReport;
-  };
-  "ai_roster_release": {
-    input: {
-  handle: string;
-  createdAt: number;
-  incarnation: string;
-};
-    output: contractTypes.RosterEntry;
-  };
-  "ai_roster_rename": {
-    input: {
-  handle: string;
-  alias: string;
-  createdAt: number;
-  incarnation: string;
-};
-    output: contractTypes.RosterEntry;
   };
   "ai_run_history": {
     input: {
