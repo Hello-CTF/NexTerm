@@ -370,6 +370,25 @@ func TestRevokeClosesSession(t *testing.T) {
 	}
 }
 
+// RevokeAll ends every session, as when the owner becomes unavailable, and leaves the service accepting offers.
+func TestRevokeAllClosesSessionsAndKeepsServing(t *testing.T) {
+	f := newFixture(t)
+	f.svc.RevokeAll("idle")
+	l, _, _ := f.open(f.issue([]string{"terminal"}, grant.DefaultTTL, nil))
+	f.svc.RevokeAll(agent.P2PRevokeOwnerUnavailable)
+	select {
+	case <-l.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the leg survived RevokeAll")
+	}
+	if f.svc.Sessions() != 0 {
+		t.Fatal("a session survived RevokeAll")
+	}
+	if _, _, refused := f.open(f.issue([]string{"terminal"}, grant.DefaultTTL, nil)); refused != nil {
+		t.Fatalf("offer after RevokeAll refused: %+v", refused)
+	}
+}
+
 // Batches respect the endpoint's limits and carry one token per grant id; failed uploads are retried.
 func TestAuditBatching(t *testing.T) {
 	f := newFixture(t)

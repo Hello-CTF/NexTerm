@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/p2p/agentside"
@@ -227,6 +228,9 @@ type e2eRig struct {
 	legs    *legRecorder
 	svc     *agentside.Service
 	device  string
+	owner   *account.User
+	// revokes receives the reason of every p2p_revoke frame the agent reads, before the frame is applied.
+	revokes chan string
 }
 
 // newE2ERig starts the real fleet server, a real agent runtime with the agentside service, and a client path
@@ -249,6 +253,9 @@ type e2eOptions struct {
 	// relayConfig replaces GET /relay/config: "404" stands for a server without the relay, "disabled" for one
 	// that turned it off.
 	relayConfig string
+	// dropP2PRevoke makes the agent record p2p_revoke frames without applying them, so a test sees what the
+	// agent does on its own.
+	dropP2PRevoke bool
 }
 
 // forceCarrier makes dial configurations of h use exactly carrier.
@@ -327,6 +334,16 @@ func newE2ERigWith(t testing.TB, options e2eOptions) *e2eRig {
 		t.Fatal(err)
 	}
 	svc := agentside.Install(runtime, agentside.Options{LegConfig: loopbackLeg, AuditInterval: 100 * time.Millisecond, Logger: logger.With("side", "agentside")})
+	revokes := make(chan string, 16)
+	runtime.SetP2PRevokeHandler(func(grantID, reason string) {
+		select {
+		case revokes <- reason:
+		default:
+		}
+		if !options.dropP2PRevoke {
+			svc.Revoke(grantID, reason)
+		}
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- runtime.Run(ctx) }()
@@ -348,7 +365,7 @@ func newE2ERigWith(t testing.TB, options e2eOptions) *e2eRig {
 		}
 		svc.Wait()
 	})
-	rig := &e2eRig{f: f, harness: harness, backend: backend, manager: manager, legs: legs, svc: svc, device: deviceID}
+	rig := &e2eRig{f: f, harness: harness, backend: backend, manager: manager, legs: legs, svc: svc, device: deviceID, owner: owner, revokes: revokes}
 	rig.waitFor(t, "device key bound and agent online", func() bool {
 		state, err := backend.DeviceKeyState(context.Background(), deviceID)
 		return err == nil && state == agent.P2PKeyStateBound && f.service.registry.AgentOnline(deviceID)
@@ -487,4 +504,61 @@ func TestP2PRuntimeEndToEnd(t *testing.T) {
 		}
 		return false
 	})
+}
+
+// Disabling the owner of a device with a live direct terminal revokes the session on the control channel and
+// the agent closes it at once, instead of keeping it until the grant expires.
+func TestP2PRuntimeOwnerDisabledClosesDirectSession(t *testing.T) {
+	rig := newE2ERig(t)
+	conn, err := rig.manager.Dial(context.Background(), rig.device, agent.PurposeTerminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	rig.waitDirect(t, 1)
+	if err := rig.f.accounts.SetUserDisabled(context.Background(), rig.owner.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case reason := <-rig.revokes:
+		if reason != p2pRevokeOwner {
+			t.Fatalf("p2p_revoke reason = %q", reason)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the agent received no p2p_revoke for the disabled owner")
+	}
+	rig.waitFor(t, "agent session closed", func() bool { return rig.svc.Sessions() == 0 })
+}
+
+// Revoking the device kicks its control channel without p2p_revoke frames; the agent still closes its direct
+// sessions before it stops.
+func TestP2PRuntimeDeviceRevokeClosesDirectSession(t *testing.T) {
+	rig := newE2ERig(t)
+	conn, err := rig.manager.Dial(context.Background(), rig.device, agent.PurposeTerminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	rig.waitDirect(t, 1)
+	identity := &account.Identity{UserID: rig.owner.ID, Role: rig.owner.Role, State: rig.owner.State}
+	if err := rig.f.service.RevokeDevice(context.Background(), identity, rig.device); err != nil {
+		t.Fatal(err)
+	}
+	rig.waitFor(t, "agent session closed", func() bool { return rig.svc.Sessions() == 0 })
+}
+
+// The agent closes its direct sessions itself when the owner becomes unavailable, even when the p2p_revoke
+// frames do not take effect (here: dropped), so the kick into owner wait alone ends them.
+func TestP2PRuntimeOwnerWaitClosesDirectSessionWithoutRevokeFrames(t *testing.T) {
+	rig := newE2ERigWith(t, e2eOptions{dropP2PRevoke: true})
+	conn, err := rig.manager.Dial(context.Background(), rig.device, agent.PurposeTerminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	rig.waitDirect(t, 1)
+	if err := rig.f.accounts.SetUserDisabled(context.Background(), rig.owner.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	rig.waitFor(t, "agent session closed", func() bool { return rig.svc.Sessions() == 0 })
 }

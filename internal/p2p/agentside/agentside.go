@@ -116,6 +116,7 @@ func Install(runtime *agent.Runtime, opts Options) *Service {
 	s := New(runtime, opts)
 	runtime.RegisterPurposeHandler(agent.PurposeP2PSignal, s.ServeSignal)
 	runtime.SetP2PRevokeHandler(s.Revoke)
+	runtime.SetP2PRevokeAllHandler(s.RevokeAll)
 	return s
 }
 
@@ -207,6 +208,27 @@ func (s *Service) Revoke(grantID, reason string) {
 	}
 	s.logger.Info("direct session revoked", "grant_id", grantID, "reason", reason)
 	sess.end(signal.CloseRevoked)
+}
+
+// RevokeAll closes every live direct session the way Revoke closes one, for a runtime whose owner became
+// unavailable or whose device was revoked: the clients resume their streams on the relay, where the server
+// decides again. The service keeps accepting offers, so direct connections return once the server grants them.
+func (s *Service) RevokeAll(reason string) {
+	s.mu.Lock()
+	sessions := make([]*session, 0, len(s.sessions))
+	for _, sess := range s.sessions {
+		sessions = append(sessions, sess)
+	}
+	s.mu.Unlock()
+	if len(sessions) == 0 {
+		return
+	}
+	s.logger.Info("direct sessions revoked", "sessions", len(sessions), "reason", reason)
+	var ended sync.WaitGroup
+	for _, sess := range sessions {
+		ended.Go(func() { sess.end(signal.CloseRevoked) })
+	}
+	ended.Wait()
 }
 
 func (s *Service) loadConfig(ctx context.Context) (*agent.P2PConfig, agent.P2PEndpointInfo, error) {

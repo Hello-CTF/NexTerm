@@ -171,6 +171,8 @@ type Runtime struct {
 	purposeHandlers map[string]PurposeHandler
 	// p2pRevoke receives p2p_revoke control frames (guarded by mu); nil until direct connections are wired.
 	p2pRevoke func(grantID, reason string)
+	// p2pRevokeAll closes every direct session (guarded by mu); nil until direct connections are wired.
+	p2pRevokeAll func(reason string)
 	// streams holds the rstream streams of stream bridges, so a RESUME on a later bridge finds its stream.
 	streams *rstream.Server
 	// claimed hands a stream accepted on a stream bridge to the purpose handler that claims the bridge; keyed by
@@ -691,6 +693,7 @@ func (r *Runtime) confirmUpgradeHealthy() {
 func (r *Runtime) revoke() {
 	r.revokeOnce.Do(func() {
 		r.logger.Warn("device revoked by server; agent stopping")
+		r.revokeP2PSessions(P2PRevokeDeviceRevoked)
 		close(r.revokeCh)
 	})
 }

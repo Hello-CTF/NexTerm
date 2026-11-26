@@ -39,6 +39,10 @@ const (
 	P2PKeyStateBound   = "bound"
 	P2PKeyStatePending = "pending"
 
+	// Reasons the agent itself closes every direct session with.
+	P2PRevokeOwnerUnavailable = ErrorCodeOwnerUnavailable
+	P2PRevokeDeviceRevoked    = "device_revoked"
+
 	p2pKeyFile    = "p2p_key"
 	p2pKeyTimeout = 15 * time.Second
 )
@@ -221,6 +225,23 @@ func (r *Runtime) SetP2PRevokeHandler(handler func(grantID, reason string)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.p2pRevoke = handler
+}
+
+// SetP2PRevokeAllHandler installs the closer of every direct session, called when the owner account becomes
+// unavailable or the device is revoked, so no direct session outlives the control channel that vouched for it.
+func (r *Runtime) SetP2PRevokeAllHandler(handler func(reason string)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.p2pRevokeAll = handler
+}
+
+func (r *Runtime) revokeP2PSessions(reason string) {
+	r.mu.Lock()
+	handler := r.p2pRevokeAll
+	r.mu.Unlock()
+	if handler != nil {
+		handler(reason)
+	}
 }
 
 func (r *Runtime) handleP2PRevoke(grantID, reason string) {

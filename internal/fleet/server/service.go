@@ -666,12 +666,13 @@ func (s *Service) recheckDevice(ctx context.Context, deviceID string) error {
 
 // kickUserDevices closes the control channels and bridges of every device owned by a user that was just disabled or reset.
 func (s *Service) kickUserDevices(userID string) {
+	// The agent of a kicked channel only waits for its owner, so the direct sessions are revoked first.
+	s.revokeP2PGrantsNow(func(entry *activeGrant) bool { return entry.userID == userID }, p2pRevokeOwner)
 	userDevice := query.Use(s.db).UserDevice
 	rows, err := userDevice.WithContext(context.Background()).Where(userDevice.UserID.Eq(userID)).Find()
 	if err != nil {
 		return
 	}
-	s.revokeP2PGrants(func(entry *activeGrant) bool { return entry.userID == userID }, p2pRevokeOwner, false)
 	for _, row := range rows {
 		s.registry.kickDevice(row.ID, agent.ErrorCodeOwnerUnavailable)
 		s.deviceOffline(row.ID)

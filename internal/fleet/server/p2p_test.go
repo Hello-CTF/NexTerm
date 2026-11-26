@@ -427,6 +427,45 @@ func TestP2PRevokeOnLogoutOfOtherSessions(t *testing.T) {
 	}
 }
 
+// Disabling, resetting or deleting the owner kicks its devices into owner wait; the direct sessions granted to
+// the owner are revoked on the control channel before the kick, so they never outlive it.
+func TestP2PRevokeBeforeOwnerKick(t *testing.T) {
+	for _, block := range []struct {
+		name  string
+		apply func(*p2pFixture, *account.User) error
+	}{
+		{"disabled", func(f *p2pFixture, owner *account.User) error {
+			return f.accounts.SetUserDisabled(context.Background(), owner.ID, true)
+		}},
+		{"reset_required", func(f *p2pFixture, owner *account.User) error {
+			return f.accounts.AdminResetUser(context.Background(), owner.ID)
+		}},
+		{"deleted", func(f *p2pFixture, owner *account.User) error {
+			_, err := f.accounts.BeginDeleteUser(context.Background(), owner.ID)
+			return err
+		}},
+	} {
+		t.Run(block.name, func(t *testing.T) {
+			f := newP2PFixture(t, WithP2P(p2pTestSettings))
+			owner := f.createUser(t, "p2p-owner-"+block.name)
+			device := f.startP2PDevice(t, owner, "p2p-owner-box", "terminal", agent.PurposeP2PSignal)
+			issued := f.requestGrant(t, f.session(t, owner), device.id, newClientKey(t))
+			if issued.status != http.StatusOK {
+				t.Fatalf("grant: HTTP %d %v", issued.status, issued.body)
+			}
+			if err := block.apply(f, owner); err != nil {
+				t.Fatal(err)
+			}
+			if frame := readControlFrame(t, device.control); frame["type"] != "p2p_revoke" || frame["grant_id"] != issued.body["grant_id"] || frame["reason"] != p2pRevokeOwner {
+				t.Fatalf("first frame after the owner block = %v", frame)
+			}
+			if frame := readControlFrame(t, device.control); frame["type"] != "revoke" || frame["reason"] != agent.ErrorCodeOwnerUnavailable {
+				t.Fatalf("second frame after the owner block = %v", frame)
+			}
+		})
+	}
+}
+
 func TestP2PConfigEndpoints(t *testing.T) {
 	settings := p2pTestSettings
 	settings.STUNExternal = []agent.P2PEndpoint{{Host: "stun.example.net", Port: 3478}}

@@ -130,6 +130,17 @@ func (s *Service) revokeP2PGrants(match func(*activeGrant) bool, reason string, 
 	}
 }
 
+// revokeP2PGrantsNow drops the matching grants and sends their p2p_revoke frames before it returns, for a caller
+// that kicks the control channel next: an asynchronous push would find the channel already gone. The frames go
+// out in parallel, each bounded by pushP2PRevoke's write timeout.
+func (s *Service) revokeP2PGrantsNow(match func(*activeGrant) bool, reason string) {
+	var pushes sync.WaitGroup
+	for _, entry := range s.p2p.grants.take(match) {
+		pushes.Go(func() { s.registry.pushP2PRevoke(entry.deviceID, entry.id, reason) })
+	}
+	pushes.Wait()
+}
+
 // pushP2PRevoke sends p2p_revoke to the device control channel, only when the agent advertised CapabilityP2P:
 // an agent that predates the frame treats unknown control messages as fatal and would drop its channel.
 func (r *Registry) pushP2PRevoke(deviceID, grantID, reason string) bool {
