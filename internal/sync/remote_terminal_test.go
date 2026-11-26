@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	gosync "sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/rstream"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/coder/websocket"
 )
@@ -24,6 +26,14 @@ type bridgeWSFixture struct {
 	failNextDial atomic.Bool
 	sawCSRF      atomic.Bool
 	sawStream    atomic.Bool
+	sawResume    atomic.Bool
+
+	// streams, when set, makes the route answer stream requests as an rstream-capable agent behind the relay
+	// would: the stream header, then an echoing stream per OPEN.
+	streams *rstream.Server
+	mu      gosync.Mutex
+	bridges []*websocket.Conn
+	done    chan struct{}
 }
 
 func newBridgeWSFixture(t *testing.T) *bridgeWSFixture {
@@ -35,7 +45,8 @@ func newBridgeWSFixture(t *testing.T) *bridgeWSFixture {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	inner := &remoteAPIFixture{db: db, accounts: account.New(db.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key"))), mfaTickets: map[string]string{}}
-	fixture := &bridgeWSFixture{remoteAPIFixture: inner}
+	fixture := &bridgeWSFixture{remoteAPIFixture: inner, done: make(chan struct{})}
+	t.Cleanup(func() { close(fixture.done) })
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /auth/login", inner.serveLogin)
 	mux.HandleFunc("POST /auth/totp/login", inner.serveTOTPLogin)
@@ -54,6 +65,13 @@ func (f *bridgeWSFixture) serveBridge(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Query().Get("stream") == "1" {
 		f.sawStream.Store(true)
+	}
+	if r.URL.Query().Get("resume") == "1" {
+		f.sawResume.Store(true)
+	}
+	if f.streams != nil && r.URL.Query().Get("stream") == "1" {
+		f.serveStreamBridge(w, r)
+		return
 	}
 	if f.failNextDial.CompareAndSwap(true, false) {
 		writeSyncError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "设备已关闭终端访问"))
@@ -162,5 +180,71 @@ func TestDialDeviceBridgeWithoutSessionIs401(t *testing.T) {
 	}
 	if _, err := client.dialDeviceBridge(context.Background(), "dev-1", ""); !errors.Is(err, errSessionExpired) {
 		t.Fatalf("dial without login = %v, want errSessionExpired", err)
+	}
+}
+
+func (f *bridgeWSFixture) serveStreamBridge(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set(rstream.RelayStreamHeader, "1")
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		return
+	}
+	f.mu.Lock()
+	f.bridges = append(f.bridges, conn)
+	f.mu.Unlock()
+	carrier := websocket.NetConn(context.Background(), conn, websocket.MessageBinary)
+	stream, resumed, err := f.streams.Accept(r.Context(), carrier, r.URL.Query().Get("purpose"))
+	if err != nil {
+		return
+	}
+	if !resumed {
+		_, _ = io.Copy(stream, stream)
+		_ = stream.Close()
+		return
+	}
+	// The resumed stream is served by the handler of its first bridge; this carrier lives until it is replaced.
+	select {
+	case <-stream.(*rstream.Stream).Done():
+	case <-f.done:
+	}
+}
+
+// A server that answers with the stream header gets a resumable stream: after the websocket drops, the dialer
+// re-dials a resume bridge and the connection continues without losing bytes.
+func TestDialDeviceBridgeStreamResumesAfterDrop(t *testing.T) {
+	fixture := newBridgeWSFixture(t)
+	fixture.streams = rstream.NewServer(rstream.ServerOptions{})
+	t.Cleanup(func() { _ = fixture.streams.Close() })
+	fixture.createUser(t, "alice", "alice-pw-123")
+	instance := newTestInstance(t, true)
+	if _, err := instance.service.LinkSet(context.Background(), linkPatch(fixture.URL, "alice", "alice-pw-123")); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := instance.service.Remote().DialDeviceBridge(context.Background(), "dev-1", "forward")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, ok := conn.(*rstream.Stream); !ok {
+		t.Fatalf("bridge = %T, want a resumable stream", conn)
+	}
+	echo := func(message string) {
+		t.Helper()
+		if _, err := conn.Write([]byte(message)); err != nil {
+			t.Fatal(err)
+		}
+		got := make([]byte, len(message))
+		if _, err := io.ReadFull(conn, got); err != nil || string(got) != message {
+			t.Fatalf("echo = %q, %v; want %q", got, err, message)
+		}
+	}
+	echo("before the drop")
+	fixture.mu.Lock()
+	first := fixture.bridges[0]
+	fixture.mu.Unlock()
+	first.CloseNow()
+	echo("after the drop")
+	if !fixture.sawResume.Load() {
+		t.Fatal("the dialer did not re-dial a resume bridge")
 	}
 }

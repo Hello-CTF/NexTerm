@@ -59,12 +59,16 @@ func (p *RemoteProxy) DialDeviceBridge(ctx context.Context, deviceID, purpose st
 	return resumable, nil
 }
 
-// resumeDialError marks the refusals that a retry cannot fix (the device is gone, forbidden, or no longer able to
-// resume), so the stream ends and the session's own reconnect takes over; a disconnected server is retried.
+// resumeDialError marks the refusals that a retry cannot fix (the device is gone or forbidden, or its agent can no
+// longer resume), so the stream ends and the session's own reconnect takes over; anything else, such as a
+// disconnected server or a timeout, is retried within the stream's resume window.
 func resumeDialError(err error) error {
 	var ipcErr *ipc.Error
-	if errors.As(err, &ipcErr) && ipcErr.Code != ipc.CodeDisconnected {
-		return rstream.Permanent(err)
+	if errors.As(err, &ipcErr) {
+		switch ipcErr.Code {
+		case ipc.CodeForbidden, ipc.CodeNotFound, ipc.CodeBadParam, ipc.CodeUnsupported:
+			return rstream.Permanent(err)
+		}
 	}
 	return err
 }

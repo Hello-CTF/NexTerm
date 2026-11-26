@@ -47,6 +47,10 @@ const (
 	ResetDuplicateStream uint16 = 6
 	ResetTimeout         uint16 = 7
 	ResetShutdown        uint16 = 8
+	// ResetFinished answers a RESUME for a stream that completed: both directions were delivered.
+	ResetFinished uint16 = 9
+	// ResetClosed tells a peer that keeps sending that the application closed the stream.
+	ResetClosed uint16 = 10
 )
 
 // ResetError is a RESET received from, or sent to, the peer.

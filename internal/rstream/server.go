@@ -33,7 +33,10 @@ type Server struct {
 
 	mu      sync.Mutex
 	streams map[[sidSize]byte]*Stream
-	closed  bool
+	// finished remembers recently completed streams until the given time, so a client whose final ACK was lost
+	// learns that its stream completed instead of that it is unknown.
+	finished map[[sidSize]byte]time.Time
+	closed   bool
 }
 
 const defaultHandshakeTimeout = 30 * time.Second
@@ -58,7 +61,7 @@ func NewServer(opts ServerOptions) *Server {
 	if opts.Clock == nil {
 		opts.Clock = realClock{}
 	}
-	return &Server{opts: opts, streams: make(map[[sidSize]byte]*Stream)}
+	return &Server{opts: opts, streams: make(map[[sidSize]byte]*Stream), finished: make(map[[sidSize]byte]time.Time)}
 }
 
 // Accept reads the first frame of carrier, which was authorized for carrierPurpose ("" means terminal).
@@ -145,7 +148,11 @@ func (srv *Server) resume(conn net.Conn, reader *bufio.Reader, payload []byte, c
 	}
 	srv.mu.Lock()
 	s := srv.streams[resume.sid]
+	_, finished := srv.finished[resume.sid]
 	srv.mu.Unlock()
+	if s == nil && finished {
+		return nil, refuse(conn, ResetFinished, "stream finished")
+	}
 	if s == nil {
 		return nil, refuse(conn, ResetUnknownStream, "no such stream")
 	}
@@ -177,12 +184,23 @@ func (srv *Server) resume(conn net.Conn, reader *bufio.Reader, payload []byte, c
 	return s, nil
 }
 
+// remove forgets s; called with s.mu held once s ended.
 func (srv *Server) remove(s *Stream) {
 	srv.mu.Lock()
-	if srv.streams[s.sid] == s {
-		delete(srv.streams, s.sid)
+	defer srv.mu.Unlock()
+	if srv.streams[s.sid] != s {
+		return
 	}
-	srv.mu.Unlock()
+	delete(srv.streams, s.sid)
+	now := time.Now()
+	for sid, until := range srv.finished {
+		if now.After(until) {
+			delete(srv.finished, sid)
+		}
+	}
+	if errors.Is(s.err, errFinished) {
+		srv.finished[s.sid] = now.Add(srv.opts.Retain)
+	}
 }
 
 // Len reports how many streams the server holds, retained ones included.

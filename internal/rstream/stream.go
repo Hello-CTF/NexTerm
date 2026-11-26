@@ -125,6 +125,8 @@ type Stream struct {
 	resetText  string
 
 	localClosed bool
+	// discarded says bytes arrived after the application closed the stream.
+	discarded   bool
 	err         error
 	done        chan struct{}
 	lingerTimer Timer
@@ -145,7 +147,14 @@ func newStream(r role, purpose string, window int, budget *Budget, clock Clock, 
 
 // attachFirst installs the carrier a stream was opened or accepted on and starts the stream's goroutines.
 func (s *Stream) attachFirst(c *carrier) {
+	s.mu.Lock()
+	defer s.unlock()
 	s.local, s.remote = c.conn.LocalAddr(), c.conn.RemoteAddr()
+	if s.err != nil {
+		// Closed (the server shut down) before the stream started.
+		s.closeQueue = append(s.closeQueue, c.conn)
+		return
+	}
 	s.carrier = c
 	go s.writeLoop()
 	go s.readLoop(c)
@@ -195,14 +204,16 @@ func (s *Stream) attachLocked(c *carrier, peerRecv uint64) error {
 	if s.closing {
 		limit++
 	}
-	if peerRecv < s.acked || peerRecv > limit {
+	if peerRecv > limit {
 		return errProtocol
 	}
 	if old := s.carrier; old != nil {
 		s.closeQueue = append(s.closeQueue, old.conn)
 	}
 	s.carrier = c
-	s.sendNext = min(peerRecv, s.written)
+	// The peer may report a position below what it already acknowledged: its RESUME left before ACKs it sent on
+	// the old carrier, while the application kept reading. Nothing below the acknowledged point is re-sent.
+	s.sendNext = max(min(peerRecv, s.written), s.acked)
 	s.finSent = false
 	if s.closing && peerRecv == s.written+1 {
 		s.finDelivered = true
@@ -291,6 +302,15 @@ func (s *Stream) failLocked(err error, resetCode uint16) {
 		s.server.remove(s)
 	}
 	s.broadcastLocked()
+}
+
+// maybeAbortLocked resets a stream the application closed while the peer keeps sending into it: once this side's
+// bytes and FIN were delivered nothing is left to wait for, and the peer's writer learns at once instead of
+// after the linger time.
+func (s *Stream) maybeAbortLocked() {
+	if s.err == nil && s.localClosed && s.discarded && s.finDelivered && !s.peerFin {
+		s.failLocked(&ResetError{Code: ResetClosed, Message: "peer closed the stream"}, ResetClosed)
+	}
 }
 
 // maybeFinishLocked ends the stream once both directions are closed and acknowledged: this side's FIN reached
@@ -452,6 +472,7 @@ func (s *Stream) handleFrameLocked(kind byte, payload []byte) error {
 		data = data[s.received-offset:]
 		if s.localClosed {
 			s.consumed += uint64(len(data))
+			s.discarded = true
 		} else {
 			if len(s.recv)+len(data) > s.window {
 				return errProtocol
@@ -461,6 +482,7 @@ func (s *Stream) handleFrameLocked(kind byte, payload []byte) error {
 		s.received = end
 		s.scheduleAckLocked()
 		s.broadcastLocked()
+		s.maybeAbortLocked()
 	case frameAck:
 		consumed, received, err := parseAck(payload)
 		if err != nil {
@@ -481,9 +503,12 @@ func (s *Stream) handleFrameLocked(kind byte, payload []byte) error {
 			s.budget.release(n)
 			s.broadcastLocked()
 		}
+		// After a migration the peer may report bytes it got on the old carrier that this carrier would re-send.
+		s.sendNext = max(s.sendNext, min(received, s.written))
 		if s.closing && received == s.written+1 {
 			s.finDelivered = true
 		}
+		s.maybeAbortLocked()
 		s.maybeFinishLocked()
 	case frameFin:
 		offset, err := parseOffset(payload)

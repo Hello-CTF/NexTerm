@@ -189,6 +189,8 @@ func runSwitchScenario(t *testing.T, seed uint64) {
 				switch {
 				case result.err != nil && result.link.damaged():
 					// The test broke this carrier before its RESUME arrived; the client retries on another.
+				case isReset(result.err, ResetFinished):
+					// A resume after a loss that raced the stream's completion: the agent says it finished.
 				case result.err != nil:
 					resumes <- result.err
 				case !result.resumed || result.conn != agent:

@@ -139,7 +139,12 @@ func (s *Stream) migrate(ctx context.Context, conn net.Conn, onlyDetached bool) 
 		return nil
 	}
 	s.closeQueue = append(s.closeQueue, conn)
-	if reset, ok := errors.AsType[*ResetError](err); ok && reset.Code == ResetUnknownStream {
+	if reset, ok := errors.AsType[*ResetError](err); ok && reset.Code == ResetFinished && s.closing && s.peerFin {
+		// The agent completed the stream, which needs our FIN; only its final ACK did not reach us.
+		s.failLocked(errFinished, 0)
+		return errFinished
+	}
+	if reset, ok := errors.AsType[*ResetError](err); ok && (reset.Code == ResetUnknownStream || reset.Code == ResetFinished) {
 		err = fmt.Errorf("%w: %s", ErrUnknownStream, reset.Message)
 		s.failLocked(err, 0)
 		return err
@@ -232,7 +237,7 @@ func (s *Stream) resumeLoop(redial func(ctx context.Context) (net.Conn, error)) 
 		conn, err := redial(ctx)
 		if err == nil {
 			err = s.migrate(ctx, conn, true)
-			if err == nil || errors.Is(err, ErrUnknownStream) || errors.Is(err, errAttached) {
+			if err == nil || errors.Is(err, ErrUnknownStream) || errors.Is(err, errAttached) || errors.Is(err, errFinished) {
 				return
 			}
 		}

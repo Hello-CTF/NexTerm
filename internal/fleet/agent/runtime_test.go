@@ -1148,3 +1148,84 @@ func TestRuntimeStreamBridgeUnwrapsForPurposeHandler(t *testing.T) {
 	default:
 	}
 }
+
+// A terminal stream bridge is unwrapped and piped to the supervisor helper bridge, so helper bytes round-trip
+// through the stream; a carrier switch keeps the same helper pipe.
+func TestRuntimeTerminalStreamBridge(t *testing.T) {
+	server := newFakeFleetServer(t)
+	carriers := make(chan net.Conn, 4)
+	var requests atomic.Int32
+	requests.Store(1)
+	server.setWSControl(func(conn *websocket.Conn, hello HelloMessage) {
+		if err := writeServerMessage(conn, serverMessage{Type: "hello_ok"}); err != nil {
+			t.Error(err)
+			return
+		}
+		if hello.BridgeID != "" {
+			if !hello.SessionEnv {
+				t.Errorf("stream bridge hello without session_env: %+v", hello)
+			}
+			carriers <- websocket.NetConn(context.Background(), conn, websocket.MessageBinary)
+			<-t.Context().Done()
+			return
+		}
+		for i := int32(0); ; i++ {
+			for requests.Load() <= i {
+				if t.Context().Err() != nil {
+					return
+				}
+				time.Sleep(time.Millisecond)
+			}
+			if err := writeServerMessage(conn, serverMessage{Type: "bridge", BridgeID: fmt.Sprintf("bridge-t%d", i), Purpose: PurposeTerminal, Stream: true}); err != nil {
+				return
+			}
+		}
+	})
+	agentRuntime := newBridgeProbeRuntime(t, server)
+	var spawned atomic.Int32
+	agentRuntime.bridge = func(context.Context, string) (io.ReadWriteCloser, error) {
+		spawned.Add(1)
+		local, helper := net.Pipe()
+		go func() {
+			_, _ = io.Copy(helper, helper)
+			_ = helper.Close()
+		}()
+		return local, nil
+	}
+	runBridgeProbe(t, agentRuntime)
+
+	nextCarrier := func() net.Conn {
+		select {
+		case carrier := <-carriers:
+			return carrier
+		case <-time.After(15 * time.Second):
+			t.Fatal("terminal stream bridge was not dialed")
+			return nil
+		}
+	}
+	client, err := rstream.Open(context.Background(), nextCarrier(), "", rstream.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	// Not a supervisor frame: the stream filter passes such bytes through unchanged.
+	echo := func(message string) {
+		t.Helper()
+		if _, err := client.Write([]byte(message)); err != nil {
+			t.Fatal(err)
+		}
+		got := make([]byte, len(message))
+		if _, err := io.ReadFull(client, got); err != nil || string(got) != message {
+			t.Fatalf("helper echo = %q, %v; want %q", got, err, message)
+		}
+	}
+	echo("hello helper")
+	requests.Store(2)
+	if err := client.Migrate(context.Background(), nextCarrier()); err != nil {
+		t.Fatalf("resume terminal stream: %v", err)
+	}
+	echo("hello again")
+	if n := spawned.Load(); n != 1 {
+		t.Fatalf("helper bridge spawned %d times, want once across the carrier switch", n)
+	}
+}
