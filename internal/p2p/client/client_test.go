@@ -12,6 +12,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/p2p/legtest"
 	"github.com/Hello-CTF/NexTerm/internal/p2p/natprobe"
 	"github.com/Hello-CTF/NexTerm/internal/p2p/selector"
+	"github.com/Hello-CTF/NexTerm/internal/p2p/signal"
 )
 
 const transferSize = 2 << 20
@@ -88,6 +89,19 @@ func TestRevokeFallsBackToRelay(t *testing.T) {
 	if h.svc.Sessions() != 0 {
 		t.Fatal("the agent kept the revoked session")
 	}
+	_ = stream.Close()
+}
+
+// An agent refuses a re-attach to a session it already ended with "refused"; that says nothing about the
+// server's policy, so the fallback reports a failed connection.
+func TestRefusedReattachIsConnectFailed(t *testing.T) {
+	h := newHarness(t)
+	stream := h.dial("terminal")
+	h.waitDirect(1)
+	d := h.mgr.existing(testDevice)
+	d.post(event{kind: evSignalClose, sess: d.currentSession(), reason: signal.CloseRefused})
+	h.waitPath(PathRelay, ReasonConnectFailed)
+	h.waitDirect(0)
 	_ = stream.Close()
 }
 

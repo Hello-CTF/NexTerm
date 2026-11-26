@@ -522,10 +522,12 @@ func (d *device) legDown(sess *directSession) {
 	d.setStatus(PathRelay, reason, d.readMode())
 }
 
-// closeReason maps an agent close frame's reason to a status reason; "" when it says nothing specific.
+// closeReason maps an agent close frame's reason to a status reason; "" when it says nothing specific. After
+// establishment "refused" only answers a re-attach the agent will not take (most often to a session it already
+// ended) or ends a session the client replaced, so it says nothing about the server's policy.
 func closeReason(text string) string {
 	switch text {
-	case signal.CloseRevoked, signal.CloseRefused:
+	case signal.CloseRevoked:
 		return ReasonServerDisabled
 	}
 	return ""
