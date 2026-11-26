@@ -562,3 +562,47 @@ func TestLegRealUDPLoopback(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Closing a stream unblocks a Write stuck on a peer that stopped reading, so a carrier the rstream layer
+// abandons never holds its writer until the QUIC idle timeout.
+func TestStreamCloseUnblocksAStuckWrite(t *testing.T) {
+	c, a := pairConfigs(t)
+	c.LoopbackOnly, a.LoopbackOnly = true, true
+	cl, al := mustPair(t, c, a)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		s, err := al.AcceptStream(ctx)
+		if err == nil {
+			accepted <- s
+		}
+	}()
+	s, err := cl.OpenStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := <-accepted
+	defer peer.Close()
+	written := make(chan error, 1)
+	go func() {
+		// Far beyond the flow-control windows: the peer never reads, so this blocks.
+		_, err := s.Write(make([]byte, 64<<20))
+		written <- err
+	}()
+	time.Sleep(200 * time.Millisecond)
+	select {
+	case err := <-written:
+		t.Fatalf("write returned before close: %v", err)
+	default:
+	}
+	_ = s.Close()
+	select {
+	case err := <-written:
+		if err == nil {
+			t.Fatal("aborted write reported success")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("close did not unblock the write")
+	}
+}

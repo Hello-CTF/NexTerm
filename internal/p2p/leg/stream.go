@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -36,13 +37,17 @@ func readPreface(ctx context.Context, s *quic.Stream) error {
 
 // stream is one QUIC stream as a net.Conn. Close closes both directions:
 // pending writes are still delivered followed by FIN, and the peer's further
-// writes fail. CloseWrite sends FIN only, like a TCP half close.
+// writes fail. A Write still blocked when Close is called (the peer stopped
+// reading, or its path is gone) is aborted instead, as closing a TCP
+// connection would unblock it. CloseWrite sends FIN only, like a TCP half
+// close.
 type stream struct {
 	s         *quic.Stream
 	conn      *quic.Conn
 	closeOnce sync.Once
 	mu        sync.Mutex
 	closed    bool
+	writing   atomic.Int32
 }
 
 func newStream(s *quic.Stream, conn *quic.Conn) *stream {
@@ -67,7 +72,13 @@ func (s *stream) Write(p []byte) (int, error) {
 	if s.isClosed() {
 		return 0, net.ErrClosed
 	}
-	return s.s.Write(p)
+	s.writing.Add(1)
+	defer s.writing.Add(-1)
+	n, err := s.s.Write(p)
+	if err != nil && s.isClosed() {
+		return n, net.ErrClosed
+	}
+	return n, err
 }
 
 // CloseWrite sends FIN after any buffered data.
@@ -79,7 +90,11 @@ func (s *stream) Close() error {
 		s.mu.Lock()
 		s.closed = true
 		s.mu.Unlock()
-		err = s.s.Close()
+		if s.writing.Load() > 0 {
+			s.s.CancelWrite(0)
+		} else {
+			err = s.s.Close()
+		}
 		s.s.CancelRead(0)
 	})
 	return err

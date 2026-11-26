@@ -856,16 +856,20 @@ func (d *device) redial(ls *liveStream) func(ctx context.Context) (net.Conn, err
 		sess, direct := d.session, d.direct
 		d.mu.Unlock()
 		if direct && sess != nil && !sess.dead() {
-			if conn, err := sess.openStream(ctx, ls.purpose); err == nil {
+			conn, err := sess.openStream(ctx, ls.purpose)
+			if err == nil {
 				ls.path.Store(PathDirect)
 				return conn, nil
 			}
+			d.m.logger.Debug("direct resume carrier failed; using the relay", "device_id", d.id, "purpose", ls.purpose, "error", err)
 		}
 		conn, err := d.carrier(ctx, PathRelay, nil, ls.purpose)
-		if err == nil {
-			ls.path.Store(PathRelay)
+		if err != nil {
+			d.m.logger.Debug("relay resume carrier failed", "device_id", d.id, "purpose", ls.purpose, "error", err)
+			return nil, err
 		}
-		return conn, err
+		ls.path.Store(PathRelay)
+		return conn, nil
 	}
 }
 
