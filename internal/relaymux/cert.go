@@ -52,8 +52,8 @@ func LoadServerCertificate(certFile, keyFile string) (ServerCertificate, error) 
 }
 
 // LoadOrCreatePinnedCertificate returns a self-signed certificate over the Ed25519 key stored at keyPath,
-// creating the key (mode 0600) on first use, so the pin stays stable across restarts. The certificate itself
-// is regenerated on every start; only its key is pinned.
+// creating the key (mode 0600) on first use, so the pin stays stable across restarts; an empty keyPath uses a
+// fresh in-memory key. The certificate itself is regenerated on every start; only its key is pinned.
 func LoadOrCreatePinnedCertificate(keyPath string) (ServerCertificate, error) {
 	key, err := loadOrCreateKey(keyPath)
 	if err != nil {
@@ -90,6 +90,10 @@ func PinnedCertificate(key ed25519.PrivateKey) (ServerCertificate, error) {
 }
 
 func loadOrCreateKey(path string) (ed25519.PrivateKey, error) {
+	if path == "" {
+		_, key, err := ed25519.GenerateKey(rand.Reader)
+		return key, err
+	}
 	raw, err := os.ReadFile(path)
 	if err == nil {
 		block, _ := pem.Decode(raw)

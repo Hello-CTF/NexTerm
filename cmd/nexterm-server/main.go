@@ -266,6 +266,11 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 2
 	}
+	relaySettings, err := fleetserver.ParseRelayEnv(os.LookupEnv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+		return 2
+	}
 	broker := server.NewEventBroker()
 	if queueSize > 0 {
 		broker.QueueSize = queueSize
@@ -337,16 +342,16 @@ func run(args []string) int {
 			Accounts: accounts,
 			AuthOff:  invocation.Auth == core.AuthOff,
 			Events:   broker,
-		}, fleetserver.WithP2P(p2pSettings))
+		}, fleetserver.WithP2P(p2pSettings), fleetserver.WithRelay(relaySettings))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 			return 1
 		}
-		// Under --auth off every fleet route is closed, so no grant can be issued and STUN would only open a port.
+		// Under --auth off every fleet route is closed, so no grant can be issued and no relay session can
+		// authenticate: STUN and the QUIC relay would only open a port.
 		if invocation.Auth != core.AuthOff {
-			if stun := startSTUNServer(p2pSettings, fleetService, logger.Logger); stun != nil {
-				defer func() { _ = stun.Close() }()
-			}
+			stopUDP := startUDPServices(p2pSettings, relaySettings, fleetService, paths.DataDir, logger.Logger)
+			defer stopUDP()
 		}
 		previewService, err = sharing.New(sharing.Config{
 			DB:       application.Services.Store.GORM(),

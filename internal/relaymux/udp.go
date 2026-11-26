@@ -25,6 +25,9 @@ type UDPMux struct {
 	transport *quic.Transport
 	listener  *quic.Listener
 	stun      *stunPacketConn
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // ListenUDPMux takes ownership of conn and starts accepting QUIC relay sessions on it with tlsConfig.
@@ -61,15 +64,18 @@ func (m *UDPMux) Accept(ctx context.Context) (Session, error) {
 // stops only the STUN reader; the socket belongs to the mux.
 func (m *UDPMux) STUNConn() net.PacketConn { return m.stun }
 
-// Close stops the listener and the STUN reader and closes the socket with every session on it.
+// Close stops the listener and the STUN reader and closes the socket with every session on it. It is
+// idempotent.
 func (m *UDPMux) Close() error {
-	_ = m.stun.Close()
-	_ = m.listener.Close()
-	err := m.transport.Close()
-	if closeErr := m.conn.Close(); err == nil && !errors.Is(closeErr, net.ErrClosed) {
-		err = closeErr
-	}
-	return err
+	m.closeOnce.Do(func() {
+		_ = m.stun.Close()
+		_ = m.listener.Close()
+		m.closeErr = m.transport.Close()
+		if err := m.conn.Close(); m.closeErr == nil && !errors.Is(err, net.ErrClosed) {
+			m.closeErr = err
+		}
+	})
+	return m.closeErr
 }
 
 // stunPacketConn reads the non-QUIC datagrams of the mux and writes through the transport.
