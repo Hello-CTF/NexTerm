@@ -25,7 +25,7 @@ function natLabel(nat: string): string {
   }
 }
 
-function ms(value: number | undefined): string {
+function ms(value: number | null | undefined): string {
   return value == null ? "—" : `${Math.round(value)} ms`;
 }
 
