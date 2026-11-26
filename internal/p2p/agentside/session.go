@@ -112,7 +112,15 @@ func (sess *session) attachLeg(l leg.Leg) bool {
 	sess.leg = l
 	sess.mu.Unlock()
 	svc := sess.svc
+	svc.mu.Lock()
+	if svc.closed {
+		svc.mu.Unlock()
+		sess.end("")
+		return false
+	}
+	// Added under the service lock, so a Wait after Close sees every goroutine of a session it did not end.
 	svc.wg.Add(2)
+	svc.mu.Unlock()
 	go func() {
 		defer svc.wg.Done()
 		select {
