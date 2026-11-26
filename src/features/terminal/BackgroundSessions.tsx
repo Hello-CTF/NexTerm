@@ -749,9 +749,11 @@ export function BackgroundSessions({
           )}
         </td>
         <td className={`nx-bg-status ${STATUS_TONE_CLASS[status.tone]}`} title={status.hint} data-testid="background-status" data-state={t.state ?? "none"}>
-          <span className="inline-flex items-center gap-1.5">
+          <span className="inline-flex max-w-full items-center gap-1.5 whitespace-nowrap">
             <TabAttentionBadge badge={backgroundBadge(t, muted)} />
-            <span data-testid="background-status-label">{status.label}</span>
+            <span className="min-w-0 truncate" data-testid="background-status-label">
+              {status.label}
+            </span>
           </span>
         </td>
         <td className="nx-bg-size font-mono text-[11.5px] text-[var(--nx-fg)]" data-label={tr("大小")} data-testid="background-size">
@@ -834,7 +836,7 @@ export function BackgroundSessions({
         <table className="nx-table nx-table-cards nx-table-fixed nx-bg-sessions" data-testid="background-table">
           <colgroup>
             <col />
-            <col style={{ width: 88 }} />
+            <col style={{ width: 116 }} />
             <col style={{ width: 92 }} />
             <col style={{ width: 168 }} />
             <col style={{ width: 208 }} />
