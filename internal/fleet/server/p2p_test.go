@@ -468,6 +468,16 @@ func TestP2PConfigEndpoints(t *testing.T) {
 	if status, config := get("/fleet/p2p/config", "[2001:db8::1]:443", sessionHeader); status != http.StatusOK || config.STUN[0] != (agent.P2PEndpoint{Host: "2001:db8::1", Port: 3478}) {
 		t.Fatalf("IPv6 host config: HTTP %d %+v", status, config)
 	}
+	if !slices.Equal(config.STUNPorts, []int{3478, 5349}) {
+		t.Fatalf("stun_ports = %v", config.STUNPorts)
+	}
+	// A Host a reverse proxy rewrote to an internal name is never advertised; the bound ports still are.
+	for _, host := range []string{"127.0.0.1:8080", "[::1]:8080", "0.0.0.0", "10.0.0.5:80", "192.168.1.2", "172.17.0.2:8080", "[fd00::2]:80", "169.254.10.1", "[fe80::1]:80", "localhost:8080", "nexterm:8080", "nexterm"} {
+		status, config := get("/fleet/p2p/config", host, sessionHeader)
+		if status != http.StatusOK || !slices.Equal(config.STUN, []agent.P2PEndpoint{{Host: "stun.example.net", Port: 3478}}) || !slices.Equal(config.STUNPorts, []int{3478, 5349}) {
+			t.Fatalf("config for Host %q: HTTP %d stun %+v ports %v", host, status, config.STUN, config.STUNPorts)
+		}
+	}
 	if status, _ := get("/fleet/p2p/config", "nx.example.com", nil); status != http.StatusUnauthorized {
 		t.Fatalf("anonymous config: HTTP %d", status)
 	}

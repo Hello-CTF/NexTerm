@@ -193,6 +193,7 @@ func (s *Service) p2pConfig(r *http.Request) (agent.P2PConfig, error) {
 	config := agent.P2PConfig{
 		Enabled:   settings.Enabled,
 		STUN:      []agent.P2PEndpoint{},
+		STUNPorts: []int{},
 		TURN:      []agent.P2PEndpoint{},
 		GrantKeys: nil,
 		Timeouts:  agent.P2PTimeouts{GatherMS: p2pGatherMS, CheckMS: p2pCheckMS},
@@ -201,6 +202,7 @@ func (s *Service) p2pConfig(r *http.Request) (agent.P2PConfig, error) {
 		config.GrantKeys = []grant.PublicKey{}
 		return config, nil
 	}
+	config.STUNPorts = append([]int{}, ports...)
 	if len(settings.STUNAdvertise) > 0 {
 		config.STUN = append(config.STUN, settings.STUNAdvertise...)
 	} else if host := requestHostname(r); host != "" {
@@ -226,14 +228,16 @@ func appendEndpoint(endpoints []agent.P2PEndpoint, endpoint agent.P2PEndpoint) [
 	return append(endpoints, endpoint)
 }
 
-// requestHostname is the host name of the Host header without its port, IPv6 brackets removed.
+// requestHostname is the host name of the Host header without its port, IPv6 brackets removed. A name that only
+// makes sense inside the server's own network means a reverse proxy rewrote Host, so it yields "": clients then
+// pair their own server host name with the advertised stun_ports.
 func requestHostname(r *http.Request) string {
 	host := r.Host
 	if parsed, _, err := net.SplitHostPort(host); err == nil {
 		host = parsed
 	}
 	host = strings.Trim(host, "[]")
-	if !validSTUNHost(host) {
+	if !validSTUNHost(host) || !agent.PublicSTUNHost(host) {
 		return ""
 	}
 	return host

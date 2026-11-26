@@ -75,8 +75,11 @@ type P2PTimeouts struct {
 
 // P2PConfig is the GET /fleet/p2p/config and GET /agent/p2p/config body. TURN is always empty for now.
 type P2PConfig struct {
-	Enabled   bool              `json:"enabled"`
-	STUN      []P2PEndpoint     `json:"stun"`
+	Enabled bool          `json:"enabled"`
+	STUN    []P2PEndpoint `json:"stun"`
+	// STUNPorts are the UDP ports the server's built-in STUN responder listens on (empty when it is off), so a
+	// client or agent can pair them with the server host name it connects to when a proxy rewrote Host.
+	STUNPorts []int             `json:"stun_ports"`
 	TURN      []P2PEndpoint     `json:"turn"`
 	GrantKeys []grant.PublicKey `json:"grant_keys"`
 	Timeouts  P2PTimeouts       `json:"timeouts"`

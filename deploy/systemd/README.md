@@ -525,6 +525,16 @@ device of another account. The sync-only peer does none of this.
 
 The responder answers only Binding requests, rate limited per source IP, and
 relays no traffic. Open the listed UDP ports in the firewall to use it.
+
+Behind a reverse proxy (Caddy, nginx and similar): only the relay and the
+signaling go through the proxy, over HTTPS/WSS on 443. The direct QUIC
+connection runs peer to peer between the app and the agent on ephemeral UDP
+ports; it never uses 443 or HTTP/3 on the proxy. Open the STUN UDP port(s)
+directly to nexterm-server, and publish `3478/udp` when it runs in a
+container. Apps and agents pair the server host name they connect to with the
+listening STUN ports, so a proxy that rewrites the Host header does not need
+extra configuration; set `NEXTERM_STUN_ADVERTISE` when the public name
+resolves to a CDN or another host than nexterm-server.
 Device agents report their direct streams to the server after the fact, so
 the audit log can miss streams of an agent that was killed; disable direct
 connections where every stream must be recorded by the server.
