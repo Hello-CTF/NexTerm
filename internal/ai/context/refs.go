@@ -74,7 +74,7 @@ func (b *Builder) renderRef(ctx context.Context, ref RefSpec, readFile RefFileRe
 		if strings.TrimSpace(ref.Text) == "" {
 			return fmt.Sprintf("- %s (empty)\n", label)
 		}
-		return fmt.Sprintf("[Reference: command output %s]\n%s\n", label, truncateRunes(ref.Text, min(RefScreenRunes, budget), true))
+		return fmt.Sprintf("[Reference: terminal text %s]\n%s\n", label, truncateRunes(ref.Text, min(RefScreenRunes, budget), true))
 	case "asset":
 		if b.deps.Session == nil || ref.ID == "" {
 			return ""
