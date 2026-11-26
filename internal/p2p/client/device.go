@@ -44,6 +44,7 @@ const (
 	evSignalClose
 	evStreamGone
 	evIdle
+	evRaw
 )
 
 type event struct {
@@ -353,6 +354,11 @@ func (d *device) handle(ev event) {
 		if empty {
 			d.after(d.m.opts.IdleClose, event{kind: evIdle})
 		}
+	case evRaw:
+		if d.currentSession() == nil && !d.connecting {
+			d.failReason = ReasonDeviceUnsupported
+			d.setStatus(PathRelay, ReasonDeviceUnsupported, d.readMode())
+		}
 	case evIdle:
 		d.mu.Lock()
 		empty := len(d.streams) == 0
@@ -639,8 +645,10 @@ func (d *device) pingResult(ev event) {
 	if ev.sess == d.leaving {
 		return
 	}
+	// Only the cheap local checks run per ping; the proxy setting is checked when an attempt starts and on
+	// every other evaluation.
 	mode := d.readMode()
-	if reason := d.policyReason(mode); reason != "" {
+	if d.m.inBackground() {
 		d.evaluate()
 		return
 	}
@@ -710,6 +718,7 @@ func (d *device) renewed(ev event) {
 	}
 	d.renewFails = 0
 	ev.sess.setGrant(ev.grant)
+	d.scheduleGrant(ev.sess)
 	if sc := ev.sess.signal(); sc != nil {
 		go func() {
 			ctx, cancel := context.WithTimeout(d.ctx, 10*time.Second)
@@ -719,7 +728,6 @@ func (d *device) renewed(ev event) {
 	} else {
 		go d.reattach(ev.sess)
 	}
-	d.scheduleGrant(ev.sess)
 }
 
 func (d *device) renewFailed(ev event) {
@@ -883,6 +891,8 @@ func (d *device) dial(ctx context.Context, purpose string) (net.Conn, error) {
 		return nil, err
 	}
 	if !stream {
+		// The server or agent predates stream carriers, so this device cannot move streams to a direct leg.
+		d.post(event{kind: evRaw})
 		return conn, nil
 	}
 	resumable, err := rstream.Open(ctx, conn, purpose, d.m.opts.Stream)

@@ -252,12 +252,15 @@ func (m *Manager) Status(ctx context.Context, deviceID string) DevicePathStatus 
 
 // Diagnostics reports the device's measurements and policy.
 func (m *Manager) Diagnostics(ctx context.Context, deviceID string) DeviceP2PDiagnostics {
+	var diag DeviceP2PDiagnostics
 	if d := m.existing(deviceID); d != nil {
-		return d.diagnostics()
+		diag = d.diagnostics()
+	} else {
+		status := m.Status(ctx, deviceID)
+		diag = DeviceP2PDiagnostics{Status: status, LocalNAT: string(natprobe.Unknown), RemoteNAT: string(natprobe.Unknown), RecentSwitches: []PathSwitch{}}
+		diag.Policy.Mode = status.Mode
 	}
-	status := m.Status(ctx, deviceID)
-	diag := DeviceP2PDiagnostics{Status: status, LocalNAT: string(natprobe.Unknown), RemoteNAT: string(natprobe.Unknown), RecentSwitches: []PathSwitch{}}
-	diag.Policy.Mode = status.Mode
+	// The policy layers are read now, so a device that never tried (relay mode, proxy, background) reports them.
 	if config, err := m.loadConfig(ctx); err == nil {
 		diag.Policy.Server = config.Enabled
 	}

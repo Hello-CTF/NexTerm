@@ -266,6 +266,25 @@ func (h *harness) waitDirect(direct int) {
 	})
 }
 
+// tickUntil advances the fake clock a second at a time, giving the manager real time to react after each step,
+// until cond holds or limit of fake time passed.
+func (h *harness) tickUntil(what string, limit time.Duration, cond func() bool) {
+	h.t.Helper()
+	for elapsed := time.Duration(0); ; elapsed += time.Second {
+		deadline := time.Now().Add(20 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			if cond() {
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+		if elapsed > limit {
+			h.t.Fatalf("no %s after %s; status %+v", what, limit, h.mgr.Status(context.Background(), testDevice))
+		}
+		h.clock.Advance(time.Second)
+	}
+}
+
 // tickUntilDirect advances the fake clock a second at a time until direct streams run on the leg; a return
 // to direct needs the selector's healthy window, which only fake time can pass.
 func (h *harness) tickUntilDirect(direct int, limit time.Duration) {

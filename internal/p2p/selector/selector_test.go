@@ -174,6 +174,26 @@ func TestSelectorPinsAfterRepeatedDegradation(t *testing.T) {
 	}
 }
 
+// Leaving the leg for an outside reason is not a degradation: no pin, and the next leg returns after the
+// healthy window and the dwell.
+func TestSelectorLeave(t *testing.T) {
+	sel := &Selector{}
+	fast := 10 * time.Millisecond
+	run(t, sel, []step{{0, ok(fast), UseDirect, PathDirect}})
+	for i := range PinDegrades + 1 {
+		sel.Leave(epoch.Add(time.Duration(i) * time.Second))
+		if sel.Path() != PathRelay || sel.Reason() != "" || sel.Pinned(epoch.Add(time.Duration(i)*time.Second)) {
+			t.Fatalf("after leave %d: path %s reason %q pinned %v", i, sel.Path(), sel.Reason(), sel.Pinned(epoch))
+		}
+	}
+	at := time.Duration(PinDegrades) * time.Second
+	run(t, sel, []step{
+		{at + time.Second, ok(fast), Stay, PathRelay},
+		{at + time.Second + RecoverHealthy, ok(fast), Stay, PathRelay},
+		{at + MinDwell, ok(fast), UseDirect, PathDirect},
+	})
+}
+
 func TestParseMode(t *testing.T) {
 	for text, want := range map[string]Mode{"": ModeAuto, "auto": ModeAuto, "relay": ModeRelay, "direct": ModeDirect, "bogus": ModeAuto} {
 		if got := ParseMode(text); got != want {

@@ -183,6 +183,18 @@ func (s *Service) Sessions() int {
 	return len(s.sessions)
 }
 
+// SessionExpiry reports when the grant the live session of grantID currently holds expires.
+func (s *Service) SessionExpiry(grantID string) (time.Time, bool) {
+	s.mu.Lock()
+	sess := s.sessions[grantID]
+	s.mu.Unlock()
+	if sess == nil {
+		return time.Time{}, false
+	}
+	_, claims := sess.currentGrant()
+	return time.UnixMilli(claims.ExpiresAt), true
+}
+
 // Revoke closes the session of grantID at once: its streams' carriers fail, and the clients resume them on the
 // relay while the stream server retains them.
 func (s *Service) Revoke(grantID, reason string) {

@@ -34,7 +34,7 @@ type deviceModeStore struct {
 
 // row returns the kind=device asset row of deviceID the asset tree uses (the oldest live one), or nil.
 func (s deviceModeStore) row(ctx context.Context, deviceID string) (*store.AssetRow, map[string]any, error) {
-	rows, err := s.store.AssetList(ctx, false)
+	rows, err := s.store.AssetListKind(ctx, store.AssetKindDevice)
 	if err != nil {
 		return nil, nil, err
 	}

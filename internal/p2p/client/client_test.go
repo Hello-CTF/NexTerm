@@ -136,13 +136,20 @@ func TestDegradesOnLossAndRecovers(t *testing.T) {
 	h.waitDirect(1)
 	legs := h.net.Legs()
 	legs[len(legs)-1].SetLoss(0.2)
-	h.tick(selector.MinDwell + 2*time.Second)
-	h.waitPath(PathRelay, ReasonUnstable)
+	h.tickUntil("degradation", 2*selector.MinDwell, func() bool {
+		status := h.mgr.Status(context.Background(), testDevice)
+		return status.Path == PathRelay && status.Reason == ReasonUnstable
+	})
+	if elapsed := h.clock.Now().Sub(testEpoch); elapsed < selector.MinDwell {
+		t.Fatalf("degraded after %s, inside the dwell", elapsed)
+	}
 	h.waitDirect(0)
+	degradedAt := h.clock.Now()
 	legs[len(legs)-1].SetLoss(0)
-	h.tick(selector.MinDwell + selector.RecoverHealthy + 5*time.Second)
-	h.waitPath(PathDirect, "")
-	h.waitDirect(1)
+	h.tickUntilDirect(1, 2*(selector.MinDwell+selector.RecoverHealthy))
+	if back := h.clock.Now().Sub(degradedAt); back < selector.MinDwell {
+		t.Fatalf("returned after %s, inside the dwell", back)
+	}
 	_ = stream.Close()
 }
 
@@ -152,25 +159,30 @@ func TestGrantRenewalAndExpiry(t *testing.T) {
 	h := newHarness(t)
 	stream := h.dial("terminal")
 	h.waitDirect(1)
-	h.tick(4 * time.Minute)
-	h.mu.Lock()
-	grants := h.grants
-	h.mu.Unlock()
-	if grants < 2 {
-		t.Fatalf("grants issued = %d, want a renewal", grants)
+	original, ok := h.svc.SessionExpiry("grant-1")
+	if !ok {
+		t.Fatal("no agent session")
 	}
-	// The original grant expired and its grace passed: the agent must still hold the session through the
-	// renewed grant.
-	h.tick(3 * time.Minute)
+	// The renewal is due after renew_after_ms; the agent gets the new grant over the signal bridge.
+	h.clock.Advance(2 * time.Minute)
+	h.waitFor("renewed grant on the agent", func() bool {
+		expiry, ok := h.svc.SessionExpiry("grant-1")
+		return ok && expiry.After(original)
+	})
+	// The original grant expired and its grace passed: the agent still holds the session.
+	h.clock.Advance(original.Sub(h.clock.Now()) + agentside.Grace + time.Second)
 	if h.svc.Sessions() != 1 {
 		t.Fatal("the agent ended a renewed session")
 	}
 	if status := h.mgr.Status(context.Background(), testDevice); status.Path != PathDirect {
 		t.Fatalf("status after renewals = %+v", status)
 	}
+	// Renewals the server refuses move the streams to the relay before the grant runs out.
 	h.set(func(h *harness) { h.grantErr = errForbidden })
-	h.tick(grantTTLForTest)
-	h.waitPath(PathRelay, ReasonServerDisabled)
+	h.tickUntil("fallback after refused renewals", grantTTLForTest+time.Minute, func() bool {
+		status := h.mgr.Status(context.Background(), testDevice)
+		return status.Path == PathRelay && status.Reason == ReasonServerDisabled
+	})
 	h.waitDirect(0)
 	h.waitFor("agent session closed", func() bool { return h.svc.Sessions() == 0 })
 	_ = stream.Close()
@@ -236,18 +248,27 @@ func TestBackgroundAndNetworkChange(t *testing.T) {
 // With every STUN server unreachable the probe reports blocked, the attempt is host-only, and the relay stream
 // works meanwhile.
 func TestUnreachableSTUNIsHostOnly(t *testing.T) {
+	release := make(chan struct{})
+	probed := make(chan time.Duration, 1)
 	h := newHarness(t, func(h *harness) {
 		h.stun = []agent.P2PEndpoint{{Host: "127.0.0.1", Port: 9}, {Host: "127.0.0.1", Port: 19}}
-		h.probe = defaultProbe
+		h.probe = func(ctx context.Context, servers []string) natprobe.Mapping {
+			<-release
+			started := time.Now()
+			mapping := defaultProbe(ctx, servers)
+			probed <- time.Since(started)
+			return mapping
+		}
 	})
 	h.net.SetFail(errors.New("host candidates only"))
-	started := time.Now()
+	// The relay stream works while the probe has not even started.
 	stream := h.dial("terminal")
 	tr := startTransfer(t, stream, 64<<10)
 	tr.write(t, 0, 64<<10)
 	tr.finish(t)
-	if elapsed := time.Since(started); elapsed > natprobe.DefaultTimeout {
-		t.Fatalf("the relay stream took %s, it must not wait for the probe", elapsed)
+	close(release)
+	if took := <-probed; took > natprobe.DefaultTimeout+2*time.Second {
+		t.Fatalf("the probe of unreachable servers took %s, more than its %s timeout", took, natprobe.DefaultTimeout)
 	}
 	h.waitFor("host-only attempt", func() bool { dials, _ := h.net.Dials(); return dials > 0 })
 	_, configs := h.net.Dials()
@@ -256,9 +277,6 @@ func TestUnreachableSTUNIsHostOnly(t *testing.T) {
 	}
 	if !slices.Equal(configs[0].STUN, []string{"127.0.0.1:9", "127.0.0.1:19"}) {
 		t.Fatalf("STUN = %v", configs[0].STUN)
-	}
-	if elapsed := time.Since(started); elapsed > natprobe.DefaultTimeout+time.Second {
-		t.Fatalf("the probe took %s, more than its timeout", elapsed)
 	}
 	h.waitPath(PathRelay, ReasonConnectFailed)
 	diag := h.mgr.Diagnostics(context.Background(), testDevice)
