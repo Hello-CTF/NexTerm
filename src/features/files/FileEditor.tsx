@@ -151,6 +151,8 @@ function isVersionConflict(error: unknown): boolean {
   return code === "conflict" && !!detail && typeof detail === "object" && (detail as { reason?: unknown }).reason === "changed";
 }
 
+type ReviewConflict = "changed" | "dirty" | "unknown";
+
 export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorProps) {
   const qc = useQueryClient();
   const pushToast = useUi((state) => state.pushToast);
@@ -200,7 +202,8 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const merge = useRef(new Compartment()).current;
   // An AI change shown as a diff against what the file was before it. conflict says why its per-change revert is
   // unavailable: the file changed after the AI wrote it, or the editor held unsaved edits when the review opened.
-  const [review, setReview] = useState<{ before: string; conflict: "changed" | "dirty" | null } | null>(null);
+  // A created file (empty before) is shown without reverts: reverting it would write an empty file, not remove it.
+  const [review, setReview] = useState<{ before: string; conflict: ReviewConflict | null } | null>(null);
   const reviewRef = useRef(review);
   reviewRef.current = review;
   const [comments, setComments] = useState<LineComment[]>([]);
@@ -618,6 +621,8 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     }
   };
   saveRef.current = () => void save();
+  const saveNowRef = useRef(save);
+  saveNowRef.current = save;
 
   // checkDisk reads the file again after the host reported a change, or after a save was refused because of one.
   // An unchanged editor takes the new content in place; one with unsaved edits asks first.
@@ -708,9 +713,9 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
                 button.textContent = t("撤销此处");
                 button.dataset.reviewRevert = "";
                 button.onmousedown = (event) => {
-                  if (event.button !== 0 || reviewRef.current?.conflict || saveInFlightRef.current) return;
+                  if (event.button !== 0 || !reviewCanWrite()) return;
                   action(event);
-                  void saveReviewRevert();
+                  void saveNowRef.current();
                 };
                 return button;
               }
@@ -720,25 +725,19 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     });
   };
 
-  const markReviewConflict = (view: EditorView) => {
+  // reviewCanWrite says whether a revert can be saved right now; a revert the save would refuse is not applied.
+  const reviewCanWrite = () => {
+    const { sessionId: currentSession, path: currentPath } = locatorRef.current;
+    return !!reviewRef.current && !reviewRef.current.conflict && !saveInFlightRef.current && !fileEditorRenamePending(currentSession, currentPath);
+  };
+
+  const markReviewConflict = (view: EditorView, conflict: ReviewConflict = "changed") => {
     const current = reviewRef.current;
     if (!current || current.conflict) return;
-    const next = { ...current, conflict: "changed" as const };
+    const next = { ...current, conflict };
     reviewRef.current = next;
     setReview(next);
     void applyMerge(view, current.before, false);
-  };
-
-  // saveReviewRevert writes a reverted change through save(), which replaces only the version the editor read.
-  // Without a known host version that write would be unconditional, so it is refused and the review stops reverting.
-  const saveReviewRevert = async () => {
-    const view = viewRef.current;
-    if (!view) return;
-    if (!(await versionRef.current)) {
-      markReviewConflict(view);
-      return;
-    }
-    await save();
   };
 
   beginReviewRef.current = () => {
@@ -746,12 +745,25 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     if (!view) return;
     const request = takeFileReview(locatorRef.current.sessionId, locatorRef.current.path);
     if (!request) return;
-    const conflict: "changed" | "dirty" | null = dirtyRef.current ? "dirty" : originalRef.current !== request.after ? "changed" : null;
+    const conflict: ReviewConflict | null = dirtyRef.current ? "dirty" : originalRef.current !== request.after ? "changed" : null;
     const next = { before: request.before, conflict };
     reviewRef.current = next;
     setReview(next);
     setComments([]);
-    void applyMerge(view, request.before, conflict === null);
+    if (conflict || request.before === "") {
+      void applyMerge(view, request.before, false);
+      return;
+    }
+    // A revert is written through save(), which replaces only the host version the editor read. Without a known
+    // version that write would be unconditional, so the review stays view-only.
+    void versionRef.current.then((version) => {
+      if (reviewRef.current !== next || viewRef.current !== view) return;
+      if (!version) {
+        markReviewConflict(view, "unknown");
+        return;
+      }
+      void applyMerge(view, request.before, true);
+    });
   };
   useEffect(() => subscribeFileReview(() => beginReviewRef.current()), []);
 
@@ -762,12 +774,17 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     viewRef.current?.dispatch({ effects: merge.reconfigure([]) });
   };
 
-  const restoreAll = () => {
+  const restoreAll = async () => {
     const view = viewRef.current;
     const current = reviewRef.current;
-    if (!view || !current || current.conflict || saveInFlightRef.current) return;
+    if (!view || !current || current.before === "" || !reviewCanWrite()) return;
+    if (!(await versionRef.current)) {
+      markReviewConflict(view, "unknown");
+      return;
+    }
+    if (viewRef.current !== view || reviewRef.current !== current || !reviewCanWrite()) return;
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: current.before }, userEvent: "revert" });
-    void saveReviewRevert();
+    void saveNowRef.current();
   };
 
   // A host change the editor could not take in place also ends per-change reverts.
@@ -939,11 +956,11 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         {
           kind: "item",
           label: t("剪切"),
-          disabled: !selected,
+          disabled: !selected || view.state.readOnly,
           onSelect: () => {
             void copyText(selected).then(
               () => {
-                if (viewRef.current === view) view.dispatch({ changes: { from: range.from, to: range.to, insert: "" } });
+                if (viewRef.current === view && !view.state.readOnly) view.dispatch({ changes: { from: range.from, to: range.to, insert: "" } });
               },
               (error) => pushToast("error", t("复制失败：{value}", { value: describeError(error) })),
             );
@@ -952,10 +969,11 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         {
           kind: "item",
           label: t("粘贴"),
+          disabled: view.state.readOnly,
           onSelect: () => {
             void readText().then(
               (text) => {
-                if (viewRef.current !== view || !text) return;
+                if (viewRef.current !== view || !text || view.state.readOnly) return;
                 view.dispatch(view.state.replaceSelection(text));
                 view.focus();
               },
@@ -1247,12 +1265,14 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
             <span className={`min-w-0 flex-1 ${review.conflict ? "text-amber-300" : ""}`} role={review.conflict ? "alert" : undefined}>
               {review.conflict === "changed"
                 ? t("文件在 AI 修改后又有变化，只能查看差异，不能逐处撤销。")
-                : review.conflict === "dirty"
-                  ? t("编辑器中有未保存的改动，只能查看差异；保存或放弃改动后重新打开。")
-                  : t("AI 修改的差异")}
+                : review.conflict === "unknown"
+                  ? t("无法确认主机上的文件版本，只能查看差异。")
+                  : review.conflict === "dirty"
+                    ? t("编辑器中有未保存的改动，只能查看差异；保存或放弃改动后重新打开。")
+                    : t("AI 修改的差异")}
             </span>
             {!review.conflict && review.before !== "" && (
-              <button className="nx-btn nx-btn-sm" disabled={saving} onClick={restoreAll}>
+              <button className="nx-btn nx-btn-sm" disabled={saving} onClick={() => void restoreAll()}>
                 {t("全部恢复")}
               </button>
             )}

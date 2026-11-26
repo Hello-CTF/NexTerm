@@ -53,8 +53,8 @@ function decoded(base64: string): string {
 
 let mounted: MountedView | undefined;
 
-async function mountReview(): Promise<EditorView> {
-  requestFileReview("s", PATH, { before: BEFORE, after: AFTER });
+async function mountReview(before = BEFORE): Promise<EditorView> {
+  requestFileReview("s", PATH, { before, after: AFTER });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   mounted = mount(createElement(QueryClientProvider, { client }, createElement(FileEditor, { sessionId: "s", path: PATH })));
   await waitFor(() => expect(mounted!.container.querySelector('[data-testid="ai-change-review"]')).not.toBeNull());
@@ -139,6 +139,41 @@ describe("FileEditor reviews an AI change", () => {
     expect(revertButtons()).toHaveLength(0);
     expect(barButton("全部恢复")).toBeUndefined();
     expect(mocks.write).not.toHaveBeenCalled();
+  });
+
+  it("withdraws the reverts and writes once when the host refuses a revert because the file changed", async () => {
+    await mountReview();
+    await waitFor(() => expect(revertButtons()).toHaveLength(2));
+    mocks.write.mockRejectedValueOnce({ code: "conflict", detail: { reason: "changed" } });
+    disk = "name: app\nport: 7000\nworkers: 2\nlog: debug\n";
+    pressRevert(revertButtons()[0]);
+    await waitFor(() => expect(reviewBar().dataset.conflict).toBe("changed"));
+    await waitFor(() => expect(mounted!.container.querySelector('[data-testid="file-disk-change"]')?.getAttribute("data-kind")).toBe("conflict"));
+    expect(revertButtons()).toHaveLength(0);
+    expect(barButton("全部恢复")).toBeUndefined();
+    expect(mocks.write).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no revert for a file the AI created, since reverting would leave an empty file", async () => {
+    await mountReview("");
+    await waitFor(() => expect(mounted!.container.querySelector(".cm-changedLine, .cm-insertedLine")).not.toBeNull());
+    expect(revertButtons()).toHaveLength(0);
+    expect(barButton("全部恢复")).toBeUndefined();
+    expect(reviewBar().dataset.conflict).toBeUndefined();
+  });
+
+  it("keeps cut and paste from editing the document during a review", async () => {
+    await mountReview();
+    await waitFor(() => expect(revertButtons()).toHaveLength(2));
+    act(() => {
+      mounted!.container
+        .querySelector<HTMLElement>(".cm-content")!
+        .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    });
+    const item = (label: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>("[role='menuitem']")].find((el) => el.textContent?.includes(label))!;
+    expect(item("剪切").disabled).toBe(true);
+    expect(item("粘贴").disabled).toBe(true);
   });
 
   it("collects line comments into one composer message with file:line anchors and a file reference", async () => {
