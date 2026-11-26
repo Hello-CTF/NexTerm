@@ -209,23 +209,25 @@ describe("AiSidebar agent production mounting", () => {
     view = null;
   });
 
-  it("hides the background tasks button while there is nothing to manage", async () => {
+  it("keeps the background tasks button without a count while there is nothing to manage", async () => {
     mocks.call.mockImplementation((cmd: string) => {
       if (cmd === "ai_roster_list") return Promise.resolve([]);
       if (cmd === "ai_watch_list") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected call: ${cmd}`));
     });
-    expect(view!.container.querySelector('button[aria-label^="后台任务"]')).toBeNull();
+    expect(tasksButton(view!).getAttribute("aria-label")).toBe("后台任务");
     await send(view!, "Question A");
     emit({ type: "done", answer: "Answer A" });
+    await flushUntil(() => mocks.call.mock.calls.some(([cmd]) => cmd === "ai_roster_list"));
     await flush();
-    expect(view!.container.querySelector('button[aria-label^="后台任务"]')).toBeNull();
+    expect(tasksButton(view!).getAttribute("aria-label")).toBe("后台任务");
+    expect(tasksButton(view!).querySelector(".nx-badge")).toBeNull();
   });
 
   it("shows the button with a count once the conversation has a live sub-agent", async () => {
     await send(view!, "Question A");
     emit({ type: "done", answer: "Answer A" });
-    await flushUntil(() => view!.container.querySelector('button[aria-label^="后台任务"]') !== null);
+    await flushUntil(() => /共 \d+ 项/.test(tasksButton(view!).getAttribute("aria-label") ?? ""));
     await flush();
     expect(tasksButton(view!).getAttribute("aria-label")).toBe("后台任务，共 1 项");
     expect(tasksButton(view!).getAttribute("aria-expanded")).toBe("false");
@@ -234,7 +236,7 @@ describe("AiSidebar agent production mounting", () => {
   it("mounts the sub-agent section on real IPC after a conversation starts", async () => {
     await send(view!, "Question A");
     emit({ type: "done", answer: "Answer A" });
-    await flushUntil(() => view!.container.querySelector('button[aria-label^="后台任务"]') !== null);
+    await flushUntil(() => /共 \d+ 项/.test(tasksButton(view!).getAttribute("aria-label") ?? ""));
 
     click(agentButton(view!));
     await flushUntil(() => view!.container.querySelector('[data-handle="build"]') !== null);
@@ -339,7 +341,7 @@ describe("AiSidebar agent production mounting", () => {
 
     await send(view!, "Question A");
     emit({ type: "done", answer: "Answer A" });
-    await flushUntil(() => view!.container.querySelector('button[aria-label^="后台任务"]') !== null);
+    await flushUntil(() => /共 \d+ 项/.test(tasksButton(view!).getAttribute("aria-label") ?? ""));
     click(watchButton(view!));
     await flushUntil(() => textOf(view!).includes("ready-watch"));
     expect(mocks.call).toHaveBeenCalledWith("ai_watch_list");
@@ -366,6 +368,8 @@ describe("AiSidebar agent production mounting", () => {
     });
     await flushUntil(() => textOf(view!).includes("需要你确认"));
     click(agentButton(view!));
+    // Opening the panel also loads the schedule section; settle it inside act.
+    await flush();
     await flushUntil(() => mocks.rosterProps !== null);
     const api = mocks.rosterProps!.api;
 

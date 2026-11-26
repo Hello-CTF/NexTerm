@@ -649,6 +649,7 @@ type Dependencies struct {
 	Audit                       func(context.Context, AuditEntry) error
 	Reminders                   ReminderScheduler
 	Subscriptions               TerminalSubscriber
+	ScheduledJobs               ScheduledJobService
 	Notify                      func(context.Context, string) error
 	Grants                      *guard.Grants
 	// TakeoverActive reports whether a terminal takeover currently owns the

@@ -61,6 +61,7 @@ const (
 	KindDBWrite      Kind = "db_write"
 	KindShellPipe    Kind = "shell_pipe"
 	KindSchedule     Kind = "schedule"
+	KindCronJob      Kind = "cron_job" // recurring jobs; a remembered reminder approval does not cover them
 	KindPermission   Kind = "perm"
 	KindDanger       Kind = "danger"
 	// KindProgram marks a command NexTerm has no rule for; Ruling.Programs names
@@ -252,6 +253,7 @@ var kindLabels = map[Kind]string{
 	KindDBWrite:      "数据库写入",
 	KindShellPipe:    "管道执行",
 	KindSchedule:     "定时提醒",
+	KindCronJob:      "定时任务",
 	KindPermission:   "权限与属主变更",
 	"shell_history":  "读取 shell 历史",
 }

@@ -82,6 +82,12 @@ export function toolLabel(tool: string): string {
       return t("定时提醒");
     case "terminal_subscribe":
       return t("订阅终端事件");
+    case "schedule_job":
+      return t("创建定时任务");
+    case "list_scheduled_jobs":
+      return t("查看定时任务");
+    case "cancel_scheduled_job":
+      return t("删除定时任务");
     case "shell_history":
       return t("读取 shell 历史");
     case "find_files":

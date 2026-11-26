@@ -433,12 +433,104 @@ func (s reminderScheduler) ScheduleReminder(ctx context.Context, conversationID 
 	return tools.ScheduledReminder{ID: job.ID, At: job.NextRunAt}, nil
 }
 
-func reminderName(message string) string {
-	runes := []rune(message)
-	if len(runes) > 40 {
-		message = string(runes[:40]) + "…"
+// scheduledJobService lets the AI manage the recurring jobs of its own
+// conversation through the same scheduler, scope check and executor as the
+// cron panel.
+type scheduledJobService struct {
+	scheduler      *cron.Scheduler
+	conversations  conversationLookup
+	scopeValidator agent.ScopeValidator
+	now            func() time.Time
+}
+
+var errScheduledJobTooFrequent = errors.New("定时任务的执行间隔不能短于 1 分钟")
+
+func (s scheduledJobService) ValidateSchedule(_ context.Context, expression, timezone string) error {
+	if cron.OneShot(expression) {
+		return fmt.Errorf("%w: %q", cron.ErrInvalidSchedule, expression)
 	}
-	return "提醒：" + message
+	schedule, err := cron.LoadSchedule(expression, timezone)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	if s.now != nil {
+		now = s.now()
+	}
+	first, ok := schedule.Next(now)
+	if !ok {
+		return fmt.Errorf("%w: no occurrence within ten years", cron.ErrInvalidSchedule)
+	}
+	if second, ok := schedule.Next(first); ok && second.Sub(first) < tools.ScheduledJobMinInterval {
+		return errScheduledJobTooFrequent
+	}
+	return nil
+}
+
+func (s scheduledJobService) CreateJob(ctx context.Context, conversationID string, spec tools.ScheduledJobSpec) (tools.ScheduledJob, error) {
+	if _, err := validatedConversationScope(ctx, s.conversations, s.scopeValidator, conversationID); err != nil {
+		return tools.ScheduledJob{}, err
+	}
+	if err := s.ValidateSchedule(ctx, spec.Schedule, spec.Timezone); err != nil {
+		return tools.ScheduledJob{}, err
+	}
+	name := spec.Name
+	if name == "" {
+		name = truncatedJobName(spec.Prompt)
+	}
+	job, err := s.scheduler.Register(ctx, cron.Registration{
+		SessionID: conversationID,
+		Name:      name,
+		Prompt:    spec.Prompt,
+		Schedule:  spec.Schedule,
+		Timezone:  spec.Timezone,
+	})
+	if err != nil {
+		return tools.ScheduledJob{}, err
+	}
+	return scheduledJobView(job), nil
+}
+
+func (s scheduledJobService) ListJobs(ctx context.Context, conversationID string) ([]tools.ScheduledJob, error) {
+	jobs, err := s.scheduler.List(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]tools.ScheduledJob, 0, len(jobs))
+	for _, job := range jobs {
+		result = append(result, scheduledJobView(job))
+	}
+	return result, nil
+}
+
+func (s scheduledJobService) CancelJob(ctx context.Context, conversationID, jobID string) (tools.ScheduledJob, error) {
+	job, err := s.scheduler.Get(ctx, conversationID, jobID)
+	if err != nil {
+		return tools.ScheduledJob{}, err
+	}
+	if err := s.scheduler.Unregister(ctx, conversationID, jobID); err != nil {
+		return tools.ScheduledJob{}, err
+	}
+	return scheduledJobView(job), nil
+}
+
+func scheduledJobView(job cron.Job) tools.ScheduledJob {
+	return tools.ScheduledJob{
+		ID: job.ID, Name: job.Name, Prompt: job.Prompt, Schedule: job.Schedule, Timezone: job.Timezone,
+		Enabled: job.Enabled, Running: job.Running(), NextRunAt: job.NextRunAt, LastRunAt: job.LastRunAt, LastError: job.LastError,
+	}
+}
+
+func truncatedJobName(text string) string {
+	runes := []rune(text)
+	if len(runes) > 40 {
+		return string(runes[:40]) + "…"
+	}
+	return text
+}
+
+func reminderName(message string) string {
+	return "提醒：" + truncatedJobName(message)
 }
 
 func cronModule(runtime *cronRuntime) Module {

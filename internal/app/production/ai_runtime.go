@@ -858,6 +858,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	toolsDeps.AssetConnector = newAITerminalAssetConnector(services)
 	toolsDeps.Reminders = reminderScheduler{scheduler: cronScheduler, conversations: services.Store, scopeValidator: productionScopeValidator(services)}
 	toolsDeps.Subscriptions = lazySubscriber{services: services}
+	toolsDeps.ScheduledJobs = scheduledJobService{scheduler: cronScheduler, conversations: services.Store, scopeValidator: productionScopeValidator(services)}
 	// The skills backend is the single services-level manager: the ai-skills
 	// IPC module registers the same instance, so the load_skill tool and the
 	// IPC surface share per-owner state instead of splitting two managers. A

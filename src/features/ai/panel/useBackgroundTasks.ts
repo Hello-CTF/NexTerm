@@ -40,8 +40,8 @@ async function loadCounts(
 // useBackgroundTasks counts what the AI left running for this conversation
 // (scheduled jobs, armed watches, live sub-agents). It refreshes when the
 // conversation changes, when a run settles, when the panel toggles, and on a
-// slow poll while the chat is visible, so the top bar only offers the panel
-// when there is something to manage.
+// slow poll while the chat is visible, so the top bar badge shows how many
+// items there are to manage; the entry itself is always offered.
 export function useBackgroundTasks(p: AiChatBase & UseChatRunSessionOut & UseChatActionsOut) {
   const { conversationId, watchOwner, agentRosterApi, busy, rightOpen, active } = p;
   const [counts, setCounts] = useState<BackgroundTaskCounts>(EMPTY);

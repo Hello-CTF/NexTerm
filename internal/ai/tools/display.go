@@ -42,6 +42,18 @@ func DisplayCall(call Call) string {
 	switch call.Name {
 	case FindFilesTool, GrepFilesTool, SearchFilesAlias:
 		return DisplaySearchCall(call)
+	case ScheduleJobTool:
+		var args ScheduleJobArgs
+		_ = json.Unmarshal(call.Args, &args)
+		timezone := strings.TrimSpace(args.Timezone)
+		if timezone == "" {
+			timezone = "UTC"
+		}
+		return compactDisplay(call.Name + " " + displayValue(strings.TrimSpace(args.Schedule)) + " (" + timezone + ") " + displayValue(strings.TrimSpace(args.Prompt)))
+	case CancelScheduledJobTool:
+		var args CancelScheduledJobArgs
+		_ = json.Unmarshal(call.Args, &args)
+		return compactDisplay(call.Name + " " + displayValue(strings.TrimSpace(args.JobID)))
 	}
 	var fields map[string]any
 	_ = json.Unmarshal(call.Args, &fields)

@@ -281,6 +281,11 @@ func (s *Schedule) matchesDay(value time.Time) bool {
 	}
 }
 
+// LoadSchedule parses the expression in the named IANA timezone (UTC when empty), as Register does.
+func LoadSchedule(expression, timezone string) (*Schedule, error) {
+	return loadSchedule(strings.TrimSpace(expression), strings.TrimSpace(timezone))
+}
+
 func loadSchedule(expression, timezone string) (*Schedule, error) {
 	if timezone == "" {
 		timezone = "UTC"

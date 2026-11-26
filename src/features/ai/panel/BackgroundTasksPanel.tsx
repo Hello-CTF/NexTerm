@@ -7,10 +7,12 @@ import type { AiChatCtx } from "./aiChatCtx";
 import { t } from "../../../i18n";
 
 // BackgroundTasksPanel is the one place to see and stop what the AI left
-// running: scheduled jobs, armed watches and sub-agent terminals. A section is
-// hidden while it has never had anything, but once shown it stays for as long
-// as the panel is open, so finishing or cancelling the last item shows an
-// empty state instead of making the section (or the panel) vanish.
+// running: scheduled jobs, armed watches and sub-agent terminals. The schedule
+// section is always shown for a conversation, so its jobs can be created and
+// managed before the AI has made any. The watch and agent sections are hidden
+// while they have never had anything, but once shown they stay for as long as
+// the panel is open, so finishing or cancelling the last item shows an empty
+// state instead of making the section vanish.
 export function BackgroundTasksPanel({ ctx }: { ctx: AiChatCtx }) {
   const {
     conversationId,
@@ -24,18 +26,17 @@ export function BackgroundTasksPanel({ ctx }: { ctx: AiChatCtx }) {
     watchOwner,
   } = ctx;
   const refresh = () => void refreshBackgroundTasks();
-  const [shown, setShown] = useState({ cron: false, watch: false, agents: false });
+  const [shown, setShown] = useState({ watch: false, agents: false });
   useEffect(() => {
     setShown((prev) => {
       const next = {
-        cron: prev.cron || backgroundTasks.cron > 0,
         watch: prev.watch || backgroundTasks.watch > 0,
         agents: prev.agents || backgroundTasks.agents > 0,
       };
-      return next.cron === prev.cron && next.watch === prev.watch && next.agents === prev.agents ? prev : next;
+      return next.watch === prev.watch && next.agents === prev.agents ? prev : next;
     });
   }, [backgroundTasks]);
-  const showCron = (shown.cron || backgroundTasks.cron > 0) && Boolean(conversationId);
+  const showCron = Boolean(conversationId);
   const showWatch = shown.watch || backgroundTasks.watch > 0;
   const showAgents = (shown.agents || backgroundTasks.agents > 0) && Boolean(conversationId) && Boolean(agentRosterApi);
   return (
