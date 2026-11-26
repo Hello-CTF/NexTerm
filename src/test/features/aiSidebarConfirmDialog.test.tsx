@@ -280,6 +280,31 @@ describe("AiSidebar permission request dialogs", () => {
     });
   });
 
+  it("reports a confirmation the backend failed to accept and replays the pending state", async () => {
+    mocks.confirm.mockRejectedValueOnce(new Error("网络中断"));
+    await sendAndEmit([
+      { type: "toolCall", id: "call-f", name: "write_file", display: "write_file", args: {} },
+      {
+        type: "confirmRequired",
+        id: "call-f",
+        tool: "write_file",
+        args: { path: "/var/log/app.log" },
+        risk: "needs_confirm",
+        rendered: "write_file /var/log/app.log",
+        rulePattern: "/var/log/**",
+        permanentScope: "写入 /var/log/** 下的文件",
+        confirmationNonce: "n-f",
+        requestId: "req-f",
+        attempt: 1,
+      },
+    ]);
+    click(permanentButton() as HTMLButtonElement);
+    await flush();
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("网络中断"));
+    expect(mocks.hitlSnapshot).toHaveBeenCalled();
+  });
+
   const writeConfirm = (id: string) => [
     { type: "toolCall", id, name: "write_file", display: "write_file", args: {} },
     {
