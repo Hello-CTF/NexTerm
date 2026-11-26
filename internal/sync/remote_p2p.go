@@ -88,7 +88,10 @@ func (p *RemoteProxy) DialDeviceSignal(ctx context.Context, deviceID string) (ne
 	}
 	var conn net.Conn
 	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
-		dialed, err := client.dialDeviceBridge(ctx, deviceID, agent.PurposeP2PSignal)
+		dialed, _, err := p.service.engine.dialDevice(ctx, client, deviceID, agent.PurposeP2PSignal, false, false, func(ctx context.Context) (net.Conn, bool, error) {
+			conn, err := client.dialDeviceBridge(ctx, deviceID, agent.PurposeP2PSignal)
+			return conn, false, err
+		})
 		if err != nil {
 			return err
 		}

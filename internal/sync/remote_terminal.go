@@ -13,6 +13,8 @@ import (
 	urlpkg "net/url"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/relaymux"
+	"github.com/Hello-CTF/NexTerm/internal/relaymux/relayclient"
 	"github.com/Hello-CTF/NexTerm/internal/rstream"
 	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
@@ -81,7 +83,9 @@ func (p *RemoteProxy) dialDeviceBridgeCarrier(ctx context.Context, deviceID, pur
 		stream bool
 	)
 	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
-		dialed, carriesStream, err := client.dialDeviceBridgeStream(ctx, deviceID, purpose, resume)
+		dialed, carriesStream, err := p.service.engine.dialDevice(ctx, client, deviceID, purpose, true, resume, func(ctx context.Context) (net.Conn, bool, error) {
+			return client.dialDeviceBridgeStream(ctx, deviceID, purpose, resume)
+		})
 		if err != nil {
 			return err
 		}
@@ -268,16 +272,74 @@ func (c *remoteClient) dialRemoteWSResponse(ctx context.Context, path, endpoint 
 // wsUpgradeError maps a failed WS endpoint upgrade HTTP response to ipc.Error: 401 triggers
 // remoteCall's re-login, other statuses preferentially pass through the server rpcErr final text.
 func wsUpgradeError(response *http.Response, endpoint string) error {
-	if response.StatusCode == http.StatusUnauthorized {
-		return errSessionExpired
-	}
 	var failure struct {
 		Error *ipc.Error `json:"error"`
 	}
-	if body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20)); err == nil {
-		if json.Unmarshal(body, &failure) == nil && failure.Error != nil {
-			return ipc.NewError(failure.Error.Code, failure.Error.Message)
+	if response.StatusCode != http.StatusUnauthorized {
+		if body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20)); err == nil {
+			_ = json.Unmarshal(body, &failure)
 		}
 	}
-	return ipc.NewError(ipc.CodeDisconnected, fmt.Sprintf("%s暂不可用（HTTP %d）", endpoint, response.StatusCode))
+	return endpointRefusal(response.StatusCode, failure.Error, endpoint)
+}
+
+// endpointRefusal maps a refused WS endpoint upgrade or relay stream to ipc.Error: 401 triggers remoteCall's
+// re-login, a server error code passes through with its final text, anything else reads as the endpoint being
+// unavailable.
+func endpointRefusal(status int, rpcErr *ipc.Error, endpoint string) error {
+	if status == http.StatusUnauthorized {
+		return errSessionExpired
+	}
+	if rpcErr != nil {
+		return ipc.NewError(rpcErr.Code, rpcErr.Message)
+	}
+	return ipc.NewError(ipc.CodeDisconnected, fmt.Sprintf("%s暂不可用（HTTP %d）", endpoint, status))
+}
+
+// relaySession describes client's login to the relay dialer, with the TLS and proxy settings of its API.
+func (c *remoteClient) relaySession() relayclient.Session {
+	return relayclient.Session{
+		BaseURL:   c.base,
+		Transport: c.httpClient().Transport,
+		Insecure:  c.insecure,
+		Proxied:   c.proxied(),
+		Token:     c.cookieToken,
+	}
+}
+
+// proxied reports whether the API goes through a proxy, manual or from the environment.
+func (c *remoteClient) proxied() bool {
+	if c.proxy.Enabled() {
+		return true
+	}
+	request, err := http.NewRequest(http.MethodGet, c.base, nil)
+	if err != nil {
+		return false
+	}
+	proxy, err := http.ProxyFromEnvironment(request)
+	return err == nil && proxy != nil
+}
+
+// dialDevice opens a device stream over the server's multiplexed relay, or through legacy (the per-operation
+// bridge) when the server offers no usable relay. Refusals map to the errors the bridge upgrade gives.
+func (e *Engine) dialDevice(ctx context.Context, client *remoteClient, deviceID, purpose string, stream, resume bool, legacy func(context.Context) (net.Conn, bool, error)) (net.Conn, bool, error) {
+	conn, carriesStream, err := e.relay.DialDevice(ctx, client.relaySession(), deviceID, purpose, stream, resume, legacy)
+	if err == nil {
+		return conn, carriesStream, nil
+	}
+	if errors.Is(err, relayclient.ErrSessionExpired) {
+		return nil, false, errSessionExpired
+	}
+	if reply, refused := relaymux.Refused(err); refused {
+		var rpcErr *ipc.Error
+		if reply.Code != "" {
+			rpcErr = ipc.NewError(ipc.Code(reply.Code), reply.Message)
+		}
+		return nil, false, endpointRefusal(reply.Status, rpcErr, "远端设备桥")
+	}
+	var ipcErr *ipc.Error
+	if errors.As(err, &ipcErr) || errors.Is(err, errSessionExpired) || ctx.Err() != nil {
+		return nil, false, err
+	}
+	return nil, false, ipc.WrapError(ipc.CodeDisconnected, "无法连接远端设备桥: "+err.Error(), err)
 }

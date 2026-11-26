@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/relaymux/relayclient"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
@@ -228,6 +229,9 @@ type Engine struct {
 	// pendingRounds counts the rounds an object has waited for a dependency.
 	pendingMu     sync.Mutex
 	pendingRounds map[string]int
+
+	// relay carries device streams over the server's multiplexed relay when it offers one.
+	relay *relayclient.Dialer
 }
 
 func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog.Logger) *Engine {
@@ -237,6 +241,7 @@ func NewEngine(database *store.Store, credentialVault *vault.Vault, logger *slog
 	return &Engine{
 		store: database, vault: credentialVault, logger: logger, pending: map[string]*pendingLinkLogin{},
 		transcriptCache: map[string]transcriptCacheEntry{}, aiShared: true,
+		relay: relayclient.New(relayclient.Options{}),
 	}
 }
 
@@ -507,6 +512,7 @@ func (e *Engine) resetSession() {
 		e.session = nil
 	}
 	e.pending = map[string]*pendingLinkLogin{}
+	e.relay.Reset()
 }
 
 // remoteWaitTarget returns the logged-in session's client and the head this
