@@ -11,6 +11,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/realip"
+	"github.com/Hello-CTF/NexTerm/internal/relaymux"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
@@ -45,19 +46,7 @@ func writeFleetJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func writeFleetFailure(w http.ResponseWriter, err error) {
-	normalized := ipc.NormalizeError(err)
-	status := http.StatusInternalServerError
-	switch normalized.Code {
-	case ipc.CodeBadParam:
-		status = http.StatusBadRequest
-	case ipc.CodeForbidden, codeOwnerUnavailable:
-		// owner_unavailable stays 403 so agents that predate it keep treating the response as a denial.
-		status = http.StatusForbidden
-	case ipc.CodeNotFound:
-		status = http.StatusNotFound
-	case ipc.CodeDisconnected:
-		status = http.StatusServiceUnavailable
-	}
+	status, normalized := fleetFailureStatus(err)
 	writeFleetJSON(w, status, ipc.Failure(normalized))
 }
 
@@ -103,6 +92,8 @@ var fleetRoutePatterns = []string{
 	"GET /agent/p2p/config",
 	"POST /agent/p2p/key",
 	"POST /agent/p2p/audit",
+	"GET /relay/config",
+	"GET /relay/ws",
 }
 
 // Handler returns the standalone HTTP entry for fleet device management; under --auth=off all routes get 403.
@@ -175,6 +166,11 @@ func (s *Service) mountRoutes(mux routeRegistrar) {
 	session("GET /share/devices/{id}/terminal", s.serveShareTerminalOpen)
 
 	s.mountP2PRoutes(mux)
+
+	// Multiplexed relay: the config route accepts a session or a device credential; the websocket carrier
+	// authenticates each session in-band with its Hello, like /ws/device.
+	mux.HandleFunc("GET "+relaymux.ConfigPath, s.serveRelayConfig)
+	mux.HandleFunc("GET "+relaymux.WSPath, s.serveRelayWS)
 }
 
 // fleetGuard enforces the --auth=off hard boundary (fleet depends on attributable identity; everything is closed when off),

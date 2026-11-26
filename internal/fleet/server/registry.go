@@ -62,6 +62,10 @@ type Registry struct {
 	controls map[string]*controlChannel
 	pending  map[string]*pendingBridge
 	bridges  map[string]*wsConn
+
+	// onKick runs after a device was kicked, with its revoke reason, so channels kept outside the registry
+	// (the relay links) close with it.
+	onKick func(deviceID, reason string)
 }
 
 func NewRegistry() *Registry {
@@ -206,6 +210,9 @@ func (r *Registry) kickDevice(deviceID, reason string) {
 	}
 	for _, conn := range bridges {
 		_ = conn.Close()
+	}
+	if r.onKick != nil {
+		r.onKick(deviceID, reason)
 	}
 }
 

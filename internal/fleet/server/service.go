@@ -106,6 +106,9 @@ type Service struct {
 
 	// p2p holds the direct-connection settings, signing keys and live grants.
 	p2p *p2pService
+
+	// relay holds the multiplexed relay's settings and live links.
+	relay *relayService
 }
 
 type Option func(*Service)
@@ -155,7 +158,9 @@ func New(config Config, options ...Option) (*Service, error) {
 		shareRevalidateInterval: defaultShareRevalidateInterval,
 		bridges:                 newBridgeSessions(config.Accounts.CheckSession),
 		p2p:                     newP2PService(),
+		relay:                   newRelayService(),
 	}
+	s.registry.onKick = s.relay.kickAgent
 	sharingService, err := sharing.New(sharing.Config{DB: config.DB, Accounts: config.Accounts},
 		sharing.WithAgentProbe(func(ctx context.Context, deviceID string) error {
 			if !s.registry.AgentOnline(deviceID) {
@@ -1379,5 +1384,6 @@ func (s *Service) SetCurrentURL(ctx context.Context, deviceID, url, reason strin
 // Close disconnects all device control channels and bridges (service shutdown).
 func (s *Service) Close() error {
 	s.registry.Close()
+	s.relay.close()
 	return nil
 }
