@@ -29,6 +29,15 @@ describe("structured history mapping", () => {
     expect(items[1]).toMatchObject({ text: "历史回答", attempt: null });
   });
 
+  it("marks the trigger note of a terminal event run so it is not shown as user input", () => {
+    const items = historyToItems(state, [
+      msg("user", { role: "user", content: "我输入的", jobId: "j0" }),
+      msg("user", { role: "user", content: "[NexTerm terminal event] ...", jobId: "j1", source: "event" }),
+    ]);
+    expect(items[0]).not.toHaveProperty("event");
+    expect(items[1]).toMatchObject({ role: "user", event: true, jobId: "j1" });
+  });
+
   it("restores the saved reasoning before the turn it belongs to", () => {
     const items = historyToItems(state, [
       msg("user", { role: "user", content: "看下负载" }),

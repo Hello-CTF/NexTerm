@@ -39,6 +39,15 @@ export const ChatBubble = memo(function ChatBubble({
   // readOnly shows a saved conversation without its actions (edit, retry, plan approval), as in the AI workbench.
   readOnly?: boolean;
 }) {
+  if (item.role === "user" && item.event) {
+    return (
+      <div className="flex items-center gap-1.5 text-[11px] text-neutral-500" data-testid="ai-event-trigger">
+        <span className="h-px flex-1 bg-neutral-800" />
+        <span title={item.text}>{t("由终端事件触发的运行")}</span>
+        <span className="h-px flex-1 bg-neutral-800" />
+      </div>
+    );
+  }
   if (item.role === "user") {
     const { refs, body } = splitUserRefs(item.text);
     return (

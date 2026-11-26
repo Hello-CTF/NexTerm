@@ -80,6 +80,8 @@ export function toolLabel(tool: string): string {
       return t("Redis 命令");
     case "send_reminder":
       return t("定时提醒");
+    case "terminal_subscribe":
+      return t("订阅终端事件");
     case "shell_history":
       return t("读取 shell 历史");
     case "find_files":

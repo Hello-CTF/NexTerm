@@ -435,6 +435,9 @@ type AgentWatchFireParams struct {
 	EventKind        string
 	EventJSON        string
 	Now              int64
+	// StateSinceNS, when non-zero, records the fired terminal state's start
+	// so the same state never fires the watch again.
+	StateSinceNS int64
 }
 
 // AgentWatchFire transitions an armed watch to matched and inserts the outbox
@@ -507,23 +510,30 @@ func (s *Store) AgentWatchFire(ctx context.Context, params AgentWatchFireParams)
 			return fmt.Errorf("agent watch %s anchor %d < %d: %w", params.WatchID, params.AnchorSeq, watch.AnchorSeq, ErrAgentWatchConflict)
 		}
 		fireSeq := watch.FireSeq + 1
+		updates := map[string]any{
+			"status":       AgentWatchStatusMatched,
+			"anchor_seq":   params.AnchorSeq,
+			"carry_blob":   carry,
+			"context_blob": context,
+			"carry_live":   params.CarryLive,
+			"fire_seq":     fireSeq,
+			"delivery_id":  params.DeliveryID,
+			"run_id":       params.RunID,
+			"matched_from": params.MatchedFrom,
+			"matched_to":   params.MatchedTo,
+			"excerpt":      params.Excerpt,
+			"revision":     params.ExpectedRevision + 1,
+			"updated_at":   params.Now,
+		}
+		if params.StateSinceNS != 0 {
+			if params.StateSinceNS <= watch.StateSinceNS {
+				return fmt.Errorf("agent watch %s state %d already seen: %w", params.WatchID, params.StateSinceNS, ErrAgentWatchState)
+			}
+			updates["state_since_ns"] = params.StateSinceNS
+		}
 		info := tx.Model(&model.AgentWatchRow{}).
 			Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, params.ExpectedRevision).
-			Updates(map[string]any{
-				"status":       AgentWatchStatusMatched,
-				"anchor_seq":   params.AnchorSeq,
-				"carry_blob":   carry,
-				"context_blob": context,
-				"carry_live":   params.CarryLive,
-				"fire_seq":     fireSeq,
-				"delivery_id":  params.DeliveryID,
-				"run_id":       params.RunID,
-				"matched_from": params.MatchedFrom,
-				"matched_to":   params.MatchedTo,
-				"excerpt":      params.Excerpt,
-				"revision":     params.ExpectedRevision + 1,
-				"updated_at":   params.Now,
-			})
+			Updates(updates)
 		if info.Error != nil {
 			return dbError(info.Error)
 		}

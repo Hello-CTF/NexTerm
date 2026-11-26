@@ -36,6 +36,10 @@ const watchDeliveryBound = 4096
 type WatchConsumer struct {
 	store  ConversationStore
 	roster *Roster
+	// onFresh, when set, learns of each event this consumer newly wrote into
+	// a conversation's history (never a redelivery), so it can wake that
+	// conversation.
+	onFresh func(ctx context.Context, conversationID string, event watches.Event)
 
 	mu    sync.Mutex
 	seen  map[string]struct{}
@@ -47,6 +51,14 @@ type WatchConsumer struct {
 // reports success with no consumer rather than inventing one.
 func NewWatchConsumer(store ConversationStore, roster *Roster) *WatchConsumer {
 	return &WatchConsumer{store: store, roster: roster, seen: map[string]struct{}{}}
+}
+
+// OnFresh registers the hook told about each newly persisted event. It must
+// not block: delivery holds the consumer lock while it runs.
+func (c *WatchConsumer) OnFresh(hook func(ctx context.Context, conversationID string, event watches.Event)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onFresh = hook
 }
 
 // watchCallID derives the synthesized tool call ID of a delivery: stable
@@ -61,7 +73,7 @@ func (c *WatchConsumer) DeliverWatchToolData(ctx context.Context, data watches.T
 	if event.Kind != watches.EventKind || event.DeliveryID == "" {
 		return watches.ErrEventCorrupt
 	}
-	if c.store == nil || c.roster == nil {
+	if c.store == nil || c.roster == nil && event.ConversationID == "" {
 		return nil
 	}
 	c.mu.Lock()
@@ -69,12 +81,16 @@ func (c *WatchConsumer) DeliverWatchToolData(ctx context.Context, data watches.T
 	if _, ok := c.seen[event.DeliveryID]; ok {
 		return nil
 	}
-	conversations, err := c.watchConversations(ctx, event.TargetID)
+	conversations, err := c.watchConversations(ctx, event)
 	if err != nil {
 		return err
 	}
 	for _, conversationID := range conversations {
-		if err := c.persistPair(ctx, conversationID, event, data); err != nil {
+		fresh, err := c.persistPair(ctx, conversationID, event, data)
+		if err == nil && fresh && c.onFresh != nil {
+			c.onFresh(ctx, conversationID, event)
+		}
+		if err != nil {
 			// A conversation deleted after the roster listing is gone for
 			// good: skipping it keeps the delivery honest instead of
 			// poisoning the outbox with an unretryable recipient.
@@ -94,9 +110,18 @@ func (c *WatchConsumer) DeliverWatchToolData(ctx context.Context, data watches.T
 	return nil
 }
 
-// watchConversations resolves the conversations whose active roster entries
-// bind the target, owner-scoped through the roster store.
-func (c *WatchConsumer) watchConversations(ctx context.Context, targetID string) ([]string, error) {
+// watchConversations resolves who receives an event: the conversation that
+// created the watch, or for a watch without one, the conversations whose
+// active roster entries bind the target, owner-scoped through the roster
+// store.
+func (c *WatchConsumer) watchConversations(ctx context.Context, event watches.Event) ([]string, error) {
+	if event.ConversationID != "" {
+		return []string{event.ConversationID}, nil
+	}
+	if c.roster == nil {
+		return nil, nil
+	}
+	targetID := event.TargetID
 	entries, err := c.roster.List(ctx, "")
 	if err != nil {
 		return nil, err
@@ -122,31 +147,31 @@ func (c *WatchConsumer) watchConversations(ctx context.Context, targetID string)
 // persistPair writes the synthesized tool call and its untrusted result into
 // the conversation history, skipping whichever half a previous delivery
 // already persisted, so a partial crash never duplicates and never orphans.
-func (c *WatchConsumer) persistPair(ctx context.Context, conversationID string, event watches.Event, data watches.ToolData) error {
+func (c *WatchConsumer) persistPair(ctx context.Context, conversationID string, event watches.Event, data watches.ToolData) (bool, error) {
 	callID := watchCallID(event.DeliveryID)
 	haveCall, haveResult, err := c.existingPair(ctx, conversationID, callID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !haveCall {
 		args, err := json.Marshal(map[string]any{
 			"deliveryId": event.DeliveryID, "watchId": event.WatchID, "targetId": event.TargetID,
 		})
 		if err != nil {
-			return err
+			return false, err
 		}
 		row := map[string]any{
 			"type": historyTypeToolCall, "jobId": "", "id": callID,
 			"name": WatchToolName, "args": json.RawMessage(args),
 		}
 		if err := c.store.MsgInsert(ctx, conversationID, historyTypeToolCall, row, nil, nil); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if !haveResult {
 		payload, err := json.Marshal(data)
 		if err != nil {
-			return err
+			return false, err
 		}
 		text := string(payload)
 		row := map[string]any{
@@ -154,10 +179,10 @@ func (c *WatchConsumer) persistPair(ctx context.Context, conversationID string, 
 			"ok": true, "text": text, "summary": summarize(text),
 		}
 		if err := c.store.MsgInsert(ctx, conversationID, historyTypeToolResult, row, nil, nil); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return !haveResult, nil
 }
 
 // existingPair reports whether the conversation history already carries the

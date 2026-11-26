@@ -142,6 +142,8 @@ type Trigger struct {
 	ModelProfileID string    `json:"modelProfileId,omitempty"`
 	OwnerID        string    `json:"ownerId"`
 	OwnerKind      OwnerKind `json:"ownerKind"`
+	// Source names what started the run; empty is a scheduled job ("cron").
+	Source string `json:"source,omitempty"`
 }
 
 // Execute must return after ctx cancellation; the scheduler renews the durable lease while cancellation cleanup is in progress.

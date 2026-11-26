@@ -258,3 +258,42 @@ func TestWatchConsumerIsOwnerIsolated(t *testing.T) {
 		t.Fatalf("owner-b conversation received owner-a's event: %+v", deliveries)
 	}
 }
+
+// A watch a conversation created reaches that conversation without any
+// roster binding, and the fresh hook hears of it exactly once, never for a
+// redelivery.
+func TestWatchConsumerRoutesByCreatingConversation(t *testing.T) {
+	backend := openWatchConsumerStore(t)
+	ctx := watchConsumerCtx("owner-a")
+	conv := createWatchConversation(t, backend, ctx)
+	event := watchTestEvent("tab-unbound")
+	event.ConversationID = conv
+
+	var fresh []string
+	consumer := NewWatchConsumer(backend, nil)
+	consumer.OnFresh(func(_ context.Context, conversationID string, got watches.Event) {
+		fresh = append(fresh, conversationID+"/"+got.DeliveryID)
+	})
+	for i := 0; i < 2; i++ {
+		if err := consumer.DeliverWatchToolData(ctx, watches.NewToolData(event)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restarted := NewWatchConsumer(backend, nil)
+	restarted.OnFresh(func(_ context.Context, conversationID string, got watches.Event) {
+		fresh = append(fresh, "restarted:"+conversationID)
+	})
+	if err := restarted.DeliverWatchToolData(ctx, watches.NewToolData(event)); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := backend.MsgList(ctx, conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deliveries := WatchHistoryToolData(rows); len(deliveries) != 1 || deliveries[0].Event.ConversationID != conv {
+		t.Fatalf("deliveries = %+v", deliveries)
+	}
+	if len(fresh) != 1 || fresh[0] != conv+"/delivery-1" {
+		t.Fatalf("fresh hook calls = %v; want one for the first delivery", fresh)
+	}
+}

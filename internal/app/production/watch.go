@@ -30,6 +30,7 @@ type watchService struct {
 	sessions *session.Manager
 	events   ipc.Emitter
 	sink     *agent.WatchConsumer
+	waker    *eventWaker
 	logger   *slog.Logger
 
 	dispatchInterval time.Duration
@@ -46,16 +47,19 @@ type watchService struct {
 	closed      bool
 }
 
-func newWatchService(storage *store.Store, sessions *session.Manager, events ipc.Emitter, roster *agent.Roster, logger *slog.Logger) *watchService {
+func newWatchService(storage *store.Store, sessions *session.Manager, events ipc.Emitter, roster *agent.Roster, logger *slog.Logger, waker *eventWaker) *watchService {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	var consumer *agent.WatchConsumer
 	if roster != nil {
 		consumer = agent.NewWatchConsumer(storage, roster)
+		if waker != nil {
+			consumer.OnFresh(waker.Wake)
+		}
 	}
 	return &watchService{
-		store: storage, sessions: sessions, events: events, sink: consumer, logger: logger,
+		store: storage, sessions: sessions, events: events, sink: consumer, waker: waker, logger: logger,
 		dispatchInterval: time.Second, pollInterval: 200 * time.Millisecond,
 		executors: map[string]*watches.Executor{},
 	}
@@ -239,6 +243,10 @@ func (s *watchService) reconcileOwner(owner string) {
 // Owners without any durable watch target never get an executor: a busy
 // server's session churn must not spawn idle dispatch loops.
 func (s *watchService) onSessionEvent(ctx context.Context, event session.Event) {
+	if event.Topic == session.TopicTerminalAttention {
+		s.onAttention(ctx, event)
+		return
+	}
 	if event.Topic != session.TopicSessionStatus && event.Topic != session.TopicTerminalExit && event.Topic != session.TopicTerminalControl {
 		return
 	}
@@ -257,6 +265,37 @@ func (s *watchService) onSessionEvent(ctx context.Context, event session.Event) 
 		}
 	}
 	go s.reconcileOwner(owner)
+}
+
+// watchedStates are the attention states a state watch can wait for.
+var watchedStates = map[string]bool{watches.StateNeedsMe: true, watches.StateJustFinished: true, watches.StateExited: true}
+
+// onAttention fires the state watches of a tab whose attention state
+// changed. It runs on the session emit path, so it returns without any store
+// read unless the owner's running executor consumes that tab, and the fire
+// itself runs off this goroutine.
+func (s *watchService) onAttention(ctx context.Context, event session.Event) {
+	attention, ok := event.Payload.(session.AttentionEvent)
+	if !ok || !watchedStates[attention.State] || attention.Since == "" {
+		return
+	}
+	since, err := time.Parse(time.RFC3339Nano, attention.Since)
+	if err != nil {
+		return
+	}
+	owner := ipc.EventOwnerID(ctx)
+	s.mu.Lock()
+	executor, running := s.executors[owner]
+	closed := s.closed
+	s.mu.Unlock()
+	if closed || !running || !executor.Watching(attention.TabID) {
+		return
+	}
+	go func() {
+		if _, err := executor.ObserveState(s.ownerCtx(owner), attention.TabID, attention.State, since); err != nil && !errors.Is(err, watches.ErrDetached) {
+			s.logger.Warn("terminal state watch failed", "tab", attention.TabID, "state", attention.State, "error", err)
+		}
+	}()
 }
 
 // Shutdown stops every executor. Durable state stays in the store: pending
@@ -280,6 +319,7 @@ func (s *watchService) Shutdown(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
+	s.waker.Close()
 	return errors.Join(errs...)
 }
 

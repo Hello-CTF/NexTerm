@@ -265,7 +265,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 			return StartResponse{}, busyErr
 		}
 	}
-	if err := r.store.MsgInsert(executionCtx, conversationID, "user", map[string]any{"role": "user", "content": args.Message, "imageCount": len(args.Images), "jobId": jobID}, nil, nil); err != nil {
+	if err := r.store.MsgInsert(executionCtx, conversationID, "user", userMessageRow(args, jobID), nil, nil); err != nil {
 		r.releaseJobID(jobID)
 		cancel()
 		forceCancel()
@@ -997,4 +997,15 @@ func (r *Runner) shutdownError() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return errors.Join(r.shutdownErrs...)
+}
+
+// userMessageRow is the stored user row of a run. A run started by a
+// terminal event records that source, so the panel shows its fixed trigger
+// note as a system notice rather than as something the user typed.
+func userMessageRow(args ChatArgs, jobID string) map[string]any {
+	row := map[string]any{"role": "user", "content": args.Message, "imageCount": len(args.Images), "jobId": jobID}
+	if args.Source == SourceEvent {
+		row["source"] = SourceEvent
+	}
+	return row
 }

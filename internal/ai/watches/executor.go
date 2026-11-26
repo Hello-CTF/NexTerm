@@ -453,12 +453,17 @@ func (e *Executor) resumePosition(ctx context.Context, targetID string, source S
 // WatchParams mirrors CreateParams except the stream position and left
 // context: the executor owns those from the target's live stream.
 type WatchParams struct {
-	ID        string
-	TargetID  string
-	Name      string
-	Condition Condition
-	Repeat    bool
-	ExpiresAt time.Time
+	// ConversationID is the AI conversation that receives the events.
+	ConversationID string
+	// StateSince is the start of the target's current attention state for a
+	// state watch; that state does not fire it.
+	StateSince time.Time
+	ID         string
+	TargetID   string
+	Name       string
+	Condition  Condition
+	Repeat     bool
+	ExpiresAt  time.Time
 }
 
 // Watch creates an armed watch anchored at the target's current stream
@@ -493,7 +498,32 @@ func (e *Executor) Watch(ctx context.Context, params WatchParams) (Watch, error)
 		ID: params.ID, TargetID: params.TargetID, Name: params.Name,
 		Condition: params.Condition, Repeat: params.Repeat,
 		AnchorSeq: runner.pos, LeftContext: tail, ExpiresAt: params.ExpiresAt,
+		ConversationID: params.ConversationID, StateSince: params.StateSince,
 	})
+}
+
+// Watching reports whether the executor runs a consumer for the target, so
+// a caller can drop events for targets nothing watches without a store read.
+func (e *Executor) Watching(targetID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, ok := e.targets[targetID]
+	return ok
+}
+
+// ObserveState fires the target's state watches for an attention change.
+// It holds the target's observe lock, like creation, so a fire never races
+// an anchor update of the same target.
+func (e *Executor) ObserveState(ctx context.Context, targetID, state string, since time.Time) ([]Event, error) {
+	e.mu.Lock()
+	runner, ok := e.targets[targetID]
+	e.mu.Unlock()
+	if !ok {
+		return nil, ErrDetached
+	}
+	runner.observeMu.Lock()
+	defer runner.observeMu.Unlock()
+	return e.engine.ObserveState(runner.ownerCtx, targetID, runner.identity, state, since)
 }
 
 // Cancel settles a watch.

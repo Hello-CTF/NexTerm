@@ -34,6 +34,13 @@ type AgentWatchRow struct {
 	CreatedAt     int64  `gorm:"column:created_at;not null" json:"created_at"`
 	UpdatedAt     int64  `gorm:"column:updated_at;not null" json:"updated_at"`
 	ExpiresAt     *int64 `gorm:"column:expires_at" json:"expires_at"`
+	// ConversationID is the AI conversation that created the watch and
+	// receives its events; empty for a watch no conversation owns.
+	ConversationID string `gorm:"size:191;column:conversation_id;not null;default:''" json:"conversation_id"`
+	// StateSinceNS is, for a terminal state watch, the start (Unix
+	// nanoseconds) of the latest state that may no longer fire it: the
+	// state current at creation, then each fired state.
+	StateSinceNS int64 `gorm:"column:state_since_ns;not null;default:0" json:"state_since_ns"`
 }
 
 func (AgentWatchRow) TableName() string { return "agent_watch" }

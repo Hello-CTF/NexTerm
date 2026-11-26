@@ -47,6 +47,9 @@ export type ChatItem =
       // can be placed after them and a retry can find its source message.
       jobId?: string;
       steered?: boolean;
+      // event marks the fixed note of a run a terminal event started; the
+      // user did not type it, so it shows as a notice without edit or resend.
+      event?: boolean;
     })
   | (ItemBase & {
       role: "assistant";
@@ -1156,6 +1159,7 @@ export function historyToItems(
         ...(typeof m.id === "string" && m.id ? { messageId: m.id } : {}),
         ...(jobId ? { jobId } : {}),
         ...(historyField(raw, "steered") === true ? { steered: true } : {}),
+        ...(historyString(raw, "source") === "event" ? { event: true } : {}),
       });
     } else if (m.role === "assistant") {
       pushReasoning(raw);

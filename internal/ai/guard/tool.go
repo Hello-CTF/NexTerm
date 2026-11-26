@@ -112,6 +112,8 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 		return ClassifySQL(stringField(fields, "sql"), config.DangerRules)
 	case "send_reminder":
 		return Confirm(KindSchedule, "创建定时提醒，到时间后将在本会话投递消息")
+	case "terminal_subscribe":
+		return Confirm(KindSchedule, "订阅终端事件，触发后将在本会话启动一次无人值守运行")
 	case "redis_command":
 		var command []string
 		if json.Unmarshal(fields["command"], &command) != nil {

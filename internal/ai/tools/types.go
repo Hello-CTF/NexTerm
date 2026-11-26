@@ -648,6 +648,7 @@ type Dependencies struct {
 	LocalHistory                bool
 	Audit                       func(context.Context, AuditEntry) error
 	Reminders                   ReminderScheduler
+	Subscriptions               TerminalSubscriber
 	Notify                      func(context.Context, string) error
 	Grants                      *guard.Grants
 	// TakeoverActive reports whether a terminal takeover currently owns the

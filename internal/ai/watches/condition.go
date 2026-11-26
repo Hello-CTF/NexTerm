@@ -29,6 +29,12 @@ func (c Condition) Validate() error {
 			return fmt.Errorf("%w: 正则表达式无效: %v", ErrInvalidCondition, err)
 		}
 		return nil
+	case ConditionState:
+		switch c.Pattern {
+		case StateNeedsMe, StateJustFinished, StateExited:
+			return nil
+		}
+		return fmt.Errorf("%w: 未知终端状态 %q", ErrInvalidCondition, c.Pattern)
 	default:
 		return fmt.Errorf("%w: 未知条件类型 %q", ErrInvalidCondition, c.Type)
 	}

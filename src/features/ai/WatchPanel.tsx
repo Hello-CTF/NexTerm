@@ -20,6 +20,16 @@ const statusClasses: Record<WatchStatus, string> = {
 };
 
 const conditionLabels = { contains: tr("出现"), regex: tr("匹配") } as const;
+const stateLabels: Record<string, string> = {
+  needs_me: tr("等待输入"),
+  just_finished: tr("命令结束"),
+  exited: tr("退出"),
+};
+
+function conditionText(type: string, pattern: string, target: string): string {
+  if (type === "state") return tr("{target}{state}时唤醒 AI", { target, state: stateLabels[pattern] ?? pattern });
+  return tr("{value}{value2}「{pattern}」时通知 AI", { value: target, value2: conditionLabels[type as "contains" | "regex"] ?? type, pattern });
+}
 
 // WatchPanel lists the watches the AI armed on terminals (wait until output
 // matches, then wake the AI) and lets the user cancel one. It remounts by
@@ -143,7 +153,7 @@ function WatchPanelContent({
     >
       <span className="font-medium">{watch.name}</span>
       <span className="min-w-0 flex-1 truncate text-neutral-500" title={watch.condition.pattern}>
-        {tr("{value}{value2}「{pattern}」时通知 AI", { value: targetLabel(watch.targetId), value2: conditionLabels[watch.condition.type], pattern: watch.condition.pattern })}
+        {conditionText(watch.condition.type, watch.condition.pattern, targetLabel(watch.targetId))}
       </span>
       <span className={`nx-badge ${statusClasses[watch.status]}`}>{statusLabels[watch.status]}</span>
       {watch.repeat && <span className="nx-badge">{tr("重复")}</span>}

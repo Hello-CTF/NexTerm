@@ -140,6 +140,9 @@ type Config struct {
 	ServerMode bool
 }
 
+// SourceEvent marks a run a terminal event started.
+const SourceEvent = "event"
+
 type ChatArgs struct {
 	ConversationID string      `json:"conversationId,omitempty"`
 	ChannelID      string      `json:"-"`
