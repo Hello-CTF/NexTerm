@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/relaymux"
 	"github.com/Hello-CTF/NexTerm/internal/rstream"
 	"github.com/coder/websocket"
 )
@@ -243,9 +244,10 @@ func TestEmbeddedRuntimeServesTerminalOnly(t *testing.T) {
 
 	select {
 	case hello := <-probe.controlHello:
-		// rstream is not a purpose: it says terminal bridges may carry a resumable stream.
-		if !slices.Equal(hello.Capabilities, []string{PurposeTerminal, rstream.Capability}) {
-			t.Fatalf("capabilities = %v, want exactly [terminal rstream]", hello.Capabilities)
+		// rstream and relay-mux are not purposes: terminal bridges may carry a resumable stream, and device
+		// streams may arrive over the relay link.
+		if !slices.Equal(hello.Capabilities, []string{PurposeTerminal, relaymux.Capability, rstream.Capability}) {
+			t.Fatalf("capabilities = %v, want exactly [terminal relay-mux rstream]", hello.Capabilities)
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("control channel did not come up")

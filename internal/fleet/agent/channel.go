@@ -31,6 +31,16 @@ func wsDialOptions(policy DialPolicy, compression wscompress.Purpose) (*websocke
 // wsDialOptionsObserved is wsDialOptions that also reports every connection the dial opens to onDial; behind a
 // proxy that is the connection to the proxy.
 func wsDialOptionsObserved(policy DialPolicy, compression wscompress.Purpose, onDial func(net.Conn)) (*websocket.DialOptions, error) {
+	client, err := observedHTTPClient(policy, onDial)
+	if err != nil {
+		return nil, err
+	}
+	return wscompress.Dial(compression, &websocket.DialOptions{HTTPClient: client}), nil
+}
+
+// observedHTTPClient is the websocket dial client of policy: no redirects, and every connection it opens is
+// reported to onDial when set.
+func observedHTTPClient(policy DialPolicy, onDial func(net.Conn)) (*http.Client, error) {
 	transport, err := policy.transport()
 	if err != nil {
 		return nil, err
@@ -48,14 +58,12 @@ func wsDialOptionsObserved(policy DialPolicy, compression wscompress.Purpose, on
 			return conn, err
 		}
 	}
-	return wscompress.Dial(compression, &websocket.DialOptions{
-		HTTPClient: &http.Client{
-			Transport: transport,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+	return &http.Client{
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
 		},
-	}), nil
+	}, nil
 }
 
 type HelloMessage struct {

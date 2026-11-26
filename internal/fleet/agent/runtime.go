@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/platform"
+	"github.com/Hello-CTF/NexTerm/internal/relaymux"
 	"github.com/Hello-CTF/NexTerm/internal/rstream"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
@@ -76,6 +77,11 @@ type Options struct {
 	Now       func() time.Time
 	// Sleep, when set, replaces the real wait between owner_unavailable retries (tests).
 	Sleep func(ctx context.Context, d time.Duration) bool
+	// DisableRelayMux keeps this agent off the multiplexed relay: it neither advertises relaymux.Capability nor
+	// keeps a relay link, and serves every device stream over bridges as an agent that predates the relay.
+	DisableRelayMux bool
+	// RelayDialHook, when set, adjusts every relay dial configuration before the dial (tests force a carrier).
+	RelayDialHook func(*relaymux.DialConfig)
 }
 
 type Runtime struct {
@@ -129,6 +135,9 @@ type Runtime struct {
 	jitter func() float64
 	// sleep waits between owner_unavailable retries; tests inject a fake that records the delay.
 	sleep func(ctx context.Context, d time.Duration) bool
+	// relayDisabled and relayDialHook are Options.DisableRelayMux and Options.RelayDialHook.
+	relayDisabled bool
+	relayDialHook func(*relaymux.DialConfig)
 
 	// owner tracks the temporary owner_unavailable state; guarded by mu.
 	owner ownerWait
@@ -261,6 +270,8 @@ func New(options Options) (*Runtime, error) {
 		logger:                  logger,
 		now:                     now,
 		sleep:                   options.Sleep,
+		relayDisabled:           options.DisableRelayMux,
+		relayDialHook:           options.RelayDialHook,
 		purposeHandlers:         make(map[string]PurposeHandler),
 		streams:                 rstream.NewServer(rstream.ServerOptions{}),
 		claimed:                 make(map[string]net.Conn),
@@ -482,6 +493,13 @@ func (r *Runtime) Run(ctx context.Context) error {
 		defer r.loopWg.Done()
 		r.channelLoop(runCtx)
 	}()
+	if !r.relayDisabled {
+		r.loopWg.Add(1)
+		go func() {
+			defer r.loopWg.Done()
+			r.relayLoop(runCtx)
+		}()
+	}
 
 	interval := time.Duration(r.desiredSnapshot().MetricsIntervalMS) * time.Millisecond
 	ticker := time.NewTicker(interval)
@@ -551,6 +569,9 @@ func (r *Runtime) capabilities() []string {
 	}
 	r.mu.Unlock()
 	extra = append(extra, rstream.Capability)
+	if !r.relayDisabled {
+		extra = append(extra, relaymux.Capability)
+	}
 	sort.Strings(extra)
 	return append([]string{PurposeTerminal}, extra...)
 }
@@ -1292,6 +1313,13 @@ func (r *Runtime) serveCarrier(ctx context.Context, carrier net.Conn, bridgeID, 
 		r.serveTerminalStream(ctx, bridgeID, conn, env)
 		return nil
 	}
+	r.servePurposeConn(ctx, conn, bridgeID, purpose, handler)
+	return nil
+}
+
+// servePurposeConn hands conn to the purpose handler through the bridge claim, as if the handler had dialed
+// bridgeID, and returns once the handler did; a conn the handler never claimed is closed.
+func (r *Runtime) servePurposeConn(ctx context.Context, conn net.Conn, bridgeID, purpose string, handler PurposeHandler) {
 	key := claimKey(bridgeID, purpose)
 	r.mu.Lock()
 	r.claimed[key] = conn
@@ -1308,7 +1336,6 @@ func (r *Runtime) serveCarrier(ctx context.Context, carrier net.Conn, bridgeID, 
 	if err := handler(ctx, bridgeID); err != nil {
 		r.logger.Warn("purpose bridge failed", "bridge_id", bridgeID, "purpose", purpose, "error", err)
 	}
-	return nil
 }
 
 // TerminalEnabled reports the server's desired terminal switch for this device.

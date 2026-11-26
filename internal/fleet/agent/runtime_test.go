@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/relaymux"
 	"github.com/Hello-CTF/NexTerm/internal/releasesig"
 	"github.com/Hello-CTF/NexTerm/internal/rstream"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
@@ -816,8 +817,8 @@ func TestRuntimeRoutesTerminalBridge(t *testing.T) {
 		if hello.BridgeID != "bridge-t1" || hello.Purpose != PurposeTerminal {
 			t.Fatalf("bridge hello = %+v, want terminal purpose echo", hello)
 		}
-		if !slices.Equal(hello.Capabilities, []string{PurposeTerminal, rstream.Capability}) {
-			t.Fatalf("bridge hello capabilities = %v, want [terminal rstream]", hello.Capabilities)
+		if !slices.Equal(hello.Capabilities, []string{PurposeTerminal, relaymux.Capability, rstream.Capability}) {
+			t.Fatalf("bridge hello capabilities = %v, want [terminal relay-mux rstream]", hello.Capabilities)
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("terminal bridge was not dialed")
