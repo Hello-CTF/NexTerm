@@ -161,3 +161,68 @@ func TestEventWakerRetriesABusyConversationAndReportsAStop(t *testing.T) {
 	}
 	h.waitIdle(t, "conv-1")
 }
+
+// blockingExecutor reports each started run and returns only when its context
+// is cancelled, like an AI run that outlives shutdown otherwise would.
+type blockingExecutor struct {
+	started chan context.Context
+	result  error
+}
+
+func (e *blockingExecutor) Execute(ctx context.Context, _ cron.Trigger) error {
+	e.started <- ctx
+	if e.result != nil {
+		return e.result
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// Close cancels an in-flight event run and returns once it ended; the run kept
+// the event's owner, and shutdown is not reported to the user as a failure.
+func TestEventWakerCloseCancelsInFlightRun(t *testing.T) {
+	executor := &blockingExecutor{started: make(chan context.Context, 1)}
+	notices := make(chan string, 1)
+	waker := newEventWaker(executor, func(_ context.Context, text string) { notices <- text }, nil)
+	waker.Wake(ipc.WithUserID(context.Background(), "user-1"), "conv-1", watches.Event{DeliveryID: "d1", WatchID: "w1", FiredAt: time.Now().UnixMilli()})
+	runCtx := <-executor.started
+	if ipc.OwnerID(runCtx) != "user-1" {
+		t.Fatalf("run owner = %q, want user-1", ipc.OwnerID(runCtx))
+	}
+	waker.Close()
+	if runCtx.Err() == nil {
+		t.Fatal("Close returned while the run context was still live")
+	}
+	select {
+	case notice := <-notices:
+		t.Fatalf("shutdown reported as a failure: %q", notice)
+	default:
+	}
+	waker.Wake(context.Background(), "conv-2", watches.Event{DeliveryID: "d2", WatchID: "w1", FiredAt: time.Now().UnixMilli()})
+	select {
+	case <-executor.started:
+		t.Fatal("a wake after Close started a run")
+	default:
+	}
+}
+
+// Close also ends a wake that is waiting to retry a busy conversation.
+func TestEventWakerCloseStopsBusyRetry(t *testing.T) {
+	executor := &blockingExecutor{started: make(chan context.Context, 1), result: cron.ErrRunSkipped}
+	waker := newEventWaker(executor, nil, nil)
+	timers := make(chan struct{}, 1)
+	waker.after = func(time.Duration) <-chan time.Time {
+		timers <- struct{}{}
+		return make(chan time.Time)
+	}
+	waker.Wake(context.Background(), "conv-1", watches.Event{DeliveryID: "d1", WatchID: "w1", FiredAt: time.Now().UnixMilli()})
+	<-executor.started
+	<-timers
+	waker.Close()
+	waker.mu.Lock()
+	waiting := waker.waiting["conv-1"]
+	waker.mu.Unlock()
+	if waiting {
+		t.Fatal("Close returned with the busy retry still pending")
+	}
+}

@@ -45,10 +45,14 @@ type eventWaker struct {
 	after    func(time.Duration) <-chan time.Time
 	logger   *slog.Logger
 
+	// root is cancelled by Close: it ends in-flight event runs and busy
+	// retries, so shutdown never waits for a whole AI run.
+	root context.Context
+	stop context.CancelFunc
+
 	mu      sync.Mutex
 	recent  map[string][]time.Time
 	waiting map[string]bool
-	closed  chan struct{}
 	group   sync.WaitGroup
 }
 
@@ -56,9 +60,10 @@ func newEventWaker(executor eventExecutor, notify func(context.Context, string),
 	if logger == nil {
 		logger = slog.Default()
 	}
+	root, stop := context.WithCancel(context.Background())
 	return &eventWaker{
 		executor: executor, notify: notify, now: time.Now, after: time.After, logger: logger,
-		recent: map[string][]time.Time{}, waiting: map[string]bool{}, closed: make(chan struct{}),
+		root: root, stop: stop, recent: map[string][]time.Time{}, waiting: map[string]bool{},
 	}
 }
 
@@ -71,7 +76,7 @@ func (w *eventWaker) admit(conversationID string, event watches.Event) bool {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.waiting[conversationID] {
+	if w.root.Err() != nil || w.waiting[conversationID] {
 		return false
 	}
 	kept := w.recent[conversationID][:0]
@@ -86,6 +91,9 @@ func (w *eventWaker) admit(conversationID string, event watches.Event) bool {
 	}
 	w.recent[conversationID] = append(kept, now)
 	w.waiting[conversationID] = true
+	// The run is counted under the lock that Close takes before it waits, so
+	// no run starts after Close began waiting.
+	w.group.Add(1)
 	return true
 }
 
@@ -105,10 +113,14 @@ func (w *eventWaker) Wake(ctx context.Context, conversationID string, event watc
 		Name: event.Name, Prompt: eventWakePrompt, ScheduledFor: w.now(),
 		OwnerID: ownerID, OwnerKind: kind, Source: agent.SourceEvent,
 	}
-	runCtx := context.WithoutCancel(ctx)
-	w.group.Add(1)
+	// The run keeps the event context's owner values but not its
+	// cancellation; Close cancels it through the waker's root.
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stopCancel := context.AfterFunc(w.root, cancel)
 	go func() {
 		defer w.group.Done()
+		defer stopCancel()
+		defer cancel()
 		defer func() {
 			w.mu.Lock()
 			delete(w.waiting, conversationID)
@@ -118,7 +130,10 @@ func (w *eventWaker) Wake(ctx context.Context, conversationID string, event watc
 		for {
 			err := w.executor.Execute(runCtx, trigger)
 			if !errors.Is(err, cron.ErrRunSkipped) {
-				if err != nil {
+				if err != nil && w.root.Err() != nil {
+					// Shutdown stopped the run; that is not a failure to report.
+					w.logger.Info("terminal event run stopped by shutdown", "conversation", conversationID, "watch", event.WatchID)
+				} else if err != nil {
 					w.logger.Warn("terminal event run stopped", "conversation", conversationID, "watch", event.WatchID, "error", err)
 					if w.notify != nil {
 						w.notify(runCtx, "AI 处理终端事件时停止："+err.Error())
@@ -130,7 +145,7 @@ func (w *eventWaker) Wake(ctx context.Context, conversationID string, event watc
 				return
 			}
 			select {
-			case <-w.closed:
+			case <-runCtx.Done():
 				return
 			case <-w.after(eventWakeBusyRetry):
 			}
@@ -138,17 +153,14 @@ func (w *eventWaker) Wake(ctx context.Context, conversationID string, event watc
 	}()
 }
 
-// Close stops busy retries and waits for started runs to return.
+// Close cancels in-flight event runs and busy retries, then waits for them
+// to return.
 func (w *eventWaker) Close() {
 	if w == nil {
 		return
 	}
 	w.mu.Lock()
-	select {
-	case <-w.closed:
-	default:
-		close(w.closed)
-	}
+	w.stop()
 	w.mu.Unlock()
 	w.group.Wait()
 }
