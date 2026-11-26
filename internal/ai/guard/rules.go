@@ -63,7 +63,8 @@ type GrantRule struct {
 	Action   string `json:"action"`
 	Path     string `json:"path,omitempty"`
 	// Kinds and Programs bound a command rule to the approval kinds and
-	// programs it covers; Unattended lets scheduled runs use the rule.
+	// programs it covers; Unattended lets scheduled runs use the rule. Runs a
+	// terminal event starts never use any rule.
 	Kinds      []Kind   `json:"kinds,omitempty"`
 	Programs   []string `json:"programs,omitempty"`
 	Unattended bool     `json:"unattended,omitempty"`

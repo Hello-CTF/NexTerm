@@ -48,9 +48,5 @@ func conversationExecutionContext(ctx context.Context, ownerID string) context.C
 	if ownerID == "" {
 		return ctx
 	}
-	result := owner.AccountContext(ctx, ownerID)
-	if guard.UnattendedFrom(ctx) {
-		result = guard.WithUnattended(result)
-	}
-	return result
+	return guard.InheritUnattended(owner.AccountContext(ctx, ownerID), ctx)
 }

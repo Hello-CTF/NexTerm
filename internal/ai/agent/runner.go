@@ -148,6 +148,11 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 	if factory == nil {
 		return StartResponse{}, errors.New("AI 事件流未配置")
 	}
+	if args.Source == SourceEvent {
+		// A run tagged as event-triggered never gets more than one; the
+		// marker keeps every grant rule from authorizing it.
+		ctx = guard.WithEventTriggered(ctx)
+	}
 	if r.store == nil {
 		return StartResponse{}, errors.New("AI 对话存储未配置")
 	}

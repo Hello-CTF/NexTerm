@@ -567,6 +567,12 @@ func (g *Grants) EvaluateResource(ctx context.Context, config Config, ruling Rul
 	if ruling.Risk != NeedsConfirm || deviceID == "" {
 		return DecideResource(config, ruling, memory, resource)
 	}
+	// Terminal output decides when an event-triggered run starts, so no rule
+	// or device grant authorizes it, not even a rule that allows scheduled
+	// unattended runs.
+	if EventTriggeredFrom(ctx) {
+		return DecideResource(config, ruling, memory, resource)
+	}
 	mode := config.Normalized().Mode
 	// Read-only never consults rules or device grants; production targets are
 	// never covered by long-term authorization.
