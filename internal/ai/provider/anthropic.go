@@ -295,7 +295,7 @@ func (e *RefusalError) Error() string {
 	if detail == "" {
 		return "模型拒绝了这次请求"
 	}
-	return "模型拒绝了这次请求：" + truncate(detail, 300)
+	return fmt.Sprintf("模型拒绝了这次请求：%s", truncate(detail, 300))
 }
 
 func anthropicFinishReason(reason anthropic.StopReason) string {
@@ -482,7 +482,7 @@ func buildAnthropicRequest(config Config, servingModel string, input []*schema.M
 		}
 	}
 
-	builder := anthropicMessageBuilder{stripThinking: stripThinking, tools: params.Tools, system: params.System}
+	builder := anthropicMessageBuilder{stripThinking: stripThinking, textTools: len(params.Tools) == 0, tools: params.Tools, system: params.System}
 	for _, message := range input[position:] {
 		if message == nil {
 			continue
@@ -572,7 +572,11 @@ func anthropicTool(tool *schema.ToolInfo) (anthropic.ToolUnionParam, error) {
 }
 
 type anthropicMessageBuilder struct {
-	messages      []anthropic.MessageParam
+	messages []anthropic.MessageParam
+	// textTools renders tool calls and results as text for requests that
+	// define no tools, such as history summaries, so no tool block refers
+	// to a tool the request does not declare.
+	textTools     bool
 	tools         []anthropic.ToolUnionParam
 	system        []anthropic.TextBlockParam
 	stripThinking bool
@@ -716,6 +720,10 @@ func (b *anthropicMessageBuilder) addAssistant(message *schema.Message) error {
 		if call.ID == "" {
 			continue
 		}
+		if b.textTools {
+			blocks = append(blocks, anthropic.NewTextBlock("[Tool call "+call.Function.Name+" "+call.ID+"]\n"+call.Function.Arguments))
+			continue
+		}
 		blocks = append(blocks, anthropic.ContentBlockParamUnion{OfToolUse: &anthropic.ToolUseBlockParam{
 			ID: call.ID, Name: call.Function.Name, Input: toolInput(call.Function.Arguments),
 		}})
@@ -748,7 +756,7 @@ func (b *anthropicMessageBuilder) pendingFrom(blocks []anthropic.ContentBlockPar
 // previous replayed one dropped its thinking.
 func (b *anthropicMessageBuilder) carriedBlocks(message *schema.Message, startsTurn bool) ([]anthropic.ContentBlockParamUnion, bool) {
 	raw, _ := message.Extra[anthropicContentKey].(string)
-	if raw == "" || b.stripThinking || b.broken || !startsTurn {
+	if raw == "" || b.stripThinking || b.textTools || b.broken || !startsTurn {
 		return nil, false
 	}
 	var carrier anthropicCarrier

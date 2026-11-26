@@ -459,6 +459,28 @@ func TestAnthropicHistoryWithoutCarrierSendsNoThinking(t *testing.T) {
 	}
 }
 
+// A request without tools, such as a history summary, cannot carry tool
+// blocks, so its tool calls and results travel as text.
+func TestAnthropicRendersToolTurnsAsTextWithoutTools(t *testing.T) {
+	call := schema.AssistantMessage("", []schema.ToolCall{{ID: "toolu_s", Type: "function", Function: schema.FunctionCall{Name: "read_file", Arguments: `{"path":"/a"}`}}})
+	call.Extra = map[string]any{anthropicContentKey: `{"prefix":"x","content":[]}`}
+	request, err := buildAnthropicRequest(Config{ContextWindow: 200_000}, "m", []*schema.Message{
+		schema.SystemMessage("summarize"), schema.UserMessage("history"), call,
+		schema.ToolMessage(`{"ok":true,"text":"body"}`, "toolu_s"), schema.UserMessage("write the summary"),
+	}, &model.Options{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := string(mustJSON(t, request.params.Messages))
+	if strings.Contains(encoded, `"tool_use"`) || strings.Contains(encoded, `"tool_result"`) ||
+		!strings.Contains(encoded, "[Tool call read_file toolu_s]") || !strings.Contains(encoded, "[Tool result toolu_s]") {
+		t.Fatalf("messages = %s", encoded)
+	}
+	if request.params.Messages[len(request.params.Messages)-1].OfUser == nil {
+		t.Fatalf("last message is not the user's: %s", encoded)
+	}
+}
+
 func TestAnthropicKeepsCachedSystemPrefixStableAroundVolatileSystemText(t *testing.T) {
 	request, err := buildAnthropicRequest(Config{Model: "m", ContextWindow: 200_000}, "m", []*schema.Message{
 		schema.SystemMessage(privacyInstruction + "\n\nstable instruction"),
@@ -721,14 +743,15 @@ func TestAnthropicBaseURLAcceptsVersionSuffix(t *testing.T) {
 // still arrives exactly once, so the replayed reply matches what was produced.
 func TestAnthropicCarrierSurvivesPrivacyRestore(t *testing.T) {
 	const secret = "synthetic-private-value"
-	var placeholder string
+	placeholders := make(chan string, 1)
 	fake := &fakeAnthropic{}
 	fake.scripts = []func(http.ResponseWriter, *http.Request){
 		func(w http.ResponseWriter, r *http.Request) {
 			messages := asList(fake.requests()[0].body["messages"])
 			text := fmt.Sprint(asMap(asList(asMap(messages[0])["content"])[0])["text"])
 			start := strings.Index(text, "<")
-			placeholder = text[start : strings.Index(text, ">")+1]
+			placeholder := text[start : strings.Index(text, ">")+1]
+			placeholders <- placeholder
 			arguments, _ := json.Marshal(map[string]string{"path": placeholder})
 			encodedArgs, _ := json.Marshal(string(arguments))
 			sseScript(
@@ -753,6 +776,7 @@ func TestAnthropicCarrierSurvivesPrivacyRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	placeholder := <-placeholders
 	if !strings.Contains(reply.ReasoningContent, secret) || !strings.Contains(reply.ToolCalls[0].Function.Arguments, secret) {
 		t.Fatalf("restored reply = %+v", reply)
 	}

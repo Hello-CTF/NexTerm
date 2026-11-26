@@ -165,6 +165,8 @@ describe("ModelManager reset parameters to defaults", () => {
     delete expected.temperature;
     delete expected.contextWindow;
     delete expected.reasoningEffort;
+    delete expected.thinking;
+    delete expected.thinkingBudget;
     expect(mocks.save.mock.calls[0][0]).toEqual(expected);
   });
 
