@@ -7,7 +7,9 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/relaymux"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"gorm.io/gorm"
 )
@@ -140,9 +142,24 @@ func (s *Service) RequestDeviceBridge(ctx context.Context, deviceID string) (net
 	return s.registry.RequestBridge(ctx, deviceID, agent.PurposeTerminal)
 }
 
-// RequestDeviceBridgePurpose dials a bridge of one advertised non-terminal purpose (file/forward/listen/accept) for an authorized
-// device session; authorization was decided at session connection time (same semantics as RequestDeviceBridge).
+// RequestDeviceBridgePurpose dials a bridge of one advertised purpose (terminal/file/forward/listen/accept) for an authorized
+// device session; authorization was decided at session connection time (same semantics as RequestDeviceBridge). An agent
+// that keeps a relay link gets the request as a stream of it; a link that fails under the request falls back to a bridge.
 func (s *Service) RequestDeviceBridgePurpose(ctx context.Context, deviceID, purpose string) (net.Conn, error) {
+	if link := s.relay.agent(deviceID); link != nil {
+		if capabilities, online := s.registry.Capabilities(deviceID); online && servesPurpose(capabilities, purpose) {
+			conn, _, err := link.OpenDeviceStream(ctx, relaymux.StreamHeader{Purpose: purpose, DeviceID: deviceID, RequestID: ids.New()})
+			if err == nil {
+				return conn, nil
+			}
+			if reply, refused := relaymux.Refused(err); refused && link.Err() == nil {
+				return nil, ipc.NewError(ipc.Code(reply.Code), reply.Message)
+			}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+		}
+	}
 	return s.registry.RequestBridge(ctx, deviceID, purpose)
 }
 
