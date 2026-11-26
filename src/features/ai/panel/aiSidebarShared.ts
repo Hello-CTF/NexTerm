@@ -11,13 +11,13 @@ export { CONFIRM_HELP, CONFIRM_RESOLUTION, confirmTitle, toolLabel } from "./aiC
 
 export interface RefChip {
   id: string;
-  kind: "asset" | "tab" | "file" | "text";
+  kind: "asset" | "tab" | "file" | "text" | "problem";
   label: string;
   detail: string;
   refId: string;
   path?: string;
   sessionId?: string;
-  // Inline content for kind "text"; sent as a data reference, never merged into the message.
+  // Inline content for kinds "text" and "problem"; sent as a data reference, never merged into the message.
   text?: string;
   // UI only, never sent: the text is something the user selected (a terminal or editor selection, not command
   // output), and where it came from so the chip can jump back: a store tab, or a file and line range.

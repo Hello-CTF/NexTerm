@@ -318,4 +318,15 @@ describe("AiSidebar pending references", () => {
       { kind: "file", id: "path:s1:/etc/nginx/nginx.conf", label: "nginx.conf", path: "/etc/nginx/nginx.conf", sessionId: "s1" },
     ]);
   });
+  it("sends a problem reference as data without prefilling the command-output prompt", async () => {
+    act(() => {
+      useUi.getState().queueAiRef({ kind: "problem", id: "problem:1", label: "问题 · timeout", detail: "执行 SQL · db", refId: "problem:1", text: "摘要：timeout" });
+    });
+    await flush();
+    expect(view!.container.querySelector("textarea")!.value).toBe("");
+    setInputValue(view!.container.querySelector("textarea")!, "why?");
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
+    await flush();
+    expect(mocks.chat.mock.calls[0][0].refs).toEqual([{ kind: "problem", id: "problem:1", label: "问题 · timeout", text: "摘要：timeout" }]);
+  });
 });

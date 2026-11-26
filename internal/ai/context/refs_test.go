@@ -138,6 +138,18 @@ func TestRenderRefsTextWithPathIsAFileExcerptKeepingItsHead(t *testing.T) {
 	}
 }
 
+func TestRenderRefsProblemKind(t *testing.T) {
+	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), []RefSpec{
+		{Kind: "problem", Label: "问题 · relation does not exist", Text: "操作：查询\n摘要：relation does not exist"},
+		{Kind: "problem", Label: "empty", Text: " "},
+	}, nil)
+	want := "[Reference: problem recorded by NexTerm 问题 · relation does not exist]\n操作：查询\n摘要：relation does not exist\n" +
+		"- empty (empty)\n"
+	if rendered != want {
+		t.Fatalf("rendered %q, want %q", rendered, want)
+	}
+}
+
 func TestRenderRefsTextKindEmptyAndUnlabeled(t *testing.T) {
 	builder := NewBuilder(Dependencies{})
 	rendered := builder.RenderRefs(context.Background(), []RefSpec{

@@ -24,7 +24,7 @@ vi.mock("../../ipc/commands", () => ({
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 
 import { GLOBAL_AI_BOARD_KEY, sanitizeWorkspaceProblemText, useUi, type AppTab, type Pane, type SqlDraft, type Workspace } from "../../app/store";
-import { workspaceProblemCopyText } from "../../features/problems/WorkspaceProblems";
+import { workspaceProblemCopyText } from "../../features/problems/problemAiRef";
 import { aiTabBusyIds, aiTabRunControls, registerAiRunGeneration } from "../../features/ai/runOwnership";
 import { setFileEditorDirty } from "../../features/files/editorGuards";
 import { setTerminalCloseAction } from "../../app/preferences";
