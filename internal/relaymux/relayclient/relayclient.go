@@ -172,40 +172,51 @@ func (d *Dialer) drop(session Session, client *relaymux.Client) {
 // Open opens a device stream through the session's relay link. It returns ErrUnavailable when the caller should
 // use the bridge, ErrSessionExpired on a rejected login, and a *relaymux.RefusedError when the server or the
 // device refused the stream; a refusal is final and must not be retried over a bridge.
+//
+// A stream whose link breaks before the reply (the server already closed a link this client has not noticed yet)
+// is opened again on a new link, once; only a link that cannot be dialed sends the operation to the bridge. A
+// reply that does not arrive in time is returned as an error without a bridge, since the server may still be
+// reaching the device, and a second attempt would authorize and audit the operation twice.
 func (d *Dialer) Open(ctx context.Context, session Session, header relaymux.StreamHeader) (net.Conn, relaymux.Reply, error) {
 	client, err := d.client(session)
 	if err != nil {
 		return nil, relaymux.Reply{}, err
 	}
-	linkCtx, cancel := context.WithTimeout(ctx, d.options.LinkWait)
-	_, err = client.Link(linkCtx)
-	cancel()
-	if err != nil {
+	for attempt := 0; ; attempt++ {
+		linkCtx, cancel := context.WithTimeout(ctx, d.options.LinkWait)
+		link, err := client.Link(linkCtx)
+		cancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, relaymux.Reply{}, ctx.Err()
+			}
+			return nil, relaymux.Reply{}, d.linkFailed(session, client, err)
+		}
+		conn, reply, err := link.OpenDeviceStream(ctx, header)
+		if err == nil {
+			return conn, reply, nil
+		}
 		if ctx.Err() != nil {
 			return nil, relaymux.Reply{}, ctx.Err()
 		}
-		return nil, relaymux.Reply{}, d.linkFailed(session, client, err)
-	}
-	conn, reply, err := client.OpenDeviceStream(ctx, header)
-	if err == nil {
-		return conn, reply, nil
-	}
-	if ctx.Err() != nil {
-		return nil, relaymux.Reply{}, ctx.Err()
-	}
-	if refusal, refused := relaymux.Refused(err); refused {
-		if refusal.Status == http.StatusUnauthorized {
+		refusal, refused := relaymux.Refused(err)
+		if refused && refusal.Status == http.StatusUnauthorized {
 			d.drop(session, client)
 			return nil, refusal, ErrSessionExpired
 		}
-		if _, noLink := client.Current(); noLink != nil {
-			// The refusal is the goaway or Hello refusal of a link that is gone, not an answer to this stream.
+		if refused && link.Err() == nil {
+			return nil, refusal, err
+		}
+		var timeout net.Error
+		if !refused && errors.As(err, &timeout) && timeout.Timeout() {
+			return nil, relaymux.Reply{}, err
+		}
+		// The link is gone (a goaway, or a reset under the stream): redial it once.
+		_ = link.Close()
+		if attempt > 0 {
 			return nil, relaymux.Reply{}, d.linkFailed(session, client, err)
 		}
-		return nil, refusal, err
 	}
-	// The link failed under the stream: this operation uses a bridge, later ones redial the link.
-	return nil, relaymux.Reply{}, errors.Join(ErrUnavailable, err)
 }
 
 // linkFailed classifies a failure to get a link.
