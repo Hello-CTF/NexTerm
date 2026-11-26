@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/wscompress"
@@ -25,7 +26,8 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 	switch purpose {
 	case "", agent.PurposeTerminal:
 		purpose = agent.PurposeTerminal
-	case "file":
+	// file-mux multiplexes file operations over one bridge, so it audits as the file channel it replaces.
+	case deviceproto.PurposeFile, deviceproto.PurposeFileMux:
 		action = "file_open"
 	// listen (one control bridge per remote listener) and accept (one bridge per inbound connection)
 	// serve remote port forwards, so they audit under the same forward_open family as forward.

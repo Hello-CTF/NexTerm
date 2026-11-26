@@ -133,13 +133,13 @@ func Dial(p Purpose, options *websocket.DialOptions) *websocket.DialOptions {
 }
 
 // ForBridge maps a device bridge purpose ("" and "terminal" are terminal streams) to a policy: terminal and file
-// streams are text-like, while forward, listen and accept tunnel opaque traffic that is usually already encrypted
-// or compressed, where deflate only burns CPU.
+// streams are text-like (file-mux carries the same file frames, multiplexed), while forward, listen and accept
+// tunnel opaque traffic that is usually already encrypted or compressed, where deflate only burns CPU.
 func ForBridge(purpose string) Purpose {
 	switch purpose {
 	case "", "terminal":
 		return Terminal
-	case "file":
+	case "file", "file-mux":
 		return File
 	default:
 		return Opaque

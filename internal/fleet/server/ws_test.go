@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
@@ -590,7 +591,8 @@ func TestDeviceBridgeRelayPurposePreCheck(t *testing.T) {
 	if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge?purpose=file", nil, session, ""); response.status != http.StatusForbidden {
 		t.Fatalf("unadvertised file relay: HTTP %d %v", response.status, response.body)
 	}
-	for _, purpose := range []string{"listen", "accept"} {
+	// file-mux passes the relay allowlist and, like every purpose, still needs the agent to advertise it.
+	for _, purpose := range []string{"listen", "accept", deviceproto.PurposeFileMux} {
 		if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge?purpose="+purpose, nil, session, ""); response.status != http.StatusForbidden {
 			t.Fatalf("unadvertised %s relay: HTTP %d %v", purpose, response.status, response.body)
 		}
