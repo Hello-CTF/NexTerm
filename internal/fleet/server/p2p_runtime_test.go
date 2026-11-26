@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,6 +26,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/p2p/grant"
 	"github.com/Hello-CTF/NexTerm/internal/p2p/leg"
 	"github.com/Hello-CTF/NexTerm/internal/p2p/selector"
+	"github.com/Hello-CTF/NexTerm/internal/relaymux"
+	"github.com/Hello-CTF/NexTerm/internal/relaymux/relayclient"
 	"github.com/Hello-CTF/NexTerm/internal/rstream"
 	"github.com/coder/websocket"
 )
@@ -71,6 +74,16 @@ type e2eBackend struct {
 
 	mu   sync.Mutex
 	mode selector.Mode
+
+	// relay, when set, is the integrated client's relay dialer over relayBase; without it the backend is a
+	// client that predates the relay and dials a bridge per operation. legacyDials counts the bridges.
+	relay       *relayclient.Dialer
+	relayBase   string
+	legacyDials atomic.Int32
+}
+
+func (b *e2eBackend) relaySession() relayclient.Session {
+	return relayclient.Session{BaseURL: b.relayBase, Transport: http.DefaultTransport, Token: b.session.cookie.Value}
 }
 
 func (b *e2eBackend) request(ctx context.Context, method, path string, payload, out any) error {
@@ -105,14 +118,30 @@ func (b *e2eBackend) request(ctx context.Context, method, path string, payload, 
 }
 
 func (b *e2eBackend) DialRelay(ctx context.Context, deviceID, purpose string, resume bool) (net.Conn, bool, error) {
-	conn, stream, _, err := dialStreamRelay(ctx, b.f, deviceID, b.session.cookie, purpose, resume)
-	if err != nil && resume {
-		return nil, false, err
+	legacy := func(ctx context.Context) (net.Conn, bool, error) {
+		b.legacyDials.Add(1)
+		conn, stream, _, err := dialStreamRelay(ctx, b.f, deviceID, b.session.cookie, purpose, resume)
+		return conn, stream, err
 	}
-	return conn, stream, err
+	if b.relay == nil {
+		return legacy(ctx)
+	}
+	return b.relay.DialDevice(ctx, b.relaySession(), deviceID, purpose, true, resume, legacy)
 }
 
 func (b *e2eBackend) DialSignal(ctx context.Context, deviceID string) (net.Conn, error) {
+	if b.relay == nil {
+		return b.dialSignalBridge(ctx, deviceID)
+	}
+	conn, _, err := b.relay.DialDevice(ctx, b.relaySession(), deviceID, agent.PurposeP2PSignal, false, false, func(ctx context.Context) (net.Conn, bool, error) {
+		conn, err := b.dialSignalBridge(ctx, deviceID)
+		return conn, false, err
+	})
+	return conn, err
+}
+
+func (b *e2eBackend) dialSignalBridge(ctx context.Context, deviceID string) (net.Conn, error) {
+	b.legacyDials.Add(1)
 	url := "ws" + strings.TrimPrefix(b.f.http.URL, "http") + "/fleet/devices/" + deviceID + "/bridge?purpose=" + agent.PurposeP2PSignal
 	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: http.Header{"Cookie": []string{b.session.cookie.Name + "=" + b.session.cookie.Value}}})
 	if err != nil {
@@ -192,6 +221,7 @@ func loopbackLeg(cfg *leg.Config) { cfg.LoopbackOnly = true }
 
 type e2eRig struct {
 	f       *httpFixture
+	harness *relayHarness
 	backend *e2eBackend
 	manager *p2pclient.Manager
 	legs    *legRecorder
@@ -203,7 +233,50 @@ type e2eRig struct {
 // manager; legs run over real UDP on loopback.
 func newE2ERig(t *testing.T) *e2eRig {
 	t.Helper()
-	f := newHTTPFixture(t, false, WithP2P(P2PSettings{Enabled: true}))
+	return newE2ERigWith(t, e2eOptions{})
+}
+
+// e2eOptions vary the rig across the relay compatibility matrix.
+type e2eOptions struct {
+	// relay runs the fleet server with the QUIC relay on loopback and gives the agent and client the carriers
+	// named below; without it the server still offers the websocket relay to an agent that dials it.
+	relay bool
+	// agentCarrier and clientCarrier force the relay carrier of each side (relaymux.KindQUIC or KindWS); an
+	// empty clientCarrier is a client that predates the relay.
+	agentCarrier, clientCarrier string
+	// oldAgent runs the agent as one that predates the relay.
+	oldAgent bool
+	// relayConfig replaces GET /relay/config: "404" stands for a server without the relay, "disabled" for one
+	// that turned it off.
+	relayConfig string
+}
+
+// forceCarrier makes dial configurations of h use exactly carrier.
+func forceCarrier(h *relayHarness, carrier string) func(*relaymux.DialConfig) {
+	return func(config *relaymux.DialConfig) {
+		config.Backoff = relaymux.NewQUICBackoff(time.Minute, nil)
+		if carrier == relaymux.KindQUIC {
+			config.QUICAddrs = []string{h.mux.Addr().String()}
+			config.Pin = h.pin
+			config.WSURL = ""
+			return
+		}
+		config.QUICAddrs = nil
+	}
+}
+
+func newE2ERigWith(t testing.TB, options e2eOptions) *e2eRig {
+	t.Helper()
+	var (
+		f       *httpFixture
+		harness *relayHarness
+	)
+	if options.relay {
+		harness = newRelayHarness(t, WithP2P(P2PSettings{Enabled: true}))
+		f = harness.httpFixture
+	} else {
+		f = newHTTPFixture(t, false, WithP2P(P2PSettings{Enabled: true}))
+	}
 	owner := f.createUser(t, "p2p-e2e")
 	deviceID, secret := enrollAgent(t, f, owner, "p2p-e2e-box")
 	var logOut io.Writer = io.Discard
@@ -219,6 +292,17 @@ func newE2ERig(t *testing.T) *e2eRig {
 			_, _ = w.Write([]byte(`{"ok":true,"service":"nexterm-server"}`))
 			return
 		}
+		if r.URL.Path == relaymux.ConfigPath {
+			switch options.relayConfig {
+			case "404":
+				http.NotFound(w, r)
+				return
+			case "disabled":
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"enabled":false,"version":1}`))
+				return
+			}
+		}
 		handler.ServeHTTP(w, r)
 	}))
 	t.Cleanup(agentFront.Close)
@@ -230,11 +314,15 @@ func newE2ERig(t *testing.T) *e2eRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := agent.New(agent.Options{
+	agentOptions := agent.Options{
 		Store: store, DataDir: t.TempDir(), Prober: prober, Manager: agent.EmbeddedServiceManager(),
 		Collector: e2eCollector{}, EnsureHelper: func(context.Context) error { return nil }, Bridge: echoHelper,
-		NoSelfUpgrade: true, Logger: logger.With("side", "agent"),
-	})
+		NoSelfUpgrade: true, Logger: logger.With("side", "agent"), DisableRelayMux: options.oldAgent,
+	}
+	if harness != nil && options.agentCarrier != "" {
+		agentOptions.RelayDialHook = forceCarrier(harness, options.agentCarrier)
+	}
+	runtime, err := agent.New(agentOptions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,6 +331,11 @@ func newE2ERig(t *testing.T) *e2eRig {
 	done := make(chan error, 1)
 	go func() { done <- runtime.Run(ctx) }()
 	backend := &e2eBackend{f: f, session: f.session(t, owner), deviceID: deviceID, mode: selector.ModeAuto}
+	if options.clientCarrier != "" {
+		backend.relayBase = agentFront.URL
+		backend.relay = relayclient.New(relayclient.Options{Configure: forceCarrier(harness, options.clientCarrier)})
+		t.Cleanup(backend.relay.Close)
+	}
 	legs := &legRecorder{}
 	manager := p2pclient.New(backend, p2pclient.Options{DialLeg: legs.dial, LegConfig: loopbackLeg, MigrationSpacing: 10 * time.Millisecond, Logger: logger.With("side", "client")})
 	t.Cleanup(func() {
@@ -255,7 +348,7 @@ func newE2ERig(t *testing.T) *e2eRig {
 		}
 		svc.Wait()
 	})
-	rig := &e2eRig{f: f, backend: backend, manager: manager, legs: legs, svc: svc, device: deviceID}
+	rig := &e2eRig{f: f, harness: harness, backend: backend, manager: manager, legs: legs, svc: svc, device: deviceID}
 	rig.waitFor(t, "device key bound and agent online", func() bool {
 		state, err := backend.DeviceKeyState(context.Background(), deviceID)
 		return err == nil && state == agent.P2PKeyStateBound && f.service.registry.AgentOnline(deviceID)
@@ -263,7 +356,7 @@ func newE2ERig(t *testing.T) *e2eRig {
 	return rig
 }
 
-func (r *e2eRig) waitFor(t *testing.T, what string, cond func() bool) {
+func (r *e2eRig) waitFor(t testing.TB, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(45 * time.Second)
 	for !cond() {
