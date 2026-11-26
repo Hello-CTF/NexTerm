@@ -299,6 +299,12 @@ Server environment (serve only):
   NEXTERM_STUN_ADVERTISE  host:port STUN addresses given to apps and agents (default: the
                       host name they reached the server by, with each listening port)
   NEXTERM_STUN_EXTERNAL  Additional STUN servers, host[:port] comma separated (default none)
+  NEXTERM_RELAY_QUIC  1/0; QUIC carrier of the device relay on the STUN UDP ports (default 1)
+  NEXTERM_RELAY_QUIC_LISTEN  UDP addresses of the QUIC relay while STUN is off (default none)
+  NEXTERM_RELAY_QUIC_ADVERTISE  host:port QUIC relay addresses given to apps and agents
+                      (default: the public host name they reached the server by)
+  NEXTERM_RELAY_QUIC_CERT, NEXTERM_RELAY_QUIC_KEY
+                      PEM certificate and key of the QUIC relay (default: self-signed, pinned)
   NEXTERM_PPROF_CONTENTION  With pprof enabled, sample block/mutex profiles at rate N
                       (1 records every event; default 0 = off)
 

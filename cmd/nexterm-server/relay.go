@@ -13,15 +13,15 @@ import (
 // startUDPServices starts the STUN responder and the QUIC relay carrier. With the QUIC relay on they share one
 // UDP socket per NEXTERM_STUN_LISTEN address; while STUN is off the relay listens on NEXTERM_RELAY_QUIC_LISTEN
 // alone. An address that cannot be bound is logged and skipped; the config endpoints advertise only bound
-// ports. The returned function stops everything it started.
-func startUDPServices(p2p fleetserver.P2PSettings, relay fleetserver.RelaySettings, fleet *fleetserver.Service, dataDir string, logger *slog.Logger) func() {
+// ports. It returns a function that stops everything it started and the bound QUIC relay addresses.
+func startUDPServices(p2p fleetserver.P2PSettings, relay fleetserver.RelaySettings, fleet *fleetserver.Service, dataDir string, logger *slog.Logger) (func(), []net.Addr) {
 	if !relay.QUIC {
 		stun := startSTUNServer(p2p, fleet, logger)
 		return func() {
 			if stun != nil {
 				_ = stun.Close()
 			}
-		}
+		}, nil
 	}
 	stunOn := p2p.Enabled && len(p2p.STUNListen) > 0
 	addresses := relay.QUICListen
@@ -29,7 +29,7 @@ func startUDPServices(p2p fleetserver.P2PSettings, relay fleetserver.RelaySettin
 		addresses = p2p.STUNListen
 	}
 	if len(addresses) == 0 {
-		return func() {}
+		return func() {}, nil
 	}
 	cert, err := relayCertificate(relay, dataDir)
 	if err != nil {
@@ -39,7 +39,7 @@ func startUDPServices(p2p fleetserver.P2PSettings, relay fleetserver.RelaySettin
 			if stun != nil {
 				_ = stun.Close()
 			}
-		}
+		}, nil
 	}
 	tlsConfig := relaymux.ServerTLSConfig(cert)
 	var stun *stunserver.Server
@@ -48,6 +48,7 @@ func startUDPServices(p2p fleetserver.P2PSettings, relay fleetserver.RelaySettin
 	}
 	var muxes []*relaymux.UDPMux
 	var ports []int
+	var bound []net.Addr
 	for _, address := range addresses {
 		conn, err := net.ListenPacket("udp", address)
 		if err != nil {
@@ -67,6 +68,7 @@ func startUDPServices(p2p fleetserver.P2PSettings, relay fleetserver.RelaySettin
 			}
 		}
 		ports = append(ports, mux.Addr().(*net.UDPAddr).Port)
+		bound = append(bound, mux.Addr())
 		logger.Info("QUIC relay listening", "address", mux.Addr().String(), "stun", stun != nil, "pinned", cert.Pin != "")
 	}
 	fleet.SetRelayQUIC(ports, cert.Pin)
@@ -80,7 +82,7 @@ func startUDPServices(p2p fleetserver.P2PSettings, relay fleetserver.RelaySettin
 		for _, mux := range muxes {
 			_ = mux.Close()
 		}
-	}
+	}, bound
 }
 
 // relayCertificate is the configured CA-issued certificate, or the self-signed one over the key kept in the

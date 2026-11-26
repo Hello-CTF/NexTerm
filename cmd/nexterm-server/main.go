@@ -350,7 +350,7 @@ func run(args []string) int {
 		// Under --auth off every fleet route is closed, so no grant can be issued and no relay session can
 		// authenticate: STUN and the QUIC relay would only open a port.
 		if invocation.Auth != core.AuthOff {
-			stopUDP := startUDPServices(p2pSettings, relaySettings, fleetService, paths.DataDir, logger.Logger)
+			stopUDP, _ := startUDPServices(p2pSettings, relaySettings, fleetService, paths.DataDir, logger.Logger)
 			defer stopUDP()
 		}
 		previewService, err = sharing.New(sharing.Config{

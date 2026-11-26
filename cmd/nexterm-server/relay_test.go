@@ -32,27 +32,19 @@ func newTestFleet(t *testing.T, relay fleetserver.RelaySettings) *fleetserver.Se
 	return fleet
 }
 
-func freeUDPAddress(t *testing.T) string {
-	t.Helper()
-	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	address := conn.LocalAddr().String()
-	_ = conn.Close()
-	return address
-}
-
 // With the QUIC relay on, the STUN address carries both STUN and QUIC; the self-signed key persists in the data
 // directory, so a restart keeps the pin.
 func TestStartUDPServicesSharesTheSTUNSocket(t *testing.T) {
 	dataDir := t.TempDir()
-	address := freeUDPAddress(t)
 	relay := fleetserver.RelaySettings{QUIC: true}
 	fleet := newTestFleet(t, relay)
 	var logs bytes.Buffer
-	stop := startUDPServices(fleetserver.P2PSettings{Enabled: true, STUNListen: []string{address}}, relay, fleet, dataDir, slog.New(slog.NewTextHandler(&logs, nil)))
+	stop, bound := startUDPServices(fleetserver.P2PSettings{Enabled: true, STUNListen: []string{"127.0.0.1:0"}}, relay, fleet, dataDir, slog.New(slog.NewTextHandler(&logs, nil)))
 	defer stop()
+	if len(bound) != 1 {
+		t.Fatalf("bound = %v: %s", bound, logs.String())
+	}
+	address := bound[0].String()
 
 	keyPath := filepath.Join(dataDir, fleetserver.RelayQUICKeyFile)
 	info, err := os.Stat(keyPath)
@@ -96,10 +88,12 @@ func TestStartUDPServicesSharesTheSTUNSocket(t *testing.T) {
 	stop()
 
 	// A restart over the same data directory presents the same key.
-	again := freeUDPAddress(t)
-	stopAgain := startUDPServices(fleetserver.P2PSettings{Enabled: true, STUNListen: []string{again}}, relay, newTestFleet(t, relay), dataDir, slog.New(slog.NewTextHandler(&logs, nil)))
+	stopAgain, again := startUDPServices(fleetserver.P2PSettings{Enabled: true, STUNListen: []string{"127.0.0.1:0"}}, relay, newTestFleet(t, relay), dataDir, slog.New(slog.NewTextHandler(&logs, nil)))
 	defer stopAgain()
-	session, err = relaymux.DialQUIC(ctx, again, relaymux.DialConfig{Pin: cert.Pin})
+	if len(again) != 1 {
+		t.Fatalf("bound after restart = %v", again)
+	}
+	session, err = relaymux.DialQUIC(ctx, again[0].String(), relaymux.DialConfig{Pin: cert.Pin})
 	if err != nil {
 		t.Fatalf("pin after restart: %v", err)
 	}
@@ -108,10 +102,13 @@ func TestStartUDPServicesSharesTheSTUNSocket(t *testing.T) {
 
 // With STUN off the relay listens on its own addresses and answers no STUN there.
 func TestStartUDPServicesRelayWithoutSTUN(t *testing.T) {
-	address := freeUDPAddress(t)
-	relay := fleetserver.RelaySettings{QUIC: true, QUICListen: []string{address}}
-	stop := startUDPServices(fleetserver.P2PSettings{Enabled: false}, relay, newTestFleet(t, relay), t.TempDir(), slog.New(slog.DiscardHandler))
+	relay := fleetserver.RelaySettings{QUIC: true, QUICListen: []string{"127.0.0.1:0"}}
+	stop, bound := startUDPServices(fleetserver.P2PSettings{Enabled: false}, relay, newTestFleet(t, relay), t.TempDir(), slog.New(slog.DiscardHandler))
 	defer stop()
+	if len(bound) != 1 {
+		t.Fatalf("bound = %v", bound)
+	}
+	address := bound[0].String()
 	client, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +121,9 @@ func TestStartUDPServicesRelayWithoutSTUN(t *testing.T) {
 		t.Fatal("the relay-only socket answered STUN")
 	}
 	// Nothing listens without any address.
-	stopNone := startUDPServices(fleetserver.P2PSettings{Enabled: false}, fleetserver.RelaySettings{QUIC: true}, newTestFleet(t, relay), t.TempDir(), slog.New(slog.DiscardHandler))
+	stopNone, none := startUDPServices(fleetserver.P2PSettings{Enabled: false}, fleetserver.RelaySettings{QUIC: true}, newTestFleet(t, relay), t.TempDir(), slog.New(slog.DiscardHandler))
 	stopNone()
+	if len(none) != 0 {
+		t.Fatalf("bound without addresses = %v", none)
+	}
 }
