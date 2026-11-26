@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   write: vi.fn(),
   watch: vi.fn(),
   unwatch: vi.fn(),
+  promptText: vi.fn(),
 }));
 
 vi.mock("../../ipc/commands", () => ({
@@ -25,10 +26,10 @@ vi.mock("../../ipc/events", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../ipc/events")>()),
   listenEvent: () => Promise.resolve(() => undefined),
 }));
-vi.mock("../../ui/dialogs", () => ({ ask: vi.fn(), askChoice: vi.fn() }));
+vi.mock("../../ui/dialogs", () => ({ ask: vi.fn(), askChoice: vi.fn(), promptText: mocks.promptText }));
 
 import { FileEditor, fileVersionOf } from "../../features/files/FileEditor";
-import { requestFileReview } from "../../features/files/aiReview";
+import { composeLineComments, requestFileReview } from "../../features/files/aiReview";
 import { useUi } from "../../app/store";
 
 const PATH = "/srv/app/config.yml";
@@ -138,5 +139,39 @@ describe("FileEditor reviews an AI change", () => {
     expect(revertButtons()).toHaveLength(0);
     expect(barButton("全部恢复")).toBeUndefined();
     expect(mocks.write).not.toHaveBeenCalled();
+  });
+
+  it("collects line comments into one composer message with file:line anchors and a file reference", async () => {
+    const view = await mountReview();
+    mocks.promptText.mockResolvedValueOnce("keep info in production").mockResolvedValueOnce("why 8080?");
+    const comment = async (line: number) => {
+      act(() => view.dispatch({ selection: { anchor: view.state.doc.line(line).from } }));
+      act(() => {
+        mounted!.container
+          .querySelector<HTMLElement>(".cm-content")!
+          .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+      });
+      const item = [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find((el) => el.textContent?.includes("评论选中行"))!;
+      click(item);
+      await act(async () => {
+        await Promise.resolve();
+      });
+    };
+    await comment(4);
+    await comment(2);
+    await waitFor(() => expect(reviewBar().querySelectorAll("[data-comment-id]")).toHaveLength(2));
+    expect(mocks.promptText).toHaveBeenCalledWith(`评论 ${PATH}:4`, "", { multiLine: true });
+    click(barButton("发送给 AI")!);
+    expect(useUi.getState().aiPendingPrompt).toBe(
+      `我对 ${PATH} 的修改有以下评论：\n- ${PATH}:2: why 8080?\n  > port: 8080\n- ${PATH}:4: keep info in production\n  > log: debug`,
+    );
+    expect(useUi.getState().aiPendingRefs).toEqual([expect.objectContaining({ kind: "file", path: PATH, sessionId: "s" })]);
+    expect(reviewBar().querySelectorAll("[data-comment-id]")).toHaveLength(0);
+  });
+
+  it("quotes only the first line of a multi-line comment range", () => {
+    expect(composeLineComments("/a", [{ id: "1", line: 3, endLine: 5, text: "one\ntwo", quote: "x = 1" }])).toBe(
+      "我对 /a 的修改有以下评论：\n- /a:3-5: one\n  two\n  > x = 1",
+    );
   });
 });

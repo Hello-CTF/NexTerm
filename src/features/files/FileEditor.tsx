@@ -6,7 +6,7 @@ import { basicSetup } from "codemirror";
 import { Compartment, EditorState } from "@codemirror/state";
 import { indentWithTab, redo, undo } from "@codemirror/commands";
 import { openSearchPanel, search } from "@codemirror/search";
-import { ask, askChoice } from "../../ui/dialogs";
+import { ask, askChoice, promptText } from "../../ui/dialogs";
 import { fsApi } from "../../ipc/commands";
 import { openLogTab, useUi } from "../../app/store";
 import { modHint } from "../../app/platform";
@@ -26,8 +26,8 @@ import {
 import { fileVisual } from "./fileTypes";
 import { revealLineRange, revealOffset, subscribeFileReveal, takeFileReveal } from "./fileReveal";
 import { askAiAboutEditorSelection, askAiAboutFile } from "./fileAiRef";
-import { subscribeFileReview, takeFileReview } from "./aiReview";
-import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
+import { commentAnchor, composeLineComments, quoteLine, subscribeFileReview, takeFileReview, type LineComment } from "./aiReview";
+import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { copyText, readText } from "../../ui/clipboard";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
 import { isImeKeyEvent } from "../../ui/imeKeyEvent";
@@ -203,6 +203,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const [review, setReview] = useState<{ before: string; conflict: "changed" | "dirty" | null } | null>(null);
   const reviewRef = useRef(review);
   reviewRef.current = review;
+  const [comments, setComments] = useState<LineComment[]>([]);
   const beginReviewRef = useRef<() => void>(() => undefined);
   const languageRequestRef = useRef(0);
   const languageAppliedRef = useRef(false);
@@ -419,6 +420,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         // A fresh read starts a fresh editor, so a review shown in the old one ends.
         reviewRef.current = null;
         setReview(null);
+        setComments([]);
         setDiskChange(null);
         setShowDiff(false);
         setMeta({ encoding, size: res.size });
@@ -748,6 +750,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     const next = { before: request.before, conflict };
     reviewRef.current = next;
     setReview(next);
+    setComments([]);
     void applyMerge(view, request.before, conflict === null);
   };
   useEffect(() => subscribeFileReview(() => beginReviewRef.current()), []);
@@ -755,6 +758,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const closeReview = () => {
     reviewRef.current = null;
     setReview(null);
+    setComments([]);
     viewRef.current?.dispatch({ effects: merge.reconfigure([]) });
   };
 
@@ -772,6 +776,29 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     // markReviewConflict reads refs only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diskChange]);
+
+  const addComment = async () => {
+    const view = viewRef.current;
+    if (!view) return;
+    const doc = view.state.doc;
+    const range = view.state.selection.main;
+    const line = doc.lineAt(range.from).number;
+    const endAt = range.to > range.from && doc.lineAt(range.to).from === range.to ? range.to - 1 : range.to;
+    const endLine = Math.max(line, doc.lineAt(endAt).number);
+    const anchor = commentAnchor(locatorRef.current.path, { line, endLine });
+    const text = await promptText(t("评论 {anchor}", { anchor }), "", { multiLine: true });
+    if (!text?.trim() || viewRef.current !== view) return;
+    const quote = quoteLine(doc.line(line).text);
+    setComments((prev) => [...prev, { id: `${Date.now()}-${prev.length}`, line, endLine, text: text.trim(), quote }]);
+  };
+
+  const sendComments = () => {
+    if (comments.length === 0) return;
+    const { sessionId: currentSession, path: currentPath } = locatorRef.current;
+    askAiAboutFile(currentSession, currentPath);
+    useUi.getState().queueAiPrompt(composeLineComments(currentPath, comments));
+    setComments([]);
+  };
 
   const parentDir = parentOf(path);
   useFsWatch(sessionId, parentDir ? [parentDir] : [], meta !== null);
@@ -897,6 +924,9 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           accel: selected ? undefined : askAccel,
           onSelect: () => askAiRef.current("file"),
         },
+        ...(reviewRef.current
+          ? ([{ kind: "item", label: t("评论选中行…"), onSelect: () => void addComment() }] satisfies MenuItem[])
+          : []),
         { kind: "separator" },
         {
           kind: "item",
@@ -1230,6 +1260,31 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
               {t("关闭差异")}
             </button>
           </div>
+          {comments.length > 0 && (
+            <div className="mt-1.5 flex flex-col gap-1" aria-label={t("评论")}>
+              <div className="flex flex-wrap gap-1">
+                {comments.map((comment) => (
+                  <span key={comment.id} className="nx-chip" title={comment.text} data-comment-id={comment.id}>
+                    <span className="truncate">
+                      {commentAnchor(baseName(path), comment)} · {comment.text}
+                    </span>
+                    <button
+                      className="nx-chip-x"
+                      title={t("移除评论")}
+                      onClick={() => setComments((prev) => prev.filter((x) => x.id !== comment.id))}
+                    >
+                      <IconClose size={10} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div>
+                <button className="nx-btn nx-btn-sm nx-btn-primary" onClick={sendComments}>
+                  {t("发送给 AI")}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

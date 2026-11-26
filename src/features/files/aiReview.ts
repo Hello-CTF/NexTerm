@@ -45,3 +45,36 @@ export function openAiChangeReview(sessionId: string, path: string, review: AiFi
   openFileTab(sessionId, path);
   return true;
 }
+
+// LineComment is a review note on lines of the file as it is now (1-based, inclusive).
+export interface LineComment {
+  id: string;
+  line: number;
+  endLine: number;
+  text: string;
+  // The first commented line, quoted so the AI sees what the note is about.
+  quote: string;
+}
+
+const QUOTE_RUNES = 160;
+
+export function commentAnchor(path: string, comment: Pick<LineComment, "line" | "endLine">): string {
+  return comment.line === comment.endLine ? `${path}:${comment.line}` : `${path}:${comment.line}-${comment.endLine}`;
+}
+
+export function quoteLine(text: string): string {
+  const runes = Array.from(text.replace(/\t/g, "  ").trimEnd());
+  return runes.length > QUOTE_RUNES ? `${runes.slice(0, QUOTE_RUNES).join("")}…` : runes.join("");
+}
+
+// composeLineComments turns review comments into one composer message anchored by file:line, in line order.
+export function composeLineComments(path: string, comments: readonly LineComment[]): string {
+  const sorted = [...comments].sort((a, b) => a.line - b.line || a.endLine - b.endLine);
+  const lines = [t("我对 {path} 的修改有以下评论：", { path })];
+  for (const comment of sorted) {
+    const text = comment.text.trim().replace(/\r?\n/g, "\n  ");
+    lines.push(`- ${commentAnchor(path, comment)}: ${text}`);
+    if (comment.quote.trim()) lines.push(`  > ${comment.quote}`);
+  }
+  return lines.join("\n");
+}
