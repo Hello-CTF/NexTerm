@@ -58,6 +58,7 @@
   "internal/platform": [1, 1],
   "internal/pprof": [1, 1],
   "internal/pty": [2, 3],
+  "internal/relaymux": [2, 6],
   "internal/rstream": [1, 2],
   "internal/runbook": [1, 1],
   "internal/server": [23, 107],
