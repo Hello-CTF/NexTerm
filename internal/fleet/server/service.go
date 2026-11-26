@@ -161,6 +161,9 @@ func New(config Config, options ...Option) (*Service, error) {
 		relay:                   newRelayService(),
 	}
 	s.registry.onKick = s.relay.kickAgent
+	s.bridges.onSessionInvalid = func(sessionID string) {
+		s.revokeP2PGrants(func(entry *activeGrant) bool { return entry.sessionID == sessionID }, p2pRevokeSession, true)
+	}
 	sharingService, err := sharing.New(sharing.Config{DB: config.DB, Accounts: config.Accounts},
 		sharing.WithAgentProbe(func(ctx context.Context, deviceID string) error {
 			if !s.registry.AgentOnline(deviceID) {

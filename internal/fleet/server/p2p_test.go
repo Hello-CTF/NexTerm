@@ -15,6 +15,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/p2p/grant"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 	"github.com/coder/websocket"
 )
 
@@ -463,6 +464,53 @@ func TestP2PRevokeBeforeOwnerKick(t *testing.T) {
 				t.Fatalf("second frame after the owner block = %v", frame)
 			}
 		})
+	}
+}
+
+// A login session that the periodic recheck finds invalid (here: expired, which no closer reports) loses its
+// direct sessions with its relays; another session's grant stays live.
+func TestP2PRevokeOnPeriodicSessionRecheck(t *testing.T) {
+	f := newP2PFixture(t, WithP2P(p2pTestSettings))
+	owner := f.createUser(t, "p2p-recheck")
+	device := f.startP2PDevice(t, owner, "p2p-recheck-box", "terminal", agent.PurposeP2PSignal)
+	expiring, kept := f.session(t, owner), f.session(t, owner)
+	expiringGrant := f.requestGrant(t, expiring, device.id, newClientKey(t))
+	keptGrant := f.requestGrant(t, kept, device.id, newClientKey(t))
+	if expiringGrant.status != http.StatusOK || keptGrant.status != http.StatusOK {
+		t.Fatalf("grants: %v %v", expiringGrant.body, keptGrant.body)
+	}
+	ticks := make(chan time.Time)
+	f.service.bridges.ticker = func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }
+	identity, err := f.accounts.CheckSession(context.Background(), expiring.cookie.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay, release := f.service.bridges.track(context.Background(), identity, expiring.cookie.Value)
+	defer release()
+
+	userSession := query.Use(f.service.db).UserSession
+	if _, err := userSession.WithContext(context.Background()).Where(userSession.ID.Eq(expiring.id)).
+		UpdateColumn(userSession.ExpiresAt, time.Now().Add(-time.Minute).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ticks <- time.Now():
+	case <-time.After(10 * time.Second):
+		t.Fatal("session supervisor not started")
+	}
+	select {
+	case <-relay.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the recheck kept the relay of an expired session")
+	}
+	if frame := readControlFrame(t, device.control); frame["type"] != "p2p_revoke" || frame["grant_id"] != expiringGrant.body["grant_id"] || frame["reason"] != p2pRevokeSession {
+		t.Fatalf("frame after the recheck = %v", frame)
+	}
+	f.service.p2p.grants.mu.Lock()
+	_, keptLive := f.service.p2p.grants.byID[keptGrant.body["grant_id"].(string)]
+	f.service.p2p.grants.mu.Unlock()
+	if !keptLive {
+		t.Fatal("the recheck revoked the grant of a valid session")
 	}
 }
 

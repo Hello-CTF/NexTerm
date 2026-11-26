@@ -30,6 +30,9 @@ type bridgeSessions struct {
 	interval time.Duration
 	ticker   func(time.Duration) (<-chan time.Time, func())
 	check    func(context.Context, string) (*account.Identity, error)
+	// onSessionInvalid runs after the periodic recheck closed an invalid session's relays, so the direct
+	// sessions granted to it end too.
+	onSessionInvalid func(sessionID string)
 }
 
 type bridgeSession struct {
@@ -103,6 +106,9 @@ func (b *bridgeSessions) supervise(ctx context.Context, ticks <-chan time.Time, 
 		case <-ticks:
 			if b.sessionInvalid(ctx, identity, token) {
 				b.revokeSession(identity.SessionID)
+				if b.onSessionInvalid != nil {
+					b.onSessionInvalid(identity.SessionID)
+				}
 				return
 			}
 		}

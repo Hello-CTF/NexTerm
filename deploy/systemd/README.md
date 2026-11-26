@@ -536,6 +536,14 @@ CDN or another host than nexterm-server.
 Device agents report their direct streams to the server after the fact, so
 the audit log can miss streams of an agent that was killed; disable direct
 connections where every stream must be recorded by the server.
+Each server instance keeps the grants it issued in memory and tells the
+device agents it holds to end them when a login session, device or owner
+account stops being valid. With several instances sharing one database, an
+event handled by another instance (a logout or session revocation there)
+does not reach the agents of this instance. Their direct sessions end within
+30 seconds when this instance also relays for that login session (its
+periodic session recheck), and otherwise when the grant can no longer be
+renewed: at most 5 minutes after the last renewal plus a 60 second grace.
 
 ## Relay sessions
 
