@@ -160,3 +160,54 @@ func TestConfigDialConfig(t *testing.T) {
 		t.Fatal("a disabled relay produced a dial config")
 	}
 }
+
+// BenchmarkLinkOpenStream is the carrier's own cost of one operation on an existing session: open, header,
+// reply, one echoed byte and close, without any server-side authorization.
+func BenchmarkLinkOpenStream(b *testing.B) {
+	for _, c := range carriers {
+		b.Run(c.name, func(b *testing.B) {
+			client, server := c.pair(b)
+			links := make(chan *Link, 1)
+			go func() {
+				pending, err := AcceptHandshake(context.Background(), server)
+				if err != nil {
+					return
+				}
+				link, err := pending.Accept(Reply{})
+				if err != nil {
+					return
+				}
+				links <- link
+				_ = link.ServeStreams(context.Background(), func(_ context.Context, incoming *IncomingStream) {
+					conn, err := incoming.Accept(nil)
+					if err != nil {
+						return
+					}
+					_, _ = io.Copy(conn, conn)
+					_ = conn.Close()
+				})
+			}()
+			// The accepting side serves the dialer's streams here, so the dialer's link opens them.
+			link, err := Handshake(context.Background(), client, Hello{Role: RoleAgent})
+			if err != nil {
+				b.Fatal(err)
+			}
+			<-links
+			b.ResetTimer()
+			for b.Loop() {
+				conn, _, err := link.OpenDeviceStream(context.Background(), StreamHeader{Purpose: "terminal"})
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := conn.Write([]byte{1}); err != nil {
+					b.Fatal(err)
+				}
+				var one [1]byte
+				if _, err := io.ReadFull(conn, one[:]); err != nil {
+					b.Fatal(err)
+				}
+				_ = conn.Close()
+			}
+		})
+	}
+}

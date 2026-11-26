@@ -32,7 +32,7 @@ type relayHarness struct {
 	pin string
 }
 
-func newRelayHarness(t *testing.T, options ...Option) *relayHarness {
+func newRelayHarness(t testing.TB, options ...Option) *relayHarness {
 	t.Helper()
 	f := newHTTPFixture(t, false, append([]Option{WithRelay(RelaySettings{QUIC: true})}, options...)...)
 	_, key, err := ed25519.GenerateKey(rand.Reader)
@@ -71,7 +71,7 @@ func (h *relayHarness) dialConfig(carrier string, hello relaymux.Hello) relaymux
 	return config
 }
 
-func (h *relayHarness) dial(t *testing.T, carrier string, hello relaymux.Hello) (*relaymux.Link, error) {
+func (h *relayHarness) dial(t testing.TB, carrier string, hello relaymux.Hello) (*relaymux.Link, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -85,7 +85,7 @@ func (h *relayHarness) dial(t *testing.T, carrier string, hello relaymux.Hello) 
 	return link, err
 }
 
-func (h *relayHarness) clientLink(t *testing.T, carrier string, session *httpSession) *relaymux.Link {
+func (h *relayHarness) clientLink(t testing.TB, carrier string, session *httpSession) *relaymux.Link {
 	t.Helper()
 	link, err := h.dial(t, carrier, relaymux.Hello{Role: relaymux.RoleClient, Token: session.cookie.Value})
 	if err != nil {
@@ -118,7 +118,7 @@ func echoStream(_ context.Context, incoming *relaymux.IncomingStream) {
 
 var relayAgentCapabilities = []string{agent.PurposeTerminal, deviceproto.PurposeForward, deviceproto.PurposeFile, rstream.Capability, relaymux.Capability}
 
-func (h *relayHarness) startAgent(t *testing.T, carrier, deviceID, secret string, handler func(context.Context, *relaymux.IncomingStream)) *fakeRelayAgent {
+func (h *relayHarness) startAgent(t testing.TB, carrier, deviceID, secret string, handler func(context.Context, *relaymux.IncomingStream)) *fakeRelayAgent {
 	t.Helper()
 	control := dialDeviceWS(t, h.httpFixture)
 	if response := helloDevice(t, control, agent.HelloMessage{
@@ -134,7 +134,10 @@ func (h *relayHarness) startAgent(t *testing.T, carrier, deviceID, secret string
 	fake := &fakeRelayAgent{link: link, headers: make(chan relaymux.StreamHeader, 1024)}
 	go func() {
 		_ = link.ServeStreams(context.Background(), func(ctx context.Context, incoming *relaymux.IncomingStream) {
-			fake.headers <- incoming.Header
+			select {
+			case fake.headers <- incoming.Header:
+			default: // a benchmark opens more streams than anyone inspects
+			}
 			handler(ctx, incoming)
 		})
 	}()

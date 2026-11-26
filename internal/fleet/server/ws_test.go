@@ -23,7 +23,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-func dialDeviceWS(t *testing.T, f *httpFixture) *websocket.Conn {
+func dialDeviceWS(t testing.TB, f *httpFixture) *websocket.Conn {
 	t.Helper()
 	conn, response, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(f.http.URL, "http")+agent.PathDeviceWS, &websocket.DialOptions{CompressionMode: websocket.CompressionContextTakeover})
 	if err != nil {
@@ -36,7 +36,7 @@ func dialDeviceWS(t *testing.T, f *httpFixture) *websocket.Conn {
 	return conn
 }
 
-func helloDevice(t *testing.T, conn *websocket.Conn, hello agent.HelloMessage) controlMessage {
+func helloDevice(t testing.TB, conn *websocket.Conn, hello agent.HelloMessage) controlMessage {
 	t.Helper()
 	payload, err := json.Marshal(hello)
 	if err != nil {
@@ -58,7 +58,7 @@ func helloDevice(t *testing.T, conn *websocket.Conn, hello agent.HelloMessage) c
 	return response
 }
 
-func enrollWSAgent(t *testing.T, f *httpFixture, owner *account.User, name string) (string, string) {
+func enrollWSAgent(t testing.TB, f *httpFixture, owner *account.User, name string) (string, string) {
 	t.Helper()
 	return enrollAgent(t, f, owner, name)
 }

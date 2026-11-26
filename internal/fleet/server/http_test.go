@@ -28,7 +28,7 @@ type httpFixture struct {
 	client   *http.Client
 }
 
-func newHTTPFixture(t *testing.T, authOff bool, options ...Option) *httpFixture {
+func newHTTPFixture(t testing.TB, authOff bool, options ...Option) *httpFixture {
 	t.Helper()
 	database, err := store.OpenInMemory(context.Background())
 	if err != nil {
@@ -52,7 +52,7 @@ type httpSession struct {
 	user   *account.User
 }
 
-func (f *httpFixture) session(t *testing.T, user *account.User) *httpSession {
+func (f *httpFixture) session(t testing.TB, user *account.User) *httpSession {
 	t.Helper()
 	token, session, err := f.accounts.IssueSession(context.Background(), user.ID, "")
 	if err != nil {
@@ -76,7 +76,7 @@ type httpCall struct {
 	cookies []*http.Cookie
 }
 
-func (f *httpFixture) call(t *testing.T, method, path string, body any, session *httpSession, csrf string) httpCall {
+func (f *httpFixture) call(t testing.TB, method, path string, body any, session *httpSession, csrf string) httpCall {
 	t.Helper()
 	reader := strings.NewReader("")
 	if body != nil {
@@ -115,7 +115,7 @@ func (f *httpFixture) call(t *testing.T, method, path string, body any, session 
 	return httpCall{status: response.StatusCode, body: decoded, cookies: response.Cookies()}
 }
 
-func (f *httpFixture) createUser(t *testing.T, username string) *account.User {
+func (f *httpFixture) createUser(t testing.TB, username string) *account.User {
 	t.Helper()
 	user, err := f.accounts.CreateUser(context.Background(), username, "", "password-"+username)
 	if err != nil {
