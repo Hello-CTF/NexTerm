@@ -26,6 +26,7 @@ import {
 import { fileVisual } from "./fileTypes";
 import { revealLineRange, revealOffset, subscribeFileReveal, takeFileReveal } from "./fileReveal";
 import { askAiAboutEditorSelection, askAiAboutFile } from "./fileAiRef";
+import { subscribeFileReview, takeFileReview } from "./aiReview";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 import { copyText, readText } from "../../ui/clipboard";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
@@ -195,6 +196,14 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const caseInsensitiveRef = useRef(caseInsensitive);
   const languageChoiceRef = useRef(languageChoice);
   const language = useRef(new Compartment()).current;
+  // Holds the merge view while an AI change is under review; empty otherwise.
+  const merge = useRef(new Compartment()).current;
+  // An AI change shown as a diff against what the file was before it. conflict says why its per-change revert is
+  // unavailable: the file changed after the AI wrote it, or the editor held unsaved edits when the review opened.
+  const [review, setReview] = useState<{ before: string; conflict: "changed" | "dirty" | null } | null>(null);
+  const reviewRef = useRef(review);
+  reviewRef.current = review;
+  const beginReviewRef = useRef<() => void>(() => undefined);
   const languageRequestRef = useRef(0);
   const languageAppliedRef = useRef(false);
   const revealRef = useRef<() => void>(() => undefined);
@@ -407,6 +416,9 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         const { text, encoding } = decodeContent(bin, reloadEnc);
         originalRef.current = text;
         versionRef.current = fileVersionOf(bin).catch(() => null);
+        // A fresh read starts a fresh editor, so a review shown in the old one ends.
+        reviewRef.current = null;
+        setReview(null);
         setDiskChange(null);
         setShowDiff(false);
         setMeta({ encoding, size: res.size });
@@ -425,6 +437,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
                 basicSetup,
                 search({ top: true, createPanel: editorSearchPanel(setSearchHost) }),
                 language.of([]),
+                merge.of([]),
                 keymap.of([indentWithTab]),
                 nxHighlight,
                 EditorView.updateListener.of((u) => {
@@ -445,6 +458,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           languageAppliedRef.current = false;
           applyLanguage(viewRef.current, locatorRef.current.path, languageChoiceRef.current);
           revealRef.current();
+          beginReviewRef.current();
         }
       } catch (e) {
         if (!cancelled) {
@@ -467,7 +481,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [sessionId, reloadEnc, reloadKey, language, pushToast, applyLanguage]);
+  }, [sessionId, reloadEnc, reloadKey, language, merge, pushToast, applyLanguage]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -664,7 +678,100 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     setEol(text.includes("\r\n") ? "CRLF" : "LF");
     setDiskChange(null);
     setShowDiff(false);
+    // The host content is no longer what the AI wrote, so its changes can no longer be reverted one by one.
+    markReviewConflict(view);
   };
+
+  // applyMerge shows the review's diff in the editor. With controls, each change gets a revert button that writes
+  // the reverted file through the editor's own save; without, the diff is for reading only.
+  const applyMerge = async (view: EditorView, before: string, controls: boolean) => {
+    const { unifiedMergeView } = await import("@codemirror/merge");
+    if (viewRef.current !== view || !reviewRef.current) return;
+    view.dispatch({
+      effects: merge.reconfigure([
+        EditorState.readOnly.of(true),
+        unifiedMergeView({
+          original: before,
+          collapseUnchanged: { margin: 3, minSize: 6 },
+          mergeControls: controls
+            ? (type, action) => {
+                if (type === "accept") {
+                  const none = document.createElement("span");
+                  none.hidden = true;
+                  return none;
+                }
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "nx-btn nx-btn-xs";
+                button.textContent = t("撤销此处");
+                button.dataset.reviewRevert = "";
+                button.onmousedown = (event) => {
+                  if (event.button !== 0 || reviewRef.current?.conflict || saveInFlightRef.current) return;
+                  action(event);
+                  void saveReviewRevert();
+                };
+                return button;
+              }
+            : false,
+        }),
+      ]),
+    });
+  };
+
+  const markReviewConflict = (view: EditorView) => {
+    const current = reviewRef.current;
+    if (!current || current.conflict) return;
+    const next = { ...current, conflict: "changed" as const };
+    reviewRef.current = next;
+    setReview(next);
+    void applyMerge(view, current.before, false);
+  };
+
+  // saveReviewRevert writes a reverted change through save(), which replaces only the version the editor read.
+  // Without a known host version that write would be unconditional, so it is refused and the review stops reverting.
+  const saveReviewRevert = async () => {
+    const view = viewRef.current;
+    if (!view) return;
+    if (!(await versionRef.current)) {
+      markReviewConflict(view);
+      return;
+    }
+    await save();
+  };
+
+  beginReviewRef.current = () => {
+    const view = viewRef.current;
+    if (!view) return;
+    const request = takeFileReview(locatorRef.current.sessionId, locatorRef.current.path);
+    if (!request) return;
+    const conflict: "changed" | "dirty" | null = dirtyRef.current ? "dirty" : originalRef.current !== request.after ? "changed" : null;
+    const next = { before: request.before, conflict };
+    reviewRef.current = next;
+    setReview(next);
+    void applyMerge(view, request.before, conflict === null);
+  };
+  useEffect(() => subscribeFileReview(() => beginReviewRef.current()), []);
+
+  const closeReview = () => {
+    reviewRef.current = null;
+    setReview(null);
+    viewRef.current?.dispatch({ effects: merge.reconfigure([]) });
+  };
+
+  const restoreAll = () => {
+    const view = viewRef.current;
+    const current = reviewRef.current;
+    if (!view || !current || current.conflict || saveInFlightRef.current) return;
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: current.before }, userEvent: "revert" });
+    void saveReviewRevert();
+  };
+
+  // A host change the editor could not take in place also ends per-change reverts.
+  useEffect(() => {
+    if (diskChange && viewRef.current) markReviewConflict(viewRef.current);
+    // markReviewConflict reads refs only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diskChange]);
 
   const parentDir = parentOf(path);
   useFsWatch(sessionId, parentDir ? [parentDir] : [], meta !== null);
@@ -1095,6 +1202,34 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
                 .join("\n") || t("内容相同")}
             </pre>
           )}
+        </div>
+      )}
+
+      {review && (
+        <div
+          className="shrink-0 border-b border-neutral-800/60 px-3 py-1.5 text-[11.5px] text-neutral-300"
+          role="region"
+          aria-label={t("AI 修改的差异")}
+          data-testid="ai-change-review"
+          data-conflict={review.conflict ?? undefined}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`min-w-0 flex-1 ${review.conflict ? "text-amber-300" : ""}`} role={review.conflict ? "alert" : undefined}>
+              {review.conflict === "changed"
+                ? t("文件在 AI 修改后又有变化，只能查看差异，不能逐处撤销。")
+                : review.conflict === "dirty"
+                  ? t("编辑器中有未保存的改动，只能查看差异；保存或放弃改动后重新打开。")
+                  : t("AI 修改的差异")}
+            </span>
+            {!review.conflict && review.before !== "" && (
+              <button className="nx-btn nx-btn-sm" disabled={saving} onClick={restoreAll}>
+                {t("全部恢复")}
+              </button>
+            )}
+            <button className="nx-btn nx-btn-sm" onClick={closeReview}>
+              {t("关闭差异")}
+            </button>
+          </div>
         </div>
       )}
 

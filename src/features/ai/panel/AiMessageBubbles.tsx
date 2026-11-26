@@ -4,6 +4,8 @@ import { IconEdit, IconImage, IconAlert, IconRefresh, IconShield, IconLoader, Ic
 import { Markdown } from "../Markdown";
 import { type EnvironmentConfirmationChallenge, evaluateEnvironmentConfirmation, isManagedDeviceEnvironment, MANAGED_DEVICE_ENVIRONMENT_HINT, targetKey, environmentDisplayLabel } from "../../production/environmentConfirmation";
 import { simpleDiff, hasVisibleChange, diffLineText } from "../diff";
+import { useUi } from "../../../app/store";
+import { openAiChangeReview } from "../../files/aiReview";
 import { toolLabel, extractUrls, splitUserRefs } from "./aiSidebarShared";
 import { confirmCommandText, resolutionLabel, TOOL_USER_DENIED } from "./aiConfirmLabels";
 import { type ToolGroup, toolGroupSummary, toolGroupFailedText } from "../toolGroups";
@@ -169,7 +171,7 @@ export const ChatBubble = memo(function ChatBubble({
       </div>
     );
   }
-  if (item.role === "diff") return <DiffBubble item={item} />;
+  if (item.role === "diff") return <DiffBubble item={item} readOnly={readOnly} />;
   if (item.role === "plan") {
     return <PlanBubble item={item} approved={planApproved} onApprove={onApprovePlan} readOnly={readOnly} />;
   }
@@ -593,7 +595,9 @@ export function ProductionEnvironmentChallenge({
   );
 }
 
-function DiffBubble({ item }: { item: Extract<ChatItem, { role: "diff" }> }) {
+function DiffBubble({ item, readOnly }: { item: Extract<ChatItem, { role: "diff" }>; readOnly: boolean }) {
+  const sessionId = item.sessionId;
+  const sessionOpen = useUi((s) => !!sessionId && s.sessions.some((session) => session.id === sessionId));
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-900/70 px-2.5 py-2 text-[11.5px]">
       <div className="mb-1.5 flex items-center gap-1.5">
@@ -602,6 +606,17 @@ function DiffBubble({ item }: { item: Extract<ChatItem, { role: "diff" }> }) {
         <span className="min-w-0 flex-1 truncate font-mono text-neutral-400" title={item.path}>
           {item.path}
         </span>
+        {!readOnly && sessionId && (
+          <button
+            type="button"
+            className="nx-link shrink-0"
+            disabled={!sessionOpen}
+            title={sessionOpen ? undefined : t("该文件所在的会话已关闭")}
+            onClick={() => openAiChangeReview(sessionId, item.path, { before: item.before, after: item.after })}
+          >
+            {t("在编辑器中查看差异")}
+          </button>
+        )}
       </div>
       <pre className="max-h-44 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] leading-relaxed">
         <DiffLines before={item.before} after={item.after} />

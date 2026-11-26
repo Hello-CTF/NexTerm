@@ -27,6 +27,7 @@ func TestEventGoldenJSON(t *testing.T) {
 		{Event{Type: "interactionResolved", CallID: "q", Decision: "expired"}, `{"callId":"q","decision":"expired","type":"interactionResolved"}`},
 		{Event{Type: "screen", TabID: "t", Text: "screen"}, `{"tabId":"t","text":"screen","type":"screen"}`},
 		{Event{Type: "fileChange", ID: "c", Path: "/a", Before: "a", After: "b"}, `{"after":"b","before":"a","id":"c","path":"/a","type":"fileChange"}`},
+		{Event{Type: "fileChange", ID: "c", Path: "/a", FileSessionID: "s1", Before: "a", After: "b"}, `{"after":"b","before":"a","id":"c","path":"/a","sessionId":"s1","type":"fileChange"}`},
 		{Event{Type: "usage", PromptTokens: 1, CompletionTokens: 2, CachedTokens: 3, ContextWindow: 4}, `{"cachedTokens":3,"completionTokens":2,"contextWindow":4,"promptTokens":1,"type":"usage"}`},
 		{Event{Type: "usage", Model: "fallback", RunID: "run", CallID: "call", PromptTokens: 1, CompletionTokens: 2, CachedTokens: 3, ContextWindow: 4}, `{"cachedTokens":3,"callId":"call","completionTokens":2,"contextWindow":4,"model":"fallback","promptTokens":1,"runId":"run","type":"usage"}`},
 		{Event{Type: "todos"}, `{"items":[],"type":"todos"}`},

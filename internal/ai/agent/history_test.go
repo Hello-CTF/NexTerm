@@ -218,7 +218,7 @@ func TestPersistToolRowsTruncatesAndStripsRuntimeFields(t *testing.T) {
 	}
 	huge := strings.Repeat("输出", 40<<10)
 	message := &schema.Message{Role: schema.Tool, ToolCallID: "call-1", ToolName: "exec_commands"}
-	result := tools.Output{OK: true, Text: huge, Change: &tools.Change{ID: "call-1", Path: "/a", Before: "x", After: "y"}, Plan: "plan body"}
+	result := tools.Output{OK: true, Text: huge, Change: &tools.Change{ID: "call-1", Path: "/a", SessionID: "s1", Before: "x", After: "y"}, Plan: "plan body"}
 	text, cut := prefixBytes(result.Text, persistedToolResultLimit)
 	result.Truncated = result.Truncated || cut
 	if err := runner.persistToolResultRows(context.Background(), current, message, result, text); err != nil {
@@ -241,6 +241,13 @@ func TestPersistToolRowsTruncatesAndStripsRuntimeFields(t *testing.T) {
 	}
 	if callRow.ID != "call-1" || callRow.Name != "exec_commands" || callRow.JobID != "job-1" {
 		t.Fatalf("toolCall row = %+v", callRow)
+	}
+	var changeRow map[string]any
+	if err := json.Unmarshal([]byte(rows[1].ContentJSON), &changeRow); err != nil {
+		t.Fatal(err)
+	}
+	if changeRow["sessionId"] != "s1" || changeRow["path"] != "/a" || changeRow["before"] != "x" || changeRow["after"] != "y" {
+		t.Fatalf("fileChange row = %v", changeRow)
 	}
 	var resultRow historyRow
 	if err := json.Unmarshal([]byte(rows[2].ContentJSON), &resultRow); err != nil {

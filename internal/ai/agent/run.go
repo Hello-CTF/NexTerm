@@ -800,7 +800,7 @@ func (r *Runner) emitToolResult(current *job, message *schema.Message) (tools.Ou
 		return result, "", fmt.Errorf("解析领域工具 %s 结果失败: %w", message.ToolName, err)
 	}
 	if result.Change != nil {
-		if err := current.emit(current.ctx, Event{Type: "fileChange", ID: result.Change.ID, Path: result.Change.Path, Before: result.Change.Before, After: result.Change.After}); err != nil {
+		if err := current.emit(current.ctx, Event{Type: "fileChange", ID: result.Change.ID, Path: result.Change.Path, FileSessionID: result.Change.SessionID, Before: result.Change.Before, After: result.Change.After}); err != nil {
 			return result, "", err
 		}
 	}

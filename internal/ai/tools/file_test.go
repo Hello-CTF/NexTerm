@@ -141,6 +141,9 @@ func TestEditMatchingAndBackup(t *testing.T) {
 	if !result.OK || string(files.files["/a"]) != "b b" || string(files.files["/a.nexterm-bak"]) != "a a" || result.Change == nil {
 		t.Fatalf("result=%+v content=%q backup=%q", result, files.files["/a"], files.files["/a.nexterm-bak"])
 	}
+	if result.Change.SessionID != "s" || result.Change.Before != "a a" || result.Change.After != "b b" {
+		t.Fatalf("change = %+v, want the write's session with before and after", result.Change)
+	}
 }
 
 func overwriteWith(t *testing.T, registry *Registry, files *fakeFS) Output {

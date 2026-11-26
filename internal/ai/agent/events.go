@@ -77,6 +77,8 @@ type Event struct {
 	// Decision is how an interaction was resolved: a confirm decision,
 	// "answered" or "expired".
 	Decision string
+	// FileSessionID names the session a fileChange was written on.
+	FileSessionID string
 }
 
 func (e Event) MarshalJSON() ([]byte, error) {
@@ -131,6 +133,9 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		payload["tabId"], payload["text"] = e.TabID, e.Text
 	case "fileChange":
 		payload["id"], payload["path"], payload["before"], payload["after"] = e.ID, e.Path, e.Before, e.After
+		if e.FileSessionID != "" {
+			payload["sessionId"] = e.FileSessionID
+		}
 	case "usage":
 		payload["promptTokens"], payload["completionTokens"] = e.PromptTokens, e.CompletionTokens
 		payload["cachedTokens"], payload["contextWindow"] = e.CachedTokens, e.ContextWindow
