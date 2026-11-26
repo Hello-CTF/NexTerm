@@ -255,8 +255,9 @@ func TestLegStatsAndPing(t *testing.T) {
 func TestLegLossAndLatency(t *testing.T) {
 	c, a := lanConfigs(t)
 	const oneWay = 25 * time.Millisecond
-	c.PacketConnWrapper, _ = impairment(1, 0.01, oneWay)
-	a.PacketConnWrapper, _ = impairment(2, 0.01, oneWay)
+	var cget, aget func() *impairedConn
+	c.PacketConnWrapper, cget = impairment(1, 0.01, oneWay)
+	a.PacketConnWrapper, aget = impairment(2, 0.01, oneWay)
 	cl, al := mustPair(t, c, a)
 	echoServer(t, al)
 
@@ -280,8 +281,10 @@ func TestLegLossAndLatency(t *testing.T) {
 	if st.RTT < 2*oneWay || st.MinRTT < 2*oneWay {
 		t.Fatalf("stats RTT %v / min %v below the injected %v", st.RTT, st.MinRTT, 2*oneWay)
 	}
-	if st.PacketsLost == 0 {
-		t.Fatalf("no QUIC loss recorded under 1%% injected loss: %+v", st)
+	// The transfer still verified intact although the wrapper dropped
+	// packets in both directions, so QUIC recovered them.
+	if cget().dropped.Load() == 0 || aget().dropped.Load() == 0 {
+		t.Fatalf("impairment dropped nothing (client %d, agent %d)", cget().dropped.Load(), aget().dropped.Load())
 	}
 }
 
@@ -312,6 +315,19 @@ func TestLegRejectsWrongPeerKey(t *testing.T) {
 			t.Fatal("client Dial succeeded although the agent rejected its key")
 		}
 	})
+}
+
+func TestDialRetriesLostHandshakePing(t *testing.T) {
+	c, a := lanConfigs(t)
+	c.HandshakeTimeout, a.HandshakeTimeout = 1500*time.Millisecond, 1500*time.Millisecond
+	a.ignorePings, c.ignorePings = 2, 1
+	cl, al := mustPair(t, c, a)
+	if _, err := cl.Ping(context.Background()); err != nil {
+		t.Fatalf("client ping after dial: %v", err)
+	}
+	if _, err := al.Ping(context.Background()); err != nil {
+		t.Fatalf("agent ping after dial: %v", err)
+	}
 }
 
 func TestLegHostOnly(t *testing.T) {

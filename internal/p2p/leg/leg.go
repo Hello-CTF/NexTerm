@@ -85,6 +85,9 @@ type Config struct {
 	iceOptions []ice.AgentOption
 	// idleTimeout overrides QUICIdleTimeout (test hook).
 	idleTimeout time.Duration
+	// ignorePings makes this side leave its first N received pings
+	// unanswered (test hook for lost datagrams).
+	ignorePings int
 }
 
 // Timeouts from design 2.4 and keepalive values chosen to stay above the
@@ -347,14 +350,19 @@ func (l *leg) establish(ctx context.Context, remote Credentials, sig Signaler) e
 
 	// In TLS 1.3 the client completes before the server has checked its
 	// certificate; a ping round trip proves the peer accepted us.
+	// Each attempt gets a third of the budget so one lost datagram is
+	// retried instead of failing the dial.
 	pingCtx, cancelPing := context.WithTimeout(hsCtx, l.cfg.HandshakeTimeout)
 	defer cancelPing()
+	attempt := max(l.cfg.HandshakeTimeout/3, 50*time.Millisecond)
 	for {
-		_, err := l.Ping(pingCtx)
+		ctx, cancel := context.WithTimeout(pingCtx, attempt)
+		_, err := l.Ping(ctx)
+		cancel()
 		if err == nil {
 			return nil
 		}
-		if pingCtx.Err() != nil || l.conn.Context().Err() != nil {
+		if pingCtx.Err() != nil || l.conn.Context().Err() != nil || l.closed() {
 			return l.handshakeError(err)
 		}
 	}

@@ -187,6 +187,7 @@ func (l *leg) Ping(ctx context.Context) (time.Duration, error) {
 
 func (l *leg) datagramLoop() {
 	defer l.wg.Done()
+	ignored := 0
 	for {
 		b, err := l.conn.ReceiveDatagram(l.ctx)
 		if err != nil {
@@ -197,6 +198,10 @@ func (l *leg) datagramLoop() {
 		}
 		switch b[0] {
 		case dgramPing:
+			if ignored < l.cfg.ignorePings {
+				ignored++
+				continue
+			}
 			b[0] = dgramPong
 			_ = l.conn.SendDatagram(b)
 		case dgramPong:
