@@ -19,9 +19,19 @@ export interface RefChip {
   sessionId?: string;
   // Inline content for kind "text"; sent as a data reference, never merged into the message.
   text?: string;
-  // UI only, never sent: the text is a terminal selection, and the store tab it came from.
+  // UI only, never sent: the text is something the user selected (a terminal or editor selection, not command
+  // output), and where it came from so the chip can jump back: a store tab, or a file and line range.
   selection?: boolean;
   sourceTabId?: string;
+  sourceFile?: RefFileSource;
+}
+
+export interface RefFileSource {
+  sessionId: string;
+  path: string;
+  // 1-based, inclusive; absent for a whole-file reference.
+  line?: number;
+  endLine?: number;
 }
 
 export { composeUserMessage, splitUserRefs } from "../userRefs";

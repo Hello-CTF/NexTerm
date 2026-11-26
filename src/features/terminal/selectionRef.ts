@@ -1,20 +1,15 @@
 import { useUi } from "../../app/store";
 import { t } from "../../i18n";
+import { clipRefText, newRefId, refPreview, REF_TEXT_RUNES, singleLine } from "../ai/refText";
 
 // The backend quotes at most this many characters of a text reference (aicontext.RefScreenRunes), keeping the tail.
-export const SELECTION_REF_RUNES = 4000;
-const SELECTION_PREVIEW_RUNES = 24;
+export const SELECTION_REF_RUNES = REF_TEXT_RUNES;
 
 export interface SelectionRefSource {
   // The store tab the selection came from; the chip jumps back to it.
   storeTabId: string;
   title: string;
   host: string;
-}
-
-// singleLine turns line breaks and control characters into spaces and collapses whitespace so a reference label stays on one line.
-function singleLine(text: string): string {
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function toast(text: string) {
@@ -28,23 +23,19 @@ export function askAiAboutSelection(selection: string, source: SelectionRefSourc
     toast(t("请先在终端中选中要询问的内容"));
     return false;
   }
-  const runes = Array.from(selection);
-  const clipped = runes.length > SELECTION_REF_RUNES ? runes.slice(-SELECTION_REF_RUNES).join("") : selection;
-  if (runes.length > SELECTION_REF_RUNES) {
+  const { text, clipped } = clipRefText(selection, "tail");
+  if (clipped) {
     toast(t("选中内容较长，AI 只会看到最后 {limit} 个字符", { limit: SELECTION_REF_RUNES }));
   }
-  const previewRunes = Array.from(singleLine(selection));
-  const preview =
-    previewRunes.slice(0, SELECTION_PREVIEW_RUNES).join("") + (previewRunes.length > SELECTION_PREVIEW_RUNES ? "…" : "");
-  const id = `selection:${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  const id = newRefId("selection");
   const ui = useUi.getState();
   ui.queueAiRef({
     kind: "text",
     id,
-    label: t("终端选区 · {preview}", { preview }),
+    label: t("终端选区 · {preview}", { preview: refPreview(selection) }),
     detail: singleLine(source.host && source.host !== source.title ? `${source.title} · ${source.host}` : source.title),
     refId: id,
-    text: clipped,
+    text,
     selection: true,
     sourceTabId: source.storeTabId,
   });

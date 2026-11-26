@@ -79,6 +79,8 @@ import { AiSidebar } from "../../features/ai/AiSidebar";
 import { useUi } from "../../app/store";
 import { askAiAboutSelection } from "../../features/terminal/selectionRef";
 import { MAX_MESSAGE_REFS } from "../../features/ai/userRefs";
+import { askAiAboutEditorSelection, askAiAboutFile } from "../../features/files/fileAiRef";
+import { takeFileReveal } from "../../features/files/fileReveal";
 
 let convSeq = 0;
 const realSetActiveTab = useUi.getState().setActiveTab;
@@ -271,5 +273,49 @@ describe("AiSidebar pending references", () => {
     await flush();
     expect(view!.container.querySelector("textarea")!.value).toBe("my draft\ndisk usage");
     expect(mocks.chat).not.toHaveBeenCalled();
+  });
+  it("sends an editor selection as a file excerpt without prefilling and jumps back to its lines", async () => {
+    const addTab = vi.fn();
+    act(() => useUi.setState({ addTab, sessions: [{ id: "s1", name: "web-01", kind: "ssh" }] as never }));
+    act(() => {
+      askAiAboutEditorSelection({ sessionId: "s1", path: "/srv/app/main.go", text: "func main() {\n}", line: 12, endLine: 13 });
+    });
+    await flush();
+    const chip = view!.container.querySelector<HTMLElement>("[data-ref-source]")!;
+    expect(chip.textContent).toBe("main.go:12-13");
+    expect(view!.container.querySelector("textarea")!.value).toBe("");
+    click(chip);
+    expect(takeFileReveal("s1", "/srv/app/main.go")).toEqual({ line: 12, endLine: 13 });
+    expect(addTab).toHaveBeenCalledWith(expect.objectContaining({ kind: "files", sessionId: "s1", path: "/srv/app/main.go" }));
+    setInputValue(view!.container.querySelector("textarea")!, "is this right?");
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
+    await flush();
+    expect(mocks.chat.mock.calls[0][0].refs).toEqual([
+      {
+        kind: "text",
+        id: expect.stringMatching(/^editor:/),
+        label: "main.go:12-13",
+        path: "/srv/app/main.go",
+        sessionId: "s1",
+        text: "func main() {\n}",
+      },
+    ]);
+  });
+
+  it("sends a whole file as a path reference the backend reads", async () => {
+    act(() => useUi.setState({ sessions: [{ id: "s1", name: "web-01", kind: "ssh" }] as never }));
+    act(() => {
+      askAiAboutFile("s1", "/etc/nginx/nginx.conf");
+      askAiAboutFile("s1", "/etc/nginx/nginx.conf");
+    });
+    await flush();
+    expect(view!.container.querySelectorAll("[data-ref-source]")).toHaveLength(1);
+    expect(view!.container.querySelector("textarea")!.value).toBe("");
+    setInputValue(view!.container.querySelector("textarea")!, "review");
+    click(view!.container.querySelector('button[title="发送（Enter）"]')!);
+    await flush();
+    expect(mocks.chat.mock.calls[0][0].refs).toEqual([
+      { kind: "file", id: "path:s1:/etc/nginx/nginx.conf", label: "nginx.conf", path: "/etc/nginx/nginx.conf", sessionId: "s1" },
+    ]);
   });
 });

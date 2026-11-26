@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { EditorView, keymap } from "@codemirror/view";
@@ -24,7 +24,12 @@ import {
   IconUndo,
 } from "../../ui/icons";
 import { fileVisual } from "./fileTypes";
-import { revealOffset, subscribeFileReveal, takeFileReveal } from "./fileReveal";
+import { revealLineRange, revealOffset, subscribeFileReveal, takeFileReveal } from "./fileReveal";
+import { askAiAboutEditorSelection, askAiAboutFile } from "./fileAiRef";
+import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
+import { copyText, readText } from "../../ui/clipboard";
+import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
+import { isImeKeyEvent } from "../../ui/imeKeyEvent";
 import { bytesFromBase64, bytesToBase64, decodeContent, type EncChoice } from "./fileCodec";
 import {
   beginFileEditorLoad,
@@ -230,6 +235,15 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       if (!view) return;
       const position = takeFileReveal(locatorRef.current.sessionId, locatorRef.current.path);
       if (!position) return;
+      if (position.endLine !== undefined) {
+        const range = revealLineRange(view.state.doc, position.line, position.endLine);
+        view.dispatch({
+          selection: { anchor: range.from, head: range.to },
+          effects: EditorView.scrollIntoView(range.from, { y: "center" }),
+        });
+        view.focus();
+        return;
+      }
       const offset = revealOffset(view.state.doc, position);
       view.dispatch({ selection: { anchor: offset }, effects: EditorView.scrollIntoView(offset, { y: "center" }) });
       view.focus();
@@ -713,6 +727,117 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     if (v) fn(v);
   };
 
+  // askAi adds the selected lines, or the whole file when nothing is selected, to the AI composer as a reference.
+  const askAiRef = useRef<(scope: "selection" | "file") => void>(() => undefined);
+  askAiRef.current = (scope) => {
+    const view = viewRef.current;
+    if (!view) return;
+    const { sessionId: currentSession, path: currentPath } = locatorRef.current;
+    const range = view.state.selection.main;
+    if (scope === "selection" && !range.empty) {
+      const doc = view.state.doc;
+      const first = doc.lineAt(range.from).number;
+      // A selection that ends at the start of a line does not include that line.
+      const endAt = range.to > range.from && doc.lineAt(range.to).from === range.to ? range.to - 1 : range.to;
+      askAiAboutEditorSelection({
+        sessionId: currentSession,
+        path: currentPath,
+        text: doc.sliceString(range.from, range.to),
+        line: first,
+        endLine: Math.max(first, doc.lineAt(endAt).number),
+      });
+      return;
+    }
+    askAiAboutFile(currentSession, currentPath, { unsaved: dirtyRef.current });
+  };
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || isImeKeyEvent(e) || !matchKeybinding(e, "askAiSelection")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      askAiRef.current("selection");
+    };
+    host.addEventListener("keydown", onKey, true);
+    return () => host.removeEventListener("keydown", onKey, true);
+  }, []);
+
+  const bindings = useKeybindings();
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const openEditorMenu = (e: ReactMouseEvent) => {
+    const view = viewRef.current;
+    if (!view) return;
+    e.preventDefault();
+    const range = view.state.selection.main;
+    const selected = range.empty ? "" : view.state.doc.sliceString(range.from, range.to);
+    const askAccel = formatBinding(bindings.askAiSelection) || undefined;
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          kind: "item",
+          label: t("向 AI 询问选中内容"),
+          accel: selected ? askAccel : undefined,
+          disabled: !selected.trim(),
+          onSelect: () => askAiRef.current("selection"),
+        },
+        {
+          kind: "item",
+          label: t("向 AI 询问当前文件"),
+          accel: selected ? undefined : askAccel,
+          onSelect: () => askAiRef.current("file"),
+        },
+        { kind: "separator" },
+        {
+          kind: "item",
+          label: t("复制"),
+          disabled: !selected,
+          onSelect: () => {
+            void copyText(selected).catch((error) => pushToast("error", t("复制失败：{value}", { value: describeError(error) })));
+          },
+        },
+        {
+          kind: "item",
+          label: t("剪切"),
+          disabled: !selected,
+          onSelect: () => {
+            void copyText(selected).then(
+              () => {
+                if (viewRef.current === view) view.dispatch({ changes: { from: range.from, to: range.to, insert: "" } });
+              },
+              (error) => pushToast("error", t("复制失败：{value}", { value: describeError(error) })),
+            );
+          },
+        },
+        {
+          kind: "item",
+          label: t("粘贴"),
+          onSelect: () => {
+            void readText().then(
+              (text) => {
+                if (viewRef.current !== view || !text) return;
+                view.dispatch(view.state.replaceSelection(text));
+                view.focus();
+              },
+              () => pushToast("error", t("无法读取本机剪贴板")),
+            );
+          },
+        },
+        {
+          kind: "item",
+          label: t("全选"),
+          onSelect: () => {
+            view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } });
+            view.focus();
+          },
+        },
+      ],
+    });
+  };
+
   const toggleEol = () => {
     withView((v) => {
       const src = v.state.doc.toString();
@@ -977,7 +1102,9 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         ref={hostRef}
         className="min-h-0 flex-1 overflow-auto"
         style={{ fontSize: fontPx }}
+        onContextMenu={openEditorMenu}
       />
+      <ContextMenu state={menu} onClose={() => setMenu(null)} />
       {searchHost &&
         createPortal(<EditorSearchBar view={searchHost.view} state={searchHost.state} />, searchHost.dom)}
     </div>

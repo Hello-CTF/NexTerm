@@ -74,6 +74,11 @@ func (b *Builder) renderRef(ctx context.Context, ref RefSpec, readFile RefFileRe
 		if strings.TrimSpace(ref.Text) == "" {
 			return fmt.Sprintf("- %s (empty)\n", label)
 		}
+		// A text reference with a path is an excerpt the user selected in a file editor; it keeps its head, as a
+		// file does, and names the file it came from.
+		if path := SingleLineLabel(ref.Path); path != "" {
+			return fmt.Sprintf("[Reference: excerpt of file %s, %s]\n%s\n", path, label, truncateRunes(ref.Text, min(RefScreenRunes, budget), false))
+		}
 		return fmt.Sprintf("[Reference: terminal text %s]\n%s\n", label, truncateRunes(ref.Text, min(RefScreenRunes, budget), true))
 	case "asset":
 		if b.deps.Session == nil || ref.ID == "" {

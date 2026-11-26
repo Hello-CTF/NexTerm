@@ -5,6 +5,8 @@
 export interface FileRevealPosition {
   line: number;
   col?: number;
+  // When set, the editor selects whole lines from line through endLine (1-based, inclusive).
+  endLine?: number;
 }
 
 // A request that no editor picked up (the open failed or was cancelled) must not move a later, unrelated open.
@@ -42,4 +44,16 @@ export function revealOffset(
   const line = doc.line(Math.min(Math.max(1, Math.floor(position.line)), doc.lines));
   const col = Math.max(1, Math.floor(position.col ?? 1));
   return line.from + Math.min(col - 1, line.length);
+}
+
+/** The document range of whole lines line..endLine (1-based, inclusive), clamped to the document. */
+export function revealLineRange(
+  doc: { lines: number; line(n: number): { from: number; to: number } },
+  line: number,
+  endLine: number,
+): { from: number; to: number } {
+  const clamp = (n: number) => Math.min(Math.max(1, Math.floor(n)), doc.lines);
+  const first = clamp(Math.min(line, endLine));
+  const last = clamp(Math.max(line, endLine));
+  return { from: doc.line(first).from, to: doc.line(last).to };
 }

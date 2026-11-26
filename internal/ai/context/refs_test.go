@@ -125,6 +125,19 @@ func TestRenderRefsTextKind(t *testing.T) {
 	}
 }
 
+func TestRenderRefsTextWithPathIsAFileExcerptKeepingItsHead(t *testing.T) {
+	text := strings.Repeat("a", RefScreenRunes) + "tail"
+	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), []RefSpec{
+		{Kind: "text", Label: "app.go:3-4", Path: "/srv/app.go\n", Text: "func main() {}\n"},
+		{Kind: "text", Label: "big.txt:1-9", Path: "/srv/big.txt", Text: text},
+	}, nil)
+	want := "[Reference: excerpt of file /srv/app.go, app.go:3-4]\nfunc main() {}\n\n" +
+		"[Reference: excerpt of file /srv/big.txt, big.txt:1-9]\n" + strings.Repeat("a", RefScreenRunes) + "\n[Content truncated]\n"
+	if rendered != want {
+		t.Fatalf("rendered %q, want %q", rendered, want)
+	}
+}
+
 func TestRenderRefsTextKindEmptyAndUnlabeled(t *testing.T) {
 	builder := NewBuilder(Dependencies{})
 	rendered := builder.RenderRefs(context.Background(), []RefSpec{

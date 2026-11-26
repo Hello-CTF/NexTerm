@@ -16,7 +16,7 @@ import { acknowledgePrivacyImageNotice, PRIVACY_IMAGE_NOTICE, usePrivacyImageNot
 import { PLAN_MODE_HINT, statusText, MODE_LABEL, appliedPermissionMode, permissionSourceText } from "./aiSidebarShared";
 import type { AiChatCtx } from "./aiChatCtx";
 import { t } from "../../../i18n";
-import { revealSelectionSource } from "../../terminal/selectionRef";
+import { refSourceHint, revealRefSource } from "../refSource";
 
 export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
   const chatPrivacy = useChatPrivacy(ctx.tabKey);
@@ -200,15 +200,13 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           <div className="mb-1.5 flex flex-wrap gap-1">
             {refs.map((r) => (
               <span key={r.id} className="nx-chip nx-chip-accent" title={r.detail} data-ref-id={r.id}>
-                {r.sourceTabId ? (
+                {refSourceHint(r) !== null ? (
                   <button
                     type="button"
                     className="truncate"
                     data-ref-source=""
-                    title={t("{detail}，点击跳到来源终端", { detail: r.detail })}
-                    onClick={() => {
-                      if (r.sourceTabId) revealSelectionSource(r.sourceTabId);
-                    }}
+                    title={refSourceHint(r) ?? undefined}
+                    onClick={() => revealRefSource(r)}
                   >
                     {r.label}
                   </button>
