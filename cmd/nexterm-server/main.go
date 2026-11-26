@@ -29,6 +29,7 @@ import (
 	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/metrics"
+	"github.com/Hello-CTF/NexTerm/internal/p2p/agentside"
 	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/Hello-CTF/NexTerm/internal/pprof"
 	"github.com/Hello-CTF/NexTerm/internal/remotedesktop"
@@ -49,6 +50,7 @@ func init() {
 		r.RegisterPurposeHandler(deviceproto.PurposeForward, purpose.NewDialServer(dial).Serve)
 		r.RegisterPurposeHandler(deviceproto.PurposeListen, purpose.NewListenServer(dial, hub).Serve)
 		r.RegisterPurposeHandler(deviceproto.PurposeAccept, purpose.NewAcceptServer(dial, hub).Serve)
+		agentside.Install(r, agentside.Options{})
 	}
 }
 
