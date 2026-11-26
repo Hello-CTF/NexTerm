@@ -540,6 +540,7 @@ func projectMemoryListText(text string) string {
 }
 
 var modelTextTemplateSpecs = []modelTextTemplateSpec{
+	{source: "模型拒绝了这次请求：%s", target: "the model declined this request: %s"},
 	{source: "工具参数无效: %w", target: "invalid tool arguments: %w"},
 	{source: "权限策略已拒绝: %w", target: "permission policy denied: %w"},
 	{source: "此操作需要用户确认（%w），但子代理内无法请求确认，操作未执行。不要重试；请在结果中说明需要执行的操作，由主代理执行（主代理可以请求用户确认）", target: "this operation needs user confirmation (%w), but confirmation is not available inside a subagent, so it was not executed. Do not retry it; state the needed action in your result so the parent agent can perform it (the parent agent can ask the user to confirm)"},
@@ -1050,6 +1051,7 @@ var modelStaticText = map[string]string{
 }
 
 var modelAdditionalStaticText = map[string]string{
+	"模型拒绝了这次请求":                                                  "the model declined this request",
 	"未说明原因":                                                      "no reason given",
 	"设备授权至少需要一个种类":                                               "device grant requires at least one kind",
 	"设备授权种类仅支持 terminal_write/session_exec":                      "device grant kinds only support terminal_write/session_exec",

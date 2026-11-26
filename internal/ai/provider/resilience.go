@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go/v2"
 	einoopenai "github.com/cloudwego/eino-ext/components/model/openai"
 	sdkopenai "github.com/meguminnnnnnnnn/go-openai"
 )
@@ -82,7 +83,11 @@ func statusCodeForError(err error) (int, bool) {
 	var componentErr *einoopenai.APIError
 	var sdkErr *sdkopenai.APIError
 	var requestErr *sdkopenai.RequestError
+	var anthropicErr *anthropic.Error
+	var eventErr *streamEventError
 	switch {
+	case errors.As(err, &eventErr):
+		return eventErr.status, eventErr.status != 0
 	case errors.As(err, &statusErr):
 		return statusErr.status, statusErr.status != 0
 	case errors.As(err, &httpErr):
@@ -93,6 +98,8 @@ func statusCodeForError(err error) (int, bool) {
 		return sdkErr.HTTPStatusCode, sdkErr.HTTPStatusCode != 0
 	case errors.As(err, &requestErr):
 		return requestErr.HTTPStatusCode, requestErr.HTTPStatusCode != 0
+	case errors.As(err, &anthropicErr):
+		return anthropicErr.StatusCode, anthropicErr.StatusCode != 0
 	default:
 		return 0, false
 	}
@@ -111,9 +118,18 @@ func ErrorDetail(err error) (int, string) {
 		sdkErr       *sdkopenai.APIError
 		requestErr   *sdkopenai.RequestError
 		statusErr    *statusError
+		anthropicErr *anthropic.Error
+		eventErr     *streamEventError
 		message      string
 	)
 	switch {
+	case errors.As(err, &eventErr):
+		message = eventErr.message
+	case errors.As(err, &anthropicErr):
+		message = anthropicErr.Message
+		if strings.TrimSpace(message) == "" {
+			message = anthropicErr.RawJSON()
+		}
 	case errors.As(err, &httpErr):
 		message = httpErr.Body
 	case errors.As(err, &componentErr):

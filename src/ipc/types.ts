@@ -117,7 +117,15 @@ maxTokens?: number | null,
 requestTimeoutSeconds?: number | null, idleTimeoutSeconds?: number | null,
 circuitFailureThreshold?: number | null, circuitCooldownSeconds?: number | null,
 // Overrides the global AI redaction switch for this profile; absent or "" follows it.
-privacy?: ModelPrivacyOverride, };
+privacy?: ModelPrivacyOverride,
+// Wire protocol; absent or "" is OpenAI-compatible chat completions.
+provider?: ModelProviderKind,
+// Anthropic only: absent or "" is adaptive thinking.
+thinking?: ModelThinkingMode, thinkingBudget?: number | null, };
+
+export type ModelProviderKind = "" | "anthropic";
+
+export type ModelThinkingMode = "" | "budget" | "off";
 
 export type ModelPrivacyOverride = "" | "on" | "off";
 
@@ -253,6 +261,7 @@ export type SyncCollectAIProfile = { id: string, name: string, baseUrl: string, 
 fallbackModel?: string, temperature?: number, reasoningEffort?: string, contextWindow: number, maxTokens?: number,
 proxy: string | null, stream: boolean, requestTimeoutSeconds?: number, idleTimeoutSeconds?: number,
 circuitFailureThreshold?: number, circuitCooldownSeconds?: number, privacy?: string,
+provider?: string, thinking?: string, thinkingBudget?: number,
 updatedAt: number, apiKey?: string, apiKeySet: boolean, apiKeyState: SyncCollectSecretState, };
 
 export type SyncCollectAssetsResult = { assets: SyncCollectAsset[], hasMore: boolean, nextAfterId?: string, };

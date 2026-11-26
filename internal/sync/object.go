@@ -236,6 +236,9 @@ type aiProfileObject struct {
 	MaxTokens       *int     `json:"maxTokens,omitempty"`
 	Proxy           *string  `json:"proxy"`
 	Stream          bool     `json:"stream"`
+	Provider        string   `json:"provider,omitempty"`
+	Thinking        string   `json:"thinking,omitempty"`
+	ThinkingBudget  *int     `json:"thinkingBudget,omitempty"`
 
 	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
 	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`

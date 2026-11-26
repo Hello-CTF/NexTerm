@@ -162,7 +162,8 @@ func (c *Client) runNative(ctx context.Context, input []*schema.Message, options
 	}
 	if onFrame != nil && frameErr == nil {
 		last := &schema.Message{Role: schema.Assistant, Content: text.Push("", true), ReasoningContent: reasoning.Push("", true)}
-		last.Extra = restoredExtra(frameExtra, last.ReasoningContent)
+		// The Anthropic content carrier already rode on the frame it came with.
+		last.Extra = withoutExtra(restoredExtra(frameExtra, last.ReasoningContent), anthropicContentKey)
 		if requestErr == nil {
 			for i, call := range result.completion.ToolCalls {
 				last.ToolCalls = append(last.ToolCalls, schema.ToolCall{Index: new(i), ID: call.ID, Type: call.Type, Function: schema.FunctionCall{Name: call.Function.Name, Arguments: call.Function.Arguments}})
@@ -232,6 +233,15 @@ func restoredExtra(extra map[string]any, reasoning string) map[string]any {
 	} else {
 		copy[reasoningExtraKey] = reasoning
 	}
+	return copy
+}
+
+func withoutExtra(extra map[string]any, key string) map[string]any {
+	if _, ok := extra[key]; !ok {
+		return extra
+	}
+	copy := maps.Clone(extra)
+	delete(copy, key)
 	return copy
 }
 

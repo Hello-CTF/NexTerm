@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { modelApi, type AiUsageSummaryRow, type ModelProfile, type ModelProfilesView, type ProviderTestResult } from "../../ipc/commands";
-import type { AiCircuitStatusDto, ModelPrivacyOverride } from "../../ipc/types";
+import type { AiCircuitStatusDto, ModelPrivacyOverride, ModelProviderKind, ModelThinkingMode } from "../../ipc/types";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { Combobox } from "../../ui/Combobox";
@@ -8,6 +8,9 @@ import { Select } from "../../ui/Select";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import {
+  ANTHROPIC_DEFAULT_BASE_URL,
+  ANTHROPIC_EFFORT_PRESETS,
+  ANTHROPIC_MODELS,
   CIRCUIT_DEFAULT_COOLDOWN_SECONDS,
   CIRCUIT_DEFAULT_THRESHOLD,
   circuitCooldownFromInput,
@@ -19,6 +22,7 @@ import {
   fallbackModelFromInput,
   fallbackModelLabel,
   idleTimeoutLabel,
+  isAnthropicProfile,
   MAX_TOKENS_HARD_LIMIT,
   maxTokensFromInput,
   maxTokensLabel,
@@ -27,6 +31,8 @@ import {
   requestTimeoutLabel,
   sameModelProfile,
   selectModelProfileId,
+  THINKING_BUDGET_MIN,
+  thinkingBudgetFromInput,
   timeoutSecondsFromInput,
 } from "./modelLifecycle";
 import { formatTokens } from "./UsageRing";
@@ -60,6 +66,7 @@ const MODEL_PRESETS: ModelPreset[] = [
   { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-flash" },
   { id: "zhipu", label: "Zhipu", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4.7-flash" },
   { id: "ollama", label: "Ollama", baseUrl: "http://127.0.0.1:11434/v1", model: "qwen2.5:7b" },
+  { id: "anthropic", label: "Anthropic", baseUrl: ANTHROPIC_DEFAULT_BASE_URL, model: "claude-opus-5-5" },
 ];
 
 const REASONING_EFFORT_PRESETS = ["minimal", "low", "medium", "high"] as const;
@@ -88,6 +95,9 @@ function blankProfile(): ModelDraft {
     circuitFailureThreshold: null,
     circuitCooldownSeconds: null,
     reasoningEffort: "",
+    provider: "",
+    thinking: "",
+    thinkingBudget: null,
   };
 }
 
@@ -107,7 +117,9 @@ function modelDraftParamsAtDefaults(p: ModelDraft): boolean {
     (p.idleTimeoutSeconds ?? null) === MODEL_PARAM_DEFAULTS.idleTimeoutSeconds &&
     (p.maxTokens ?? null) === MODEL_PARAM_DEFAULTS.maxTokens &&
     (p.circuitFailureThreshold ?? null) === MODEL_PARAM_DEFAULTS.circuitFailureThreshold &&
-    (p.circuitCooldownSeconds ?? null) === MODEL_PARAM_DEFAULTS.circuitCooldownSeconds
+    (p.circuitCooldownSeconds ?? null) === MODEL_PARAM_DEFAULTS.circuitCooldownSeconds &&
+    (p.thinking ?? "") === MODEL_PARAM_DEFAULTS.thinking &&
+    (p.thinkingBudget ?? null) === MODEL_PARAM_DEFAULTS.thinkingBudget
   );
 }
 
@@ -135,6 +147,7 @@ export function ModelManager({
   const [circuitNonce, setCircuitNonce] = useState(0);
 
   const isNew = !!draft && draft.id === "";
+  const anthropic = !!draft && isAnthropicProfile(draft);
   const savedProfile = view?.profiles.find((p) => p.id === draft?.id) ?? null;
   const dirty = !!draft && (!savedProfile || !sameModelProfile(savedProfile, draft as ModelProfile));
   const dirtyRef = useRef(dirty);
@@ -192,6 +205,8 @@ export function ModelManager({
             maxTokens: null,
             circuitFailureThreshold: null,
             circuitCooldownSeconds: null,
+            thinking: "",
+            thinkingBudget: null,
           }
         : prev,
     );
@@ -226,10 +241,14 @@ export function ModelManager({
     if (!draft) return;
     setBusy(true);
     try {
-      const { temperature, contextWindow, reasoningEffort, privacy, ...rest } = draft;
+      const { temperature, contextWindow, reasoningEffort, privacy, provider, thinking, thinkingBudget, ...rest } = draft;
+      const anthropic = provider === "anthropic";
       const payload = {
         ...rest,
-        ...(temperature === null ? {} : { temperature }),
+        ...(anthropic ? { provider } : {}),
+        ...(anthropic && thinking ? { thinking } : {}),
+        ...(anthropic && thinking === "budget" && thinkingBudget != null ? { thinkingBudget } : {}),
+        ...(temperature === null || anthropic ? {} : { temperature }),
         ...(contextWindow === null ? {} : { contextWindow }),
         ...(reasoningEffort ? { reasoningEffort } : {}),
         ...(privacy ? { privacy } : {}),
@@ -363,6 +382,7 @@ export function ModelManager({
           name: base.name.trim() ? base.name : preset.name || tpl.id,
           baseUrl: preset.baseUrl,
           model: preset.model,
+          provider: preset.provider ?? "",
           contextWindow: base.contextWindow ?? preset.contextWindow ?? null,
         };
       });
@@ -475,11 +495,33 @@ export function ModelManager({
                 />
               </Field>
 
+              <Field label={t("接口类型")} htmlFor={`${fieldId}-provider`}>
+                <Select
+                  id={`${fieldId}-provider`}
+                  ariaLabel={t("接口类型")}
+                  value={draft.provider ?? ""}
+                  options={[
+                    { value: "", label: t("OpenAI 兼容") },
+                    { value: "anthropic", label: "Anthropic" },
+                  ]}
+                  onChange={(value) => {
+                    const provider = value as ModelProviderKind;
+                    patch({
+                      provider,
+                      ...(provider === "anthropic" && !draft.baseUrl.trim() ? { baseUrl: ANTHROPIC_DEFAULT_BASE_URL } : {}),
+                    });
+                  }}
+                />
+                {anthropic && (
+                  <div className="nx-hint mt-1 text-[10.5px]">{t("使用 Anthropic Messages API，支持提示缓存与扩展思考。")}</div>
+                )}
+              </Field>
+
               <Field label="Base URL" htmlFor={`${fieldId}-base-url`}>
                 <input
                   id={`${fieldId}-base-url`}
                   className="nx-input font-mono"
-                  placeholder="https://api.deepseek.com/v1"
+                  placeholder={anthropic ? ANTHROPIC_DEFAULT_BASE_URL : "https://api.deepseek.com/v1"}
                   value={draft.baseUrl}
                   onChange={(e) => patch({ baseUrl: e.target.value })}
                 />
@@ -518,13 +560,27 @@ export function ModelManager({
 
               <Field label={t("模型名")} htmlFor={`${fieldId}-model`}>
                 <div className="relative flex gap-1">
-                  <input
-                    id={`${fieldId}-model`}
-                    className="nx-input min-w-0 flex-1 font-mono"
-                    placeholder="deepseek-chat"
-                    value={draft.model}
-                    onChange={(e) => patch({ model: e.target.value })}
-                  />
+                  {anthropic ? (
+                    <div className="min-w-0 flex-1">
+                      <Combobox
+                        id={`${fieldId}-model`}
+                        ariaLabel={t("模型名")}
+                        className="font-mono"
+                        placeholder="claude-opus-5-5"
+                        value={draft.model}
+                        options={ANTHROPIC_MODELS.map((value) => ({ value }))}
+                        onChange={(value) => patch({ model: value })}
+                      />
+                    </div>
+                  ) : (
+                    <input
+                      id={`${fieldId}-model`}
+                      className="nx-input min-w-0 flex-1 font-mono"
+                      placeholder="deepseek-chat"
+                      value={draft.model}
+                      onChange={(e) => patch({ model: e.target.value })}
+                    />
+                  )}
                   <button
                     className="nx-btn nx-btn-outline shrink-0"
                     title={t("使用当前地址和密钥获取模型列表")}
@@ -588,6 +644,7 @@ export function ModelManager({
                     </Field>
 
                     <div className="flex flex-col gap-3 min-[400px]:flex-row">
+                      {!anthropic && (
                       <div className="flex-1">
                         <Field label={t("温度")} htmlFor={`${fieldId}-temperature`}>
                           <input
@@ -605,6 +662,7 @@ export function ModelManager({
                           />
                         </Field>
                       </div>
+                      )}
                       <div className="flex-1">
                         <Field label={t("上下文窗口")} htmlFor={`${fieldId}-context`}>
                           <Combobox
@@ -634,11 +692,48 @@ export function ModelManager({
                         className="font-mono"
                         placeholder={t("使用服务商默认值")}
                         value={draft.reasoningEffort ?? ""}
-                        options={REASONING_EFFORT_PRESETS.map((value) => ({ value }))}
+                        options={(anthropic ? ANTHROPIC_EFFORT_PRESETS : REASONING_EFFORT_PRESETS).map((value) => ({ value }))}
                         onChange={(value) => patch({ reasoningEffort: value })}
                       />
-                      <div className="nx-hint mt-1 text-[10.5px]">{t("仅对支持的 OpenAI 兼容端点生效，可输入自定义值。")}</div>
+                      <div className="nx-hint mt-1 text-[10.5px]">
+                        {anthropic
+                          ? t("作为 Anthropic 的 effort 参数发送；minimal 按 low 处理。")
+                          : t("仅对支持的 OpenAI 兼容端点生效，可输入自定义值。")}
+                      </div>
                     </Field>
+
+                    {anthropic && (
+                      <Field label={t("扩展思考")} htmlFor={`${fieldId}-thinking`}>
+                        <Select
+                          id={`${fieldId}-thinking`}
+                          ariaLabel={t("扩展思考")}
+                          value={draft.thinking ?? ""}
+                          options={[
+                            { value: "", label: t("自适应（默认）") },
+                            { value: "budget", label: t("固定预算（旧模型）") },
+                            { value: "off", label: t("关闭（旧模型）") },
+                          ]}
+                          onChange={(value) => patch({ thinking: value as ModelThinkingMode })}
+                        />
+                        {draft.thinking === "budget" && (
+                          <input
+                            id={`${fieldId}-thinking-budget`}
+                            aria-label={t("思考预算（tokens）")}
+                            className="nx-input mt-1.5 font-mono"
+                            type="number"
+                            min={THINKING_BUDGET_MIN}
+                            max={MAX_TOKENS_HARD_LIMIT}
+                            step={1}
+                            placeholder={t("思考预算（tokens），默认 8192")}
+                            value={draft.thinkingBudget?.toString() ?? ""}
+                            onChange={(e) => patch({ thinkingBudget: thinkingBudgetFromInput(e.target.value) })}
+                          />
+                        )}
+                        <div className="nx-hint mt-1 text-[10.5px]">
+                          {t("当前 Claude 模型只接受自适应思考，用思考强度控制深度；固定预算和关闭仅适用于仍支持它们的旧模型。")}
+                        </div>
+                      </Field>
+                    )}
 
                     <Field label={t("AI 信息脱敏")} htmlFor={`${fieldId}-privacy`}>
                       <Select

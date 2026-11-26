@@ -112,6 +112,9 @@ func (m *resilientChatModel) withBoundTools(opts []model.Option) []model.Option 
 }
 
 func (c *Client) newChatModel(ctx context.Context, servingModel string) (model.ToolCallingChatModel, error) {
+	if c.config.Kind == KindAnthropic {
+		return c.newAnthropicChatModel(servingModel), nil
+	}
 	config := &openai.ChatModelConfig{
 		BaseURL: c.config.BaseURL, APIKey: c.config.APIKey, Model: servingModel,
 		HTTPClient: c.http, MaxTokens: c.config.MaxTokens,

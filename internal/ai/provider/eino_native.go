@@ -70,7 +70,7 @@ func (c *Client) runNativePlain(ctx context.Context, input []*schema.Message, op
 			state := &attemptState{runID: runID, callID: ids.New(), requestedModel: servingModel}
 			result, err := c.invokeNative(ctx, input, options, servingModel, useBlock, state, onFrame)
 			c.recordCircuitOutcome(err)
-			if err != nil && !useBlock && ctx.Err() == nil && !state.frameSeen.Load() && safeStreamFallback(err) {
+			if err != nil && !useBlock && c.config.Kind != KindAnthropic && ctx.Err() == nil && !state.frameSeen.Load() && safeStreamFallback(err) {
 				useBlock = true
 				state = &attemptState{runID: runID, callID: ids.New(), requestedModel: servingModel}
 				result, err = c.invokeNative(ctx, input, options, servingModel, true, state, onFrame)

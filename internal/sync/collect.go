@@ -270,6 +270,9 @@ type CollectAIProfile struct {
 	MaxTokens       *int     `json:"maxTokens,omitempty"`
 	Proxy           *string  `json:"proxy"`
 	Stream          bool     `json:"stream"`
+	Provider        string   `json:"provider,omitempty"`
+	Thinking        string   `json:"thinking,omitempty"`
+	ThinkingBudget  *int     `json:"thinkingBudget,omitempty"`
 
 	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
 	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`
@@ -343,6 +346,7 @@ func (s *Service) CollectAIProfiles(ctx context.Context, request CollectAIProfil
 			ReasoningEffort: record.ReasoningEffort,
 			ContextWindow:   record.ContextWindow, MaxTokens: record.MaxTokens, Proxy: record.Proxy,
 			Stream: record.Stream, RequestTimeoutSeconds: record.RequestTimeoutSeconds,
+			Provider: record.Provider, Thinking: record.Thinking, ThinkingBudget: record.ThinkingBudget,
 			IdleTimeoutSeconds:      record.IdleTimeoutSeconds,
 			CircuitFailureThreshold: record.CircuitFailureThreshold, CircuitCooldownSeconds: record.CircuitCooldownSeconds,
 			Privacy:   record.Privacy,

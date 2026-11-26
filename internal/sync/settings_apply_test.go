@@ -52,6 +52,7 @@ func fullTestAIProfile(id string) aiProfileObject {
 		MaxTokens: testPtr(4096), Proxy: testPtr("http://proxy.example.com:8080"), Stream: true,
 		RequestTimeoutSeconds: testPtr(120), IdleTimeoutSeconds: testPtr(30),
 		CircuitFailureThreshold: testPtr(5), CircuitCooldownSeconds: testPtr(60), Privacy: "on",
+		Provider: "anthropic", Thinking: "budget", ThinkingBudget: testPtr(4096),
 		UpdatedAt: 100,
 	}
 }
@@ -495,7 +496,8 @@ func TestApplyAIProfileRoundtripPreservesFieldsAndSealsKey(t *testing.T) {
 		record.IdleTimeoutSeconds == nil || *record.IdleTimeoutSeconds != *payload.IdleTimeoutSeconds ||
 		record.CircuitFailureThreshold == nil || *record.CircuitFailureThreshold != *payload.CircuitFailureThreshold ||
 		record.CircuitCooldownSeconds == nil || *record.CircuitCooldownSeconds != *payload.CircuitCooldownSeconds ||
-		record.Privacy != payload.Privacy {
+		record.Privacy != payload.Privacy || record.Provider != payload.Provider || record.Thinking != payload.Thinking ||
+		record.ThinkingBudget == nil || *record.ThinkingBudget != *payload.ThinkingBudget {
 		t.Fatalf("profile fields not preserved: %+v", record)
 	}
 	if !strings.HasPrefix(record.APIKey, store.SecretEnvelopePrefix) {
@@ -673,7 +675,8 @@ func TestApplyAIProfileReadableByProfilesManager(t *testing.T) {
 		profile.IdleTimeoutSeconds == nil || *profile.IdleTimeoutSeconds != *payload.IdleTimeoutSeconds ||
 		profile.CircuitFailureThreshold == nil || *profile.CircuitFailureThreshold != *payload.CircuitFailureThreshold ||
 		profile.CircuitCooldownSeconds == nil || *profile.CircuitCooldownSeconds != *payload.CircuitCooldownSeconds ||
-		string(profile.Privacy) != payload.Privacy {
+		string(profile.Privacy) != payload.Privacy || string(profile.Kind) != payload.Provider ||
+		string(profile.Thinking) != payload.Thinking || profile.ThinkingBudget == nil || *profile.ThinkingBudget != *payload.ThinkingBudget {
 		t.Fatalf("manager sees drifted fields: %+v", profile)
 	}
 	config, ok, err := manager.ActiveConfig(ctx)

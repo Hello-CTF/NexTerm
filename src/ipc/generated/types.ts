@@ -491,6 +491,9 @@ export type CollectAIProfile = {
   maxTokens?: number | null;
   proxy: string | null;
   stream: boolean;
+  provider?: string;
+  thinking?: string;
+  thinkingBudget?: number | null;
   requestTimeoutSeconds?: number | null;
   idleTimeoutSeconds?: number | null;
   circuitFailureThreshold?: number | null;

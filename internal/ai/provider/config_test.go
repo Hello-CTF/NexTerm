@@ -16,7 +16,7 @@ func TestAllPresets(t *testing.T) {
 	for _, preset := range presets {
 		got = append(got, preset.ID)
 	}
-	want := []string{"moonshot", "deepseek", "zhipu", "ollama"}
+	want := []string{"moonshot", "deepseek", "zhipu", "ollama", "anthropic"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("preset order = %v, want %v", got, want)
 	}
@@ -25,10 +25,11 @@ func TestAllPresets(t *testing.T) {
 		model   string
 		window  uint64
 	}{
-		"moonshot": {"https://api.moonshot.cn/v1", "kimi-k3", 1000000},
-		"deepseek": {"https://api.deepseek.com/v1", "deepseek-flash", 1000000},
-		"ollama":   {"http://127.0.0.1:11434/v1", "qwen2.5:7b", 32000},
-		"zhipu":    {"https://open.bigmodel.cn/api/paas/v4", "glm-4.7-flash", 200000},
+		"moonshot":  {"https://api.moonshot.cn/v1", "kimi-k3", 1000000},
+		"deepseek":  {"https://api.deepseek.com/v1", "deepseek-flash", 1000000},
+		"ollama":    {"http://127.0.0.1:11434/v1", "qwen2.5:7b", 32000},
+		"zhipu":     {"https://open.bigmodel.cn/api/paas/v4", "glm-4.7-flash", 200000},
+		"anthropic": {"https://api.anthropic.com", "claude-opus-5-5", 1000000},
 	}
 	for id, check := range checks {
 		config, err := FromPreset(id, "")
@@ -38,6 +39,12 @@ func TestAllPresets(t *testing.T) {
 		if config.BaseURL != check.baseURL || config.Model != check.model || config.ContextWindow != check.window || config.Temperature != nil || config.ReasoningEffort != "" || !config.Stream || config.Proxy != nil {
 			t.Fatalf("preset %s = %+v", id, config)
 		}
+	}
+	if config, _ := FromPreset("anthropic", ""); config.Kind != KindAnthropic {
+		t.Fatalf("anthropic preset kind = %q", config.Kind)
+	}
+	if config, _ := FromPreset("zhipu", ""); config.Kind != KindOpenAI {
+		t.Fatalf("zhipu preset kind = %q", config.Kind)
 	}
 	config, err := FromPreset("moonshot", " custom-model ")
 	if err != nil || config.Model != "custom-model" {

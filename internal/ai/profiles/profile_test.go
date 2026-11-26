@@ -70,6 +70,35 @@ func TestProfileJSONTemperatureAndReasoningEffortCompat(t *testing.T) {
 
 func profileFloat64Ptr(value float64) *float64 { return &value }
 
+func TestProfileProviderKindAndThinkingRoundTrip(t *testing.T) {
+	var profile Profile
+	if err := json.Unmarshal([]byte(`{"model":"claude-opus-5-5","provider":"anthropic","thinking":"budget","thinkingBudget":10}`), &profile); err != nil {
+		t.Fatal(err)
+	}
+	profile = profile.Normalized()
+	config := profile.ProviderConfig()
+	if config.Kind != provider.KindAnthropic || config.Thinking != provider.ThinkingBudget || config.ThinkingBudget == nil || *config.ThinkingBudget != provider.MinThinkingBudget {
+		t.Fatalf("config = %+v", config)
+	}
+	for _, raw := range []string{`{"model":"m","provider":"bedrock","thinking":"sometimes"}`, `{"model":"m"}`} {
+		var unknown Profile
+		if err := json.Unmarshal([]byte(raw), &unknown); err != nil {
+			t.Fatal(err)
+		}
+		unknown = unknown.Normalized()
+		if unknown.Kind != provider.KindOpenAI || unknown.Thinking != provider.ThinkingAdaptive {
+			t.Fatalf("%s normalized to %+v", raw, unknown)
+		}
+		encoded, err := json.Marshal(unknown)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encoded), `"provider"`) || strings.Contains(string(encoded), `"thinking"`) {
+			t.Fatalf("an OpenAI-compatible profile stores Anthropic fields: %s", encoded)
+		}
+	}
+}
+
 func TestProfilePrivacyOverrideRoundTripsAndUnknownValuesFollowTheGlobalSwitch(t *testing.T) {
 	for raw, want := range map[string]provider.PrivacyOverride{`"on"`: provider.PrivacyOn, `"off"`: provider.PrivacyOff, `""`: provider.PrivacyFollow, `"maybe"`: provider.PrivacyFollow} {
 		var profile Profile

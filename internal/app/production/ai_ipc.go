@@ -130,6 +130,9 @@ func registerAICommandsGuarded(dispatcher *ipc.Dispatcher, manager *profiles.Man
 					profile = profiles.DefaultProfile()
 				}
 				config := input.Config
+				profile.Kind = config.Kind
+				profile.Thinking = config.Thinking
+				profile.ThinkingBudget = config.ThinkingBudget
 				profile.BaseURL = config.BaseURL
 				profile.APIKey = config.APIKey
 				profile.Model = config.Model

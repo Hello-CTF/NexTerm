@@ -119,7 +119,26 @@ export const MODEL_PARAM_DEFAULTS = {
   maxTokens: null,
   circuitFailureThreshold: null,
   circuitCooldownSeconds: null,
+  thinking: "",
+  thinkingBudget: null,
 } as const;
+
+export const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
+
+// Current Claude models offered in the picker; any other ID can still be typed.
+export const ANTHROPIC_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"] as const;
+
+export const ANTHROPIC_EFFORT_PRESETS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+export const THINKING_BUDGET_MIN = 1024;
+
+export function isAnthropicProfile(profile: { provider?: string }): boolean {
+  return profile.provider === "anthropic";
+}
+
+export function thinkingBudgetFromInput(raw: string): number | null {
+  return positiveIntFromInput(raw);
+}
 
 export function resetModelParams(profile: ModelProfile): ModelProfile {
   return { ...profile, ...MODEL_PARAM_DEFAULTS };
@@ -137,7 +156,9 @@ export function modelParamsAtDefaults(profile: ModelProfile): boolean {
     (profile.idleTimeoutSeconds ?? null) === MODEL_PARAM_DEFAULTS.idleTimeoutSeconds &&
     (profile.maxTokens ?? null) === MODEL_PARAM_DEFAULTS.maxTokens &&
     (profile.circuitFailureThreshold ?? null) === MODEL_PARAM_DEFAULTS.circuitFailureThreshold &&
-    (profile.circuitCooldownSeconds ?? null) === MODEL_PARAM_DEFAULTS.circuitCooldownSeconds
+    (profile.circuitCooldownSeconds ?? null) === MODEL_PARAM_DEFAULTS.circuitCooldownSeconds &&
+    (profile.thinking ?? "") === MODEL_PARAM_DEFAULTS.thinking &&
+    (profile.thinkingBudget ?? null) === MODEL_PARAM_DEFAULTS.thinkingBudget
   );
 }
 
@@ -163,6 +184,9 @@ export function sameModelProfile(a: ModelProfile, b: ModelProfile): boolean {
     (a.circuitFailureThreshold ?? null) === (b.circuitFailureThreshold ?? null) &&
     (a.circuitCooldownSeconds ?? null) === (b.circuitCooldownSeconds ?? null) &&
     (a.reasoningEffort ?? "") === (b.reasoningEffort ?? "") &&
-    (a.privacy ?? "") === (b.privacy ?? "")
+    (a.privacy ?? "") === (b.privacy ?? "") &&
+    (a.provider ?? "") === (b.provider ?? "") &&
+    (a.thinking ?? "") === (b.thinking ?? "") &&
+    (a.thinkingBudget ?? null) === (b.thinkingBudget ?? null)
   );
 }
