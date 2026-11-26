@@ -241,6 +241,36 @@ func (r *Runtime) servesP2P() bool {
 	return ok
 }
 
+// P2PEndpointInfo describes the endpoint direct connections are negotiated through.
+type P2PEndpointInfo struct {
+	// URL is the server base URL the agent connects to.
+	URL string
+	// Proxied reports a manual proxy on the endpoint: direct UDP would bypass it.
+	Proxied bool
+	// Insecure reports an endpoint without TLS verification, where the device key is never registered.
+	Insecure bool
+}
+
+// FetchP2PConfig reads the direct-connection configuration through the current endpoint.
+func (r *Runtime) FetchP2PConfig(ctx context.Context) (*P2PConfig, P2PEndpointInfo, error) {
+	client := r.prober.Current()
+	if client == nil {
+		return nil, P2PEndpointInfo{}, ErrNoEndpoint
+	}
+	info := P2PEndpointInfo{URL: client.BaseURL(), Proxied: client.DialPolicy().Proxy.Enabled(), Insecure: client.Insecure()}
+	config, err := client.P2PConfig(ctx, r.deviceID, r.secret)
+	return config, info, err
+}
+
+// UploadP2PAudit submits direct stream records through the current endpoint, filling in the device credentials.
+func (r *Runtime) UploadP2PAudit(ctx context.Context, grants []string, records []P2PAuditRecord) (*P2PAuditResponse, error) {
+	client := r.prober.Current()
+	if client == nil {
+		return nil, ErrNoEndpoint
+	}
+	return client.UploadP2PAudit(ctx, P2PAuditRequest{DeviceID: r.deviceID, Secret: r.secret, Grants: grants, Records: records})
+}
+
 // RegisterP2PKey registers the device key through the current endpoint.
 func (r *Runtime) RegisterP2PKey(ctx context.Context) (*P2PKeyResponse, error) {
 	client := r.prober.Current()

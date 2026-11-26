@@ -79,6 +79,9 @@ type Config struct {
 	// i.e. above ICE. It is a test hook for injected loss and latency; ICE
 	// connectivity checks are not affected by it.
 	PacketConnWrapper func(net.PacketConn) net.PacketConn
+	// LoopbackOnly gathers only IPv4 loopback host candidates. It is a test hook for in-process legs on hosts
+	// whose only usable interface may be loopback; production never sets it.
+	LoopbackOnly bool
 
 	// iceOptions are appended to the ICE agent options (test hook for vnet,
 	// loopback candidates and faster checks).
@@ -219,6 +222,9 @@ func newAgent(cfg Config, local Credentials) (*ice.Agent, error) {
 	}
 	if len(uris) > 0 {
 		opts = append(opts, ice.WithUrls(uris))
+	}
+	if cfg.LoopbackOnly {
+		opts = append(opts, ice.WithIncludeLoopback(), ice.WithIPFilter(func(ip net.IP) bool { return ip.IsLoopback() && ip.To4() != nil }))
 	}
 	opts = append(opts, cfg.iceOptions...)
 	return ice.NewAgentWithOptions(opts...)

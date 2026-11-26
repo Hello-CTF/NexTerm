@@ -1243,36 +1243,71 @@ func (r *Runtime) handleStreamBridge(bridgeID, purpose string) {
 			return
 		}
 		// The carrier lives as long as the runtime, not as long as this bridge request: a stream outlives it.
-		conn, resumed, err := r.streams.Accept(ctx, websocket.NetConn(ctx, ws, websocket.MessageBinary), purpose)
-		if err != nil {
+		if err := r.serveCarrier(ctx, websocket.NetConn(ctx, ws, websocket.MessageBinary), bridgeID, purpose, env, handler); err != nil {
 			r.logger.Warn("stream bridge refused", "bridge_id", bridgeID, "purpose", purpose, "error", err)
-			return
-		}
-		if resumed {
-			return
-		}
-		if terminal {
-			r.serveTerminalStream(ctx, bridgeID, conn, env)
-			return
-		}
-		key := claimKey(bridgeID, purpose)
-		r.mu.Lock()
-		r.claimed[key] = conn
-		r.mu.Unlock()
-		defer func() {
-			r.mu.Lock()
-			unclaimed := r.claimed[key]
-			delete(r.claimed, key)
-			r.mu.Unlock()
-			if unclaimed != nil {
-				_ = unclaimed.Close()
-			}
-		}()
-		if err := handler(ctx, bridgeID); err != nil {
-			r.logger.Warn("purpose bridge failed", "bridge_id", bridgeID, "purpose", purpose, "error", err)
 		}
 	}()
 }
+
+// ServeCarrier serves an rstream carrier authorized for purpose that did not come over a relay bridge (a direct
+// stream): an OPEN starts a stream served like one on a stream bridge, a RESUME re-attaches a stream already
+// being served. bridgeID only names the stream in logs and the purpose handler's claim; env is the terminal's
+// SSH session variables. It returns once the stream is served, or at once for a RESUME. The caller has checked
+// that the carrier may carry purpose.
+func (r *Runtime) ServeCarrier(ctx context.Context, conn net.Conn, bridgeID, purpose string, env []string) error {
+	if !r.TerminalEnabled() {
+		_ = conn.Close()
+		return errors.New("terminal access is disabled")
+	}
+	var handler PurposeHandler
+	if purpose != "" && purpose != PurposeTerminal {
+		r.mu.Lock()
+		handler = r.purposeHandlers[purpose]
+		r.mu.Unlock()
+		if handler == nil {
+			_ = conn.Close()
+			return fmt.Errorf("no handler for purpose %q", purpose)
+		}
+	}
+	return r.serveCarrier(ctx, conn, bridgeID, purpose, env, handler)
+}
+
+func (r *Runtime) serveCarrier(ctx context.Context, carrier net.Conn, bridgeID, purpose string, env []string, handler PurposeHandler) error {
+	conn, resumed, err := r.streams.Accept(ctx, carrier, purpose)
+	if err != nil {
+		return err
+	}
+	if resumed {
+		return nil
+	}
+	if handler == nil {
+		r.serveTerminalStream(ctx, bridgeID, conn, env)
+		return nil
+	}
+	key := claimKey(bridgeID, purpose)
+	r.mu.Lock()
+	r.claimed[key] = conn
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		unclaimed := r.claimed[key]
+		delete(r.claimed, key)
+		r.mu.Unlock()
+		if unclaimed != nil {
+			_ = unclaimed.Close()
+		}
+	}()
+	if err := handler(ctx, bridgeID); err != nil {
+		r.logger.Warn("purpose bridge failed", "bridge_id", bridgeID, "purpose", purpose, "error", err)
+	}
+	return nil
+}
+
+// TerminalEnabled reports the server's desired terminal switch for this device.
+func (r *Runtime) TerminalEnabled() bool { return r.desiredSnapshot().TerminalEnabled }
+
+// DeviceID is the enrolled device id; empty before Run loaded the config.
+func (r *Runtime) DeviceID() string { return r.deviceID }
 
 // serveTerminalStream pipes a new terminal stream to the supervisor helper, as handleTerminalBridge does for a
 // raw bridge.
