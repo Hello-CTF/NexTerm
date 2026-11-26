@@ -49,6 +49,8 @@ import { useFileOps } from "./useFileOps";
 import { useLongPress, useMultiSelect } from "./useMultiSelect";
 import { chmodSupport, extractSupported, packDownloadSupported, validateEntryName, windowsReadOnly } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
+import { askAiAboutFile } from "./fileAiRef";
+import { fileEditorCaseInsensitive, isDirtyFileEditor } from "./editorGuards";
 import { conflictCaseInsensitive, findConflict } from "./transferQueue";
 import { pickFollowedTabId, useCwdFollow, type CwdFollowControl } from "./cwdFollow";
 import { terminalBufferInFront } from "../terminal/insertCommand";
@@ -77,6 +79,7 @@ import {
   IconMore,
   IconRefresh,
   IconShieldCheck,
+  IconSparkles,
   IconTerminal,
   IconTrash,
   IconUpload,
@@ -1526,6 +1529,21 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         label: t("下载当前文件"),
         icon: <IconDownload size={13} />,
         onSelect: () => void download(entry.path),
+      });
+      items.push({
+        kind: "item",
+        label: t("引用到 AI"),
+        icon: <IconSparkles size={13} />,
+        hint: t("按路径引用"),
+        disabled: !isEditableFile(entry.name),
+        onSelect: () => {
+          const kind = useUi.getState().sessions.find((session) => session.id === sessionId)?.kind ?? "";
+          const unsaved = isDirtyFileEditor(
+            { id: "", kind: "files", title: "", sessionId, path: entry.path, closable: true },
+            fileEditorCaseInsensitive(kind),
+          );
+          askAiAboutFile(sessionId, entry.path, { unsaved });
+        },
       });
     }
     items.push({
