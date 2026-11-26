@@ -133,8 +133,13 @@ func ReadHeader(conn net.Conn) (StreamHeader, error) {
 
 // ReadReply reads a Reply within HandshakeTimeout.
 func ReadReply(conn net.Conn) (Reply, error) {
+	return ReadReplyWithin(conn, HandshakeTimeout)
+}
+
+// ReadReplyWithin reads a Reply within timeout.
+func ReadReplyWithin(conn net.Conn, timeout time.Duration) (Reply, error) {
 	var reply Reply
-	if err := readFrameWithin(conn, HandshakeTimeout, &reply); err != nil {
+	if err := readFrameWithin(conn, timeout, &reply); err != nil {
 		return Reply{}, err
 	}
 	if reply.Status == 0 {

@@ -115,7 +115,7 @@ func (l *Link) OpenDeviceStream(ctx context.Context, header StreamHeader) (net.C
 		_ = conn.Close()
 		return nil, Reply{}, contextError(ctx, err)
 	}
-	reply, err := ReadReply(conn)
+	reply, err := ReadReplyWithin(conn, StreamReplyTimeout)
 	if err != nil {
 		_ = conn.Close()
 		return nil, Reply{}, contextError(ctx, err)

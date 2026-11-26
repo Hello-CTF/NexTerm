@@ -54,6 +54,10 @@ const (
 const (
 	// HandshakeTimeout bounds reading a Hello, a StreamHeader or their Reply.
 	HandshakeTimeout = 10 * time.Second
+	// StreamReplyTimeout bounds waiting for the server's reply to a device stream. The server may wait up to a
+	// minute for an older agent to dial a legacy bridge, so the client waits a little longer than that; the
+	// caller's context still ends the wait sooner.
+	StreamReplyTimeout = 65 * time.Second
 	// KeepAlivePeriod is the idle keepalive of both carriers; it stays below common proxy idle timeouts.
 	KeepAlivePeriod = 15 * time.Second
 	// IdleTimeout closes a QUIC session whose peer has been silent this long.
