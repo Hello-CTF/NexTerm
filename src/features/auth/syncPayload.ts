@@ -91,6 +91,9 @@ export function aiProfilePayload(p: SyncCollectAIProfile): unknown {
   if (p.maxTokens !== undefined && p.maxTokens !== null) o.maxTokens = p.maxTokens;
   o.proxy = p.proxy ?? null;
   o.stream = p.stream;
+  if (p.provider) o.provider = p.provider;
+  if (p.thinking) o.thinking = p.thinking;
+  if (p.thinkingBudget !== undefined && p.thinkingBudget !== null) o.thinkingBudget = p.thinkingBudget;
   if (p.requestTimeoutSeconds !== undefined && p.requestTimeoutSeconds !== null) o.requestTimeoutSeconds = p.requestTimeoutSeconds;
   if (p.idleTimeoutSeconds !== undefined && p.idleTimeoutSeconds !== null) o.idleTimeoutSeconds = p.idleTimeoutSeconds;
   if (p.circuitFailureThreshold !== undefined && p.circuitFailureThreshold !== null) o.circuitFailureThreshold = p.circuitFailureThreshold;

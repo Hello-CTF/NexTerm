@@ -170,6 +170,7 @@ describe("desktop default keymap", () => {
       nextPrompt: "Mod+Shift+ArrowDown",
       copyLastOutput: "Mod+Shift+o",
       generateCommand: "Primary+i",
+      askAiSelection: "Mod+Shift+Alt+a",
       reclaimTakeover: "Mod+Shift+e",
       openSettings: "Mod+,",
       focusAiInput: "Mod+Shift+a",

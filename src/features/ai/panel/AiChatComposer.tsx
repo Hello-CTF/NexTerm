@@ -16,6 +16,7 @@ import { acknowledgePrivacyImageNotice, PRIVACY_IMAGE_NOTICE, usePrivacyImageNot
 import { PLAN_MODE_HINT, statusText, MODE_LABEL, appliedPermissionMode, permissionSourceText } from "./aiSidebarShared";
 import type { AiChatCtx } from "./aiChatCtx";
 import { t } from "../../../i18n";
+import { refSourceHint, revealRefSource } from "../refSource";
 
 export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
   const chatPrivacy = useChatPrivacy(ctx.tabKey);
@@ -198,8 +199,20 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
         {refs.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1">
             {refs.map((r) => (
-              <span key={r.id} className="nx-chip nx-chip-accent" title={r.detail}>
-                <span className="truncate">{r.label}</span>
+              <span key={r.id} className="nx-chip nx-chip-accent" title={r.detail} data-ref-id={r.id}>
+                {refSourceHint(r) !== null ? (
+                  <button
+                    type="button"
+                    className="truncate"
+                    data-ref-source=""
+                    title={refSourceHint(r) ?? undefined}
+                    onClick={() => revealRefSource(r)}
+                  >
+                    {r.label}
+                  </button>
+                ) : (
+                  <span className="truncate">{r.label}</span>
+                )}
                 <button
                   className="nx-chip-x"
                   title={t("移除引用")}

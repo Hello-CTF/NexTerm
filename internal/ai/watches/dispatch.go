@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 // Sink receives watchEvent envelopes as untrusted tool data. Implementations
@@ -20,9 +22,10 @@ type Sink interface {
 // pending; cancel settles them atomically with the watch so cancelled events
 // stop being delivered.
 type Dispatcher struct {
-	store Store
-	sink  Sink
-	now   func() time.Time
+	store  Store
+	sink   Sink
+	now    func() time.Time
+	policy store.AgentWatchRepeatPolicy
 }
 
 func NewDispatcher(store Store, sink Sink, options Options) (*Dispatcher, error) {
@@ -33,7 +36,7 @@ func NewDispatcher(store Store, sink Sink, options Options) (*Dispatcher, error)
 		return nil, errors.New("watches: dispatcher sink is nil")
 	}
 	options.withDefaults()
-	return &Dispatcher{store: store, sink: sink, now: options.Now}, nil
+	return &Dispatcher{store: store, sink: sink, now: options.Now, policy: options.repeatPolicy()}, nil
 }
 
 // DispatchOnce delivers up to limit pending events and acknowledges each one.
@@ -57,7 +60,7 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context, limit int) (int, error) {
 		if err := d.sink.DeliverWatchToolData(ctx, NewToolData(event)); err != nil {
 			return delivered, err
 		}
-		if _, err := d.store.AgentWatchEventAck(ctx, row.DeliveryID, row.Revision, d.now().UnixMilli()); err != nil {
+		if _, err := d.store.AgentWatchEventAckPolicy(ctx, row.DeliveryID, row.Revision, d.now().UnixMilli(), d.policy); err != nil {
 			if isBenignWatchRace(err) {
 				delivered++
 				continue

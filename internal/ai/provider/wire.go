@@ -42,6 +42,9 @@ func (r terminalErrorReader) Read([]byte) (int, error) {
 
 func (t *wireTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	state := attemptFromContext(request.Context())
+	if state != nil && strings.HasSuffix(request.URL.Path, "/v1/messages") {
+		return t.roundTripAnthropic(request, state)
+	}
 	if state == nil || !strings.HasSuffix(request.URL.Path, "/chat/completions") {
 		return t.base.RoundTrip(request)
 	}
@@ -82,6 +85,27 @@ func (t *wireTransport) RoundTrip(request *http.Request) (*http.Response, error)
 		return nil, fmt.Errorf("read AI block response: %w", err)
 	}
 	response.Body = body
+	return response, nil
+}
+
+// roundTripAnthropic applies the transport's shared rules to the Messages
+// API: rate-limit hints, bounded error bodies and the idle timeout. Bodies
+// pass through unchanged because the request and the stream are already in
+// the shape the Anthropic adapter expects.
+func (t *wireTransport) roundTripAnthropic(request *http.Request, state *attemptState) (*http.Response, error) {
+	response, err := t.base.RoundTrip(request)
+	if err != nil || response == nil {
+		return response, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		switch response.StatusCode {
+		case http.StatusTooManyRequests, http.StatusServiceUnavailable, 529:
+			state.captureRetryAfter(response.Header.Get("Retry-After"), time.Now())
+		}
+		closeErrorBody(response)
+		return response, nil
+	}
+	response.Body = newIdleTimeoutBody(response.Body, t.idle)
 	return response, nil
 }
 

@@ -61,8 +61,12 @@ const (
 	KindDBWrite      Kind = "db_write"
 	KindShellPipe    Kind = "shell_pipe"
 	KindSchedule     Kind = "schedule"
-	KindPermission   Kind = "perm"
-	KindDanger       Kind = "danger"
+	KindCronJob      Kind = "cron_job" // recurring jobs; a remembered reminder approval does not cover them
+	// KindTerminalSubscribe covers terminal_subscribe: each fire starts an
+	// unattended run, so a remembered reminder approval does not cover it.
+	KindTerminalSubscribe Kind = "terminal_subscribe"
+	KindPermission        Kind = "perm"
+	KindDanger            Kind = "danger"
 	// KindProgram marks a command NexTerm has no rule for; Ruling.Programs names
 	// the programs, so a session approval covers exactly those programs.
 	KindProgram Kind = "program"
@@ -243,17 +247,19 @@ func DecideResource(config Config, ruling Ruling, memory *Memory, resource Resou
 }
 
 var kindLabels = map[Kind]string{
-	KindSudo:         "sudo 提权",
-	KindWriteFS:      "文件写入",
-	KindService:      "服务与系统设置变更",
-	KindDockerMutate: "Docker 容器变更",
-	KindPackage:      "软件包安装与卸载",
-	KindProcess:      "新建终端",
-	KindDBWrite:      "数据库写入",
-	KindShellPipe:    "管道执行",
-	KindSchedule:     "定时提醒",
-	KindPermission:   "权限与属主变更",
-	"shell_history":  "读取 shell 历史",
+	KindSudo:              "sudo 提权",
+	KindWriteFS:           "文件写入",
+	KindService:           "服务与系统设置变更",
+	KindDockerMutate:      "Docker 容器变更",
+	KindPackage:           "软件包安装与卸载",
+	KindProcess:           "新建终端",
+	KindDBWrite:           "数据库写入",
+	KindShellPipe:         "管道执行",
+	KindSchedule:          "定时提醒",
+	KindCronJob:           "定时任务",
+	KindTerminalSubscribe: "终端订阅",
+	KindPermission:        "权限与属主变更",
+	"shell_history":       "读取 shell 历史",
 }
 
 // SessionScope describes what a session approval of the ruling covers, for the

@@ -872,3 +872,20 @@ describe("history and reset", () => {
     expect(state.todos).toHaveLength(0);
   });
 });
+
+describe("file change records", () => {
+  it("keep the session a change was written on, live and from history, and stay valid without it", () => {
+    let state = beginRun(createConversation(), 1);
+    state = applyAiEvent(state, 1, { type: "fileChange", id: "f1", path: "/x", sessionId: "s1", before: "1", after: "2" }).state;
+    state = applyAiEvent(state, 1, { type: "fileChange", id: "f2", path: "/y", before: "1", after: "2" }).state;
+    const live = state.items.filter((item) => item.role === "diff");
+    expect(live[0]).toMatchObject({ path: "/x", sessionId: "s1" });
+    expect(live[1]).not.toHaveProperty("sessionId");
+    const history = historyToItems(createConversation(), [
+      { role: "fileChange", content: { type: "fileChange", id: "f1", path: "/x", sessionId: "s1", before: "1", after: "2" } },
+      { role: "fileChange", content: { type: "fileChange", id: "f2", path: "/y", before: "1", after: "2" } },
+    ]);
+    expect(history[0]).toMatchObject({ role: "diff", path: "/x", sessionId: "s1", before: "1", after: "2" });
+    expect(history[1]).not.toHaveProperty("sessionId");
+  });
+});

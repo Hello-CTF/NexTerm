@@ -437,6 +437,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		clear(s.engine.session.dek)
 		s.engine.session = nil
 	}
+	s.engine.relay.Reset()
 	s.lifecycleMu.Lock()
 	s.cancel = nil
 	s.done = nil

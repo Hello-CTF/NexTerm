@@ -5,7 +5,6 @@ import { useAssetProductionClassification } from "../../production/productionSet
 import { setAiTabBusy, type AiRunSlot, createAiRun, registerAiRunGeneration, aiTabRunControls, isCurrentAiRun } from "../runOwnership";
 import { useKeybindings, formatBinding } from "../../../app/keybindings";
 import { type ConversationStream, createConversationStream } from "../conversationStream";
-import { ToolHandleRegistry } from "../agentToolData";
 import { type IpcChannel, disposeChannel } from "../../../ipc/events";
 import { pendingInteraction } from "../conversation";
 import { setAiTabNeedsInput } from "../aiNeedsInput";
@@ -91,20 +90,8 @@ export function useChatRunSession(p: AiChatBase) {
   const getSnapshot = useCallback(() => stream.getState(), [stream]);
   const conv = useSyncExternalStore(subscribe, getSnapshot);
 
-  // Tool-card handle tracking: the verified roster handle of each tool call
-  // is captured from the actual toolCall/toolResult event stream (live,
-  // replayed, and cross-restart resumed alike) instead of ever being
-  // re-derived. The registry fails closed on conflicting evidence, and the
-  // roster snapshot joins host/cwd/presence through real ai_roster_list data.
-  const toolHandlesRef = useRef<ToolHandleRegistry | null>(null);
-  if (toolHandlesRef.current === null) toolHandlesRef.current = new ToolHandleRegistry();
-  const [toolHandleVersion, setToolHandleVersion] = useState(0);
-  const lastRefreshedHandleVersionRef = useRef(0);
   const pushAgentEvent = useCallback(
-    (generation: number, ev: Record<string, unknown>): ReturnType<typeof stream.pushEvent> => {
-      if (toolHandlesRef.current?.record(generation, ev)) setToolHandleVersion((version) => version + 1);
-      return stream.pushEvent(generation, ev);
-    },
+    (generation: number, ev: Record<string, unknown>): ReturnType<typeof stream.pushEvent> => stream.pushEvent(generation, ev),
     [stream],
   );
 
@@ -314,7 +301,7 @@ export function useChatRunSession(p: AiChatBase) {
   const onConversationChangeRef = useRef(onConversationChange);
   onConversationChangeRef.current = onConversationChange;
 
-  return { liveDeliveryRef, noteLiveDelivery, isLifecycleActive, conversationIdRef, toolHandlesRef, setToolHandleVersion, lastRefreshedHandleVersionRef, restoreBindingRef, restoreGenerationRef, setConversationId, onConversationChangeRef, stream, conv, permScope, conversationId, pushToast, input, workspaces, activeRunRef, cancelWaitersRef, cancelOperationRef, setActiveRun, pushAgentEvent, setBusy, runChannelRef, restoredChannelRef, disposeRestoredChannel, clearResyncState, activeRef, catchupChains, clearResyncTimer, markSyncing, markSynced, markSyncFailed, resyncTimerRef, terminalPollRef, terminalPollFailuresRef, activeRun, runSequenceRef, runControl, setConversationError, images, refs, planMode, busyRef, beginRun, requestSnapshotsRef, setInput, setRefs, setImages, aiScope, setPlanMode, busy, submittingCardIdRef, setSubmittingCardId, confirmCard, submittingCardId, currentProductionConfirm, questionCard, questionInput, productionConfirmRef, toolHandleVersion, stopRef, takeoverState, anyAiBusy, bindings, reclaimKeyLabel, aiScopeAssetId, activeWorkspace, conversationError, confirmCardRef, productionNames, handleProductionState, productionBlocked, setQuestionInput, syncNotice, activeGeneration, hitlWaiting, aiScopeProduction, setModelPanelOpen, modelPanelOpen, rightOpen, rightOpenRef };
+  return { liveDeliveryRef, noteLiveDelivery, isLifecycleActive, conversationIdRef, restoreBindingRef, restoreGenerationRef, setConversationId, onConversationChangeRef, stream, conv, permScope, conversationId, pushToast, input, workspaces, activeRunRef, cancelWaitersRef, cancelOperationRef, setActiveRun, pushAgentEvent, setBusy, runChannelRef, restoredChannelRef, disposeRestoredChannel, clearResyncState, activeRef, catchupChains, clearResyncTimer, markSyncing, markSynced, markSyncFailed, resyncTimerRef, terminalPollRef, terminalPollFailuresRef, activeRun, runSequenceRef, runControl, setConversationError, images, refs, planMode, busyRef, beginRun, requestSnapshotsRef, setInput, setRefs, setImages, aiScope, setPlanMode, busy, submittingCardIdRef, setSubmittingCardId, confirmCard, submittingCardId, currentProductionConfirm, questionCard, questionInput, productionConfirmRef, stopRef, takeoverState, anyAiBusy, bindings, reclaimKeyLabel, aiScopeAssetId, activeWorkspace, conversationError, confirmCardRef, productionNames, handleProductionState, productionBlocked, setQuestionInput, syncNotice, activeGeneration, hitlWaiting, aiScopeProduction, setModelPanelOpen, modelPanelOpen, rightOpen, rightOpenRef };
 }
 
 export type UseChatRunSessionOut = ReturnType<typeof useChatRunSession>;

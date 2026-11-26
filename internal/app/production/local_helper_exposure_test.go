@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -154,4 +157,42 @@ func TestLocalHelperExposureCommandsWithoutController(t *testing.T) {
 	if set.OK || set.Error == nil || set.Error.Code != ipc.CodeUnsupported {
 		t.Fatalf("expose_set = %+v, want unsupported", set)
 	}
+}
+
+// The exposed desktop runs the same agent runtime as nexterm-agent, with the direct-connection service: it serves
+// p2p-signal (so it advertises the capability and registers its device key) and keeps its key in its data dir.
+func TestLocalHelperExposureRunnerServesDirectConnections(t *testing.T) {
+	host, database, _ := newExposureHostFixture(t)
+	dataDir := t.TempDir()
+	factory := newLocalHelperExposureRunner(dataDir, host.helper, database, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	config := &agent.Config{
+		Version: agent.ConfigVersion, DeviceID: "desk-1", Secret: "device-secret-value",
+		BaseURLs: []agent.BaseURLEntry{{URL: "https://nexterm.example.com"}},
+	}
+	runner, err := factory(config, &exposureMemoryStore{config: config}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, ok := runner.(*agent.Runtime)
+	if !ok {
+		t.Fatalf("runner is %T, want the agent runtime", runner)
+	}
+	if !runtime.ServesPurpose(agent.PurposeP2PSignal) {
+		t.Fatal("the exposed desktop does not serve p2p-signal")
+	}
+	if _, err := runtime.P2PKey(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(agent.P2PKeyPath(dataDir)); err != nil {
+		t.Fatalf("device key not kept in the data dir: %v", err)
+	}
+}
+
+type exposureMemoryStore struct{ config *agent.Config }
+
+func (s *exposureMemoryStore) Load() (*agent.Config, error) { copied := *s.config; return &copied, nil }
+func (s *exposureMemoryStore) Save(config *agent.Config) error {
+	copied := *config
+	s.config = &copied
+	return nil
 }

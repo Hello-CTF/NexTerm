@@ -196,3 +196,39 @@ func TestStepLimitSettingIsPerServerAccount(t *testing.T) {
 		t.Fatalf("open access settings = %+v, %v", settings, err)
 	}
 }
+
+func TestRecordEvidenceSwitchControlsRunCapture(t *testing.T) {
+	ctx := context.Background()
+	answer := func() *fakeModel {
+		return &fakeModel{steps: []fakeStep{{chunks: []*schema.Message{schema.AssistantMessage("done", nil)}}}}
+	}
+	runner, _ := settingsRunner(t, answer(), false)
+
+	settings, err := runner.RunSettings(ctx)
+	if err != nil || !settings.RecordEvidence {
+		t.Fatalf("default settings = %+v, %v; recording must start on", settings, err)
+	}
+	stream := &SliceStream{}
+	recorded := startTestJob(t, runner, stream, "recorded")
+	waitClosed(t, stream)
+	if capture := runner.lookupCapture(recorded.JobID); capture == nil || !capture.Sealed {
+		t.Fatalf("run with recording on left capture %v", capture)
+	}
+
+	off := false
+	settings, err = runner.SetRunSettings(ctx, RunSettingsInput{MaxTurns: 10, RecordEvidence: &off})
+	if err != nil || settings.RecordEvidence {
+		t.Fatalf("after turning off = %+v, %v", settings, err)
+	}
+	settings, err = runner.SetRunSettings(ctx, RunSettingsInput{MaxTurns: 20})
+	if err != nil || settings.RecordEvidence || settings.MaxTurns != 20 {
+		t.Fatalf("saving only the step limit changed the evidence switch: %+v, %v", settings, err)
+	}
+	runner.config.Model = func(context.Context) (model.BaseChatModel, uint64, error) { return answer(), 32768, nil }
+	stream = &SliceStream{}
+	skipped := startTestJob(t, runner, stream, "not recorded")
+	waitClosed(t, stream)
+	if capture := runner.lookupCapture(skipped.JobID); capture != nil {
+		t.Fatalf("run with recording off still captured %d events", len(capture.Events))
+	}
+}

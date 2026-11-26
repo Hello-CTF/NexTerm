@@ -13,8 +13,8 @@ export const CONFIRM_ACTION_LABELS: Record<ConfirmDecision, string> = {
 
 export const CONFIRM_ALWAYS_BLOCK_LABEL = t("始终拦截");
 
-// The resolution is stored with the interaction and read back by agentToolData, so it stays in the source language;
-// resolutionLabel shows it in the interface language.
+// The resolution is stored with the interaction, so it stays in the source language; resolutionLabel shows it in the
+// interface language.
 export const CONFIRM_RESOLUTION: Record<ConfirmDecision, string> = {
   allow: "已允许一次",
   allow_session: "本会话已允许此类",
@@ -80,6 +80,14 @@ export function toolLabel(tool: string): string {
       return t("Redis 命令");
     case "send_reminder":
       return t("定时提醒");
+    case "terminal_subscribe":
+      return t("订阅终端事件");
+    case "schedule_job":
+      return t("创建定时任务");
+    case "list_scheduled_jobs":
+      return t("查看定时任务");
+    case "cancel_scheduled_job":
+      return t("删除定时任务");
     case "shell_history":
       return t("读取 shell 历史");
     case "find_files":

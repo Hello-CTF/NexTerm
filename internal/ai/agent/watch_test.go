@@ -35,49 +35,31 @@ func createWatchConversation(t *testing.T, backend *store.Store, ctx context.Con
 	return row.ID
 }
 
-func provisionWatchRoster(t *testing.T, backend *store.Store, ctx context.Context, conversationID, handle, tabID, state string) {
-	t.Helper()
-	_, err := backend.AgentRosterProvision(ctx, store.AgentRosterRow{
-		ConversationID: conversationID, Handle: handle, Alias: handle, TabID: tabID,
-		State: state, Incarnation: "inc-" + handle,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-func watchTestEvent(targetID string) watches.Event {
+func watchTestEvent(conversationID string) watches.Event {
 	return watches.Event{
 		Kind: watches.EventKind, DeliveryID: "delivery-1", RunID: "run-1",
-		WatchID: "watch-1", TargetID: targetID, Identity: "identity-1",
+		WatchID: "watch-1", TargetID: "tab-1", Identity: "identity-1", ConversationID: conversationID,
 		Condition:   watches.Condition{Type: watches.ConditionContains, Pattern: "ready"},
 		MatchedFrom: 10, MatchedTo: 15, Excerpt: "xxready", FiredAt: 1000,
 	}
 }
 
-// A fired watch reaches every conversation whose active roster entry binds
-// the target, and it replays into the next job strictly as tool data: a
-// paired assistant tool call and tool result, never a user message.
-func TestWatchConsumerDeliversToolDataToBoundConversations(t *testing.T) {
+// A fired watch reaches the conversation that created it, and only that one,
+// and it replays into the next job strictly as tool data: a paired assistant
+// tool call and tool result, never a user message.
+func TestWatchConsumerDeliversToolDataToCreatingConversation(t *testing.T) {
 	backend := openWatchConsumerStore(t)
 	ctx := watchConsumerCtx("owner-a")
-	conv1 := createWatchConversation(t, backend, ctx)
-	conv2 := createWatchConversation(t, backend, ctx)
-	convReleased := createWatchConversation(t, backend, ctx)
-	convOtherTab := createWatchConversation(t, backend, ctx)
-	provisionWatchRoster(t, backend, ctx, conv1, "handle-1", "tab-1", string(RosterStateActive))
-	provisionWatchRoster(t, backend, ctx, conv2, "handle-2", "tab-1", string(RosterStateActive))
-	provisionWatchRoster(t, backend, ctx, convReleased, "handle-3", "tab-1", string(RosterStateReleased))
-	provisionWatchRoster(t, backend, ctx, convOtherTab, "handle-4", "tab-2", string(RosterStateActive))
+	conv := createWatchConversation(t, backend, ctx)
+	other := createWatchConversation(t, backend, ctx)
 
-	roster := NewRoster(backend, nil)
-	consumer := NewWatchConsumer(backend, roster)
-	event := watchTestEvent("tab-1")
+	consumer := NewWatchConsumer(backend)
+	event := watchTestEvent(conv)
 	if err := consumer.DeliverWatchToolData(ctx, watches.NewToolData(event)); err != nil {
 		t.Fatal(err)
 	}
 
-	for _, conversationID := range []string{conv1, conv2} {
+	for _, conversationID := range []string{conv} {
 		rows, err := backend.MsgList(ctx, conversationID)
 		if err != nil {
 			t.Fatal(err)
@@ -128,14 +110,12 @@ func TestWatchConsumerDeliversToolDataToBoundConversations(t *testing.T) {
 			t.Fatalf("conversation %s replay has no paired tool message", conversationID)
 		}
 	}
-	for _, conversationID := range []string{convReleased, convOtherTab} {
-		rows, err := backend.MsgList(ctx, conversationID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if deliveries := WatchHistoryToolData(rows); len(deliveries) != 0 {
-			t.Fatalf("conversation %s must not receive the event: %+v", conversationID, deliveries)
-		}
+	rows, err := backend.MsgList(ctx, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deliveries := WatchHistoryToolData(rows); len(deliveries) != 0 {
+		t.Fatalf("a conversation that did not create the watch received it: %+v", deliveries)
 	}
 }
 
@@ -146,11 +126,9 @@ func TestWatchConsumerDedupesRedelivery(t *testing.T) {
 	backend := openWatchConsumerStore(t)
 	ctx := watchConsumerCtx("owner-a")
 	conv := createWatchConversation(t, backend, ctx)
-	provisionWatchRoster(t, backend, ctx, conv, "handle-1", "tab-1", string(RosterStateActive))
-	roster := NewRoster(backend, nil)
-	event := watchTestEvent("tab-1")
+	event := watchTestEvent(conv)
 
-	consumer := NewWatchConsumer(backend, roster)
+	consumer := NewWatchConsumer(backend)
 	for i := 0; i < 3; i++ {
 		if err := consumer.DeliverWatchToolData(ctx, watches.NewToolData(event)); err != nil {
 			t.Fatal(err)
@@ -158,7 +136,7 @@ func TestWatchConsumerDedupesRedelivery(t *testing.T) {
 	}
 	// A fresh consumer over the same store has an empty in-memory index; the
 	// durable pair scan must dedupe instead.
-	restarted := NewWatchConsumer(backend, roster)
+	restarted := NewWatchConsumer(backend)
 	if err := restarted.DeliverWatchToolData(ctx, watches.NewToolData(event)); err != nil {
 		t.Fatal(err)
 	}
@@ -186,15 +164,14 @@ func TestWatchConsumerCompletesAPartialPair(t *testing.T) {
 	backend := openWatchConsumerStore(t)
 	ctx := watchConsumerCtx("owner-a")
 	conv := createWatchConversation(t, backend, ctx)
-	provisionWatchRoster(t, backend, ctx, conv, "handle-1", "tab-1", string(RosterStateActive))
-	event := watchTestEvent("tab-1")
+	event := watchTestEvent(conv)
 	if err := backend.MsgInsert(ctx, conv, historyTypeToolCall, map[string]any{
 		"type": historyTypeToolCall, "jobId": "", "id": "watch-delivery-1",
 		"name": WatchToolName, "args": json.RawMessage(`{"deliveryId":"delivery-1"}`),
 	}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	consumer := NewWatchConsumer(backend, NewRoster(backend, nil))
+	consumer := NewWatchConsumer(backend)
 	if err := consumer.DeliverWatchToolData(ctx, watches.NewToolData(event)); err != nil {
 		t.Fatal(err)
 	}
@@ -217,37 +194,54 @@ func TestWatchConsumerCompletesAPartialPair(t *testing.T) {
 	}
 }
 
-// Events for a target with no roster binding — and runners without a roster
-// — are acknowledged without an invented consumer; a malformed envelope is
-// rejected so the outbox keeps it visible.
-func TestWatchConsumerWithoutBindingOrRoster(t *testing.T) {
+// A watch with no conversation (one the user created from the watch panel),
+// a conversation deleted after the watch was created, and a consumer without
+// a store are all acknowledged without writing to any conversation; a
+// malformed envelope is rejected so the outbox keeps it visible.
+func TestWatchConsumerWithoutConversation(t *testing.T) {
 	backend := openWatchConsumerStore(t)
 	ctx := watchConsumerCtx("owner-a")
-	consumer := NewWatchConsumer(backend, NewRoster(backend, nil))
-	if err := consumer.DeliverWatchToolData(ctx, watches.NewToolData(watchTestEvent("tab-unbound"))); err != nil {
+	bystander := createWatchConversation(t, backend, ctx)
+	consumer := NewWatchConsumer(backend)
+	if err := consumer.DeliverWatchToolData(ctx, watches.NewToolData(watchTestEvent(""))); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewWatchConsumer(nil, nil).DeliverWatchToolData(ctx, watches.NewToolData(watchTestEvent("tab-1"))); err != nil {
+	deleted := createWatchConversation(t, backend, ctx)
+	if err := backend.ConvDelete(ctx, deleted); err != nil {
 		t.Fatal(err)
 	}
-	bad := watches.NewToolData(watchTestEvent("tab-1"))
+	gone := watchTestEvent(deleted)
+	gone.DeliveryID = "delivery-deleted"
+	if err := consumer.DeliverWatchToolData(ctx, watches.NewToolData(gone)); err != nil {
+		t.Fatalf("delivery to a deleted conversation = %v; want it settled", err)
+	}
+	rows, err := backend.MsgList(ctx, bystander)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("an unaddressed event wrote history: %+v", rows)
+	}
+	if err := NewWatchConsumer(nil).DeliverWatchToolData(ctx, watches.NewToolData(watchTestEvent(bystander))); err != nil {
+		t.Fatal(err)
+	}
+	bad := watches.NewToolData(watchTestEvent(bystander))
 	bad.Event.DeliveryID = ""
 	if err := consumer.DeliverWatchToolData(ctx, bad); err == nil {
 		t.Fatal("a delivery without an ID must be rejected")
 	}
 }
 
-// The consumer's roster listing is owner-scoped: another owner's binding
-// never receives the event.
+// Delivery is owner-scoped: an event carrying another owner's conversation
+// never reaches that conversation.
 func TestWatchConsumerIsOwnerIsolated(t *testing.T) {
 	backend := openWatchConsumerStore(t)
 	ctxA := watchConsumerCtx("owner-a")
 	ctxB := watchConsumerCtx("owner-b")
 	convB := createWatchConversation(t, backend, ctxB)
-	provisionWatchRoster(t, backend, ctxB, convB, "handle-b", "tab-1", string(RosterStateActive))
 
-	consumer := NewWatchConsumer(backend, NewRoster(backend, nil))
-	if err := consumer.DeliverWatchToolData(ctxA, watches.NewToolData(watchTestEvent("tab-1"))); err != nil {
+	consumer := NewWatchConsumer(backend)
+	if err := consumer.DeliverWatchToolData(ctxA, watches.NewToolData(watchTestEvent(convB))); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := backend.MsgList(ctxB, convB)
@@ -256,5 +250,42 @@ func TestWatchConsumerIsOwnerIsolated(t *testing.T) {
 	}
 	if deliveries := WatchHistoryToolData(rows); len(deliveries) != 0 {
 		t.Fatalf("owner-b conversation received owner-a's event: %+v", deliveries)
+	}
+}
+
+// The fresh hook hears of a conversation's watch event exactly once, never
+// for a redelivery.
+func TestWatchConsumerWakesTheCreatingConversationOnce(t *testing.T) {
+	backend := openWatchConsumerStore(t)
+	ctx := watchConsumerCtx("owner-a")
+	conv := createWatchConversation(t, backend, ctx)
+	event := watchTestEvent(conv)
+
+	var fresh []string
+	consumer := NewWatchConsumer(backend)
+	consumer.OnFresh(func(_ context.Context, conversationID string, got watches.Event) {
+		fresh = append(fresh, conversationID+"/"+got.DeliveryID)
+	})
+	for i := 0; i < 2; i++ {
+		if err := consumer.DeliverWatchToolData(ctx, watches.NewToolData(event)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restarted := NewWatchConsumer(backend)
+	restarted.OnFresh(func(_ context.Context, conversationID string, got watches.Event) {
+		fresh = append(fresh, "restarted:"+conversationID)
+	})
+	if err := restarted.DeliverWatchToolData(ctx, watches.NewToolData(event)); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := backend.MsgList(ctx, conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deliveries := WatchHistoryToolData(rows); len(deliveries) != 1 || deliveries[0].Event.ConversationID != conv {
+		t.Fatalf("deliveries = %+v", deliveries)
+	}
+	if len(fresh) != 1 || fresh[0] != conv+"/delivery-1" {
+		t.Fatalf("fresh hook calls = %v; want one for the first delivery", fresh)
 	}
 }

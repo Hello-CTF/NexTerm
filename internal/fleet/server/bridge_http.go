@@ -5,8 +5,10 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/rstream"
 	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
 )
@@ -25,17 +27,29 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 	switch purpose {
 	case "", agent.PurposeTerminal:
 		purpose = agent.PurposeTerminal
-	case "file":
+	// file-mux multiplexes file operations over one bridge, so it audits as the file channel it replaces.
+	case deviceproto.PurposeFile, deviceproto.PurposeFileMux:
 		action = "file_open"
 	// listen (one control bridge per remote listener) and accept (one bridge per inbound connection)
 	// serve remote port forwards, so they audit under the same forward_open family as forward.
 	case "forward", "listen", "accept":
 		action = "forward_open"
+	// p2p-signal carries direct-connection signaling; the relay passes it through like any other bridge.
+	case agent.PurposeP2PSignal:
+		action = "p2p_signal_open"
 	default:
 		writeFleetJSON(w, http.StatusBadRequest, ipc.Failure(ipc.NewError(ipc.CodeBadParam, "未知的桥接用途")))
 		return
 	}
-	if _, err := s.authorize(r.Context(), identity, deviceID, action, auditKindDeviceTerminal); err != nil {
+	// A stream bridge carries an rstream the agent unwraps; the client asks for it and the agent must advertise
+	// it. The audit records the inner purpose's action either way, marking stream bridges and resumes.
+	query := r.URL.Query()
+	resume := query.Get(rstream.RelayResumeParam) == "1"
+	capabilities, _ := s.registry.Capabilities(deviceID)
+	stream := (resume || query.Get(rstream.RelayStreamParam) == "1") && hasCapability(capabilities, rstream.Capability)
+	if _, err := s.authorize(r.Context(), identity, deviceID, action, auditKindDeviceTerminal, func(payload *auditPayload) {
+		payload.Stream, payload.Resume = stream, resume
+	}); err != nil {
 		writeFleetFailure(w, err)
 		return
 	}
@@ -55,9 +69,15 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 		writeFleetJSON(w, http.StatusServiceUnavailable, ipc.Failure(ipc.NewError(ipc.CodeDisconnected, errDeviceOffline.Error())))
 		return
 	}
-	capabilities, _ := s.registry.Capabilities(deviceID)
+	capabilities, _ = s.registry.Capabilities(deviceID)
 	if !servesPurpose(capabilities, purpose) {
 		writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, purposeUnsupportedMessage(purpose))))
+		return
+	}
+	// The agent may have reconnected as another build since the audit; a RESUME needs one that still holds streams.
+	stream = stream && hasCapability(capabilities, rstream.Capability)
+	if resume && !stream {
+		writeFleetJSON(w, http.StatusConflict, ipc.Failure(ipc.NewError(ipc.CodeUnsupported, "设备代理不支持续传通道")))
 		return
 	}
 	// The relay is registered under its login session before the session is rechecked, so a revocation that lands
@@ -73,13 +93,16 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 		writeFleetJSON(w, http.StatusUnauthorized, ipc.Failure(ipc.NewError(ipc.CodeForbidden, bridgeSessionReloginMessage)))
 		return
 	}
+	if stream {
+		w.Header().Set(rstream.RelayStreamHeader, "1")
+	}
 	user, err := websocket.Accept(w, r, wscompress.Accept(wscompress.ForBridge(purpose), nil))
 	if err != nil {
 		return
 	}
 	// deviceproto frames can reach 256KiB+overhead on the wire; the default 32KiB read limit would tear the bridge.
 	user.SetReadLimit(1 << 20)
-	bridge, err := s.registry.RequestBridge(ctx, deviceID, purpose)
+	bridge, err := s.registry.RequestStreamBridge(ctx, deviceID, purpose, stream)
 	if err != nil {
 		if errors.Is(context.Cause(ctx), errBridgeSessionRevoked) {
 			_ = user.Close(websocket.StatusPolicyViolation, bridgeSessionReloginMessage)
@@ -88,5 +111,11 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 		_ = user.Close(websocket.StatusPolicyViolation, "device bridge unavailable")
 		return
 	}
-	pipeBridge(ctx, user, bridge.(*wsConn))
+	relayed := bridge.(*wsConn)
+	if stream {
+		// A stream bridge carries rstream frames; the agent adds the session variables itself (the capability
+		// implies it), so no create-frame rewrite may touch the bytes.
+		relayed.createEnv = nil
+	}
+	pipeBridge(ctx, user, relayed)
 }

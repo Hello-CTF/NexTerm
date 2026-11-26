@@ -33,6 +33,11 @@ type RemoteTerminalAccessResult struct {
 	TerminalEnabled bool `json:"terminal_enabled"`
 }
 
+type RemoteP2PKeyConfirmResult struct {
+	OK        bool   `json:"ok"`
+	PublicKey string `json:"public_key"`
+}
+
 type RemotePasswordChangeResult struct {
 	OK          bool   `json:"ok"`
 	RecoveryKey string `json:"recoveryKey,omitempty"`
@@ -136,6 +141,14 @@ func (p *RemoteProxy) SetDeviceTerminalAccess(ctx context.Context, deviceID stri
 		return client.SetDeviceTerminalAccess(ctx, deviceID, enabled)
 	})
 	return RemoteTerminalAccessResult{OK: err == nil, TerminalEnabled: enabled}, err
+}
+
+// ConfirmDeviceP2PKey accepts the device's pending direct-connection key; publicKey must be that pending key.
+func (p *RemoteProxy) ConfirmDeviceP2PKey(ctx context.Context, deviceID, publicKey string) (RemoteP2PKeyConfirmResult, error) {
+	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
+		return client.ConfirmDeviceP2PKey(ctx, deviceID, publicKey)
+	})
+	return RemoteP2PKeyConfirmResult{OK: err == nil, PublicKey: publicKey}, err
 }
 
 func (p *RemoteProxy) CreateEnrollCode(ctx context.Context, ttlMS int64, userID string) (*RemoteEnrollCode, error) {

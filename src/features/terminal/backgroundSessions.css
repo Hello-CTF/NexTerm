@@ -3,6 +3,12 @@
   min-width: 0;
 }
 
+/* A long state such as "闲置（已静音）" stays on one line and truncates instead of wrapping. */
+.nx-bg-sessions td.nx-bg-status {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
 .nx-bg-sessions td.nx-bg-time {
   line-height: 1.35;
 }

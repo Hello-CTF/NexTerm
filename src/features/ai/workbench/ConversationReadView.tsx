@@ -126,9 +126,6 @@ export function ConversationReadView({ record, running }: { record: Conversation
               onApprovePlan={noop}
               onRetry={noop}
               onEdit={noop}
-              agentToolCall={null}
-              onAgentApproval={noop}
-              agentApprovalBusy={false}
               readOnly
             />
           ) : null;

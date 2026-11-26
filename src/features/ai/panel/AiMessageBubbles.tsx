@@ -1,11 +1,11 @@
 import { memo, useState, useMemo, useEffect } from "react";
 import { type ChatItem, type ConfirmItem, type QuestionItem, type SubagentTimeline } from "../conversation";
-import type { AgentToolCall, AgentApprovalDecision } from "../agentTypes";
 import { IconEdit, IconImage, IconAlert, IconRefresh, IconShield, IconLoader, IconCheck, IconXCircle, IconChevronRight, IconBot, IconList, IconPlay, IconLayers } from "../../../ui/icons";
 import { Markdown } from "../Markdown";
-import { AgentToolCard } from "../AgentToolCard";
 import { type EnvironmentConfirmationChallenge, evaluateEnvironmentConfirmation, isManagedDeviceEnvironment, MANAGED_DEVICE_ENVIRONMENT_HINT, targetKey, environmentDisplayLabel } from "../../production/environmentConfirmation";
 import { simpleDiff, hasVisibleChange, diffLineText } from "../diff";
+import { useUi } from "../../../app/store";
+import { openAiChangeReview } from "../../files/aiReview";
 import { toolLabel, extractUrls, splitUserRefs } from "./aiSidebarShared";
 import { confirmCommandText, resolutionLabel, TOOL_USER_DENIED } from "./aiConfirmLabels";
 import { type ToolGroup, toolGroupSummary, toolGroupFailedText } from "../toolGroups";
@@ -20,9 +20,6 @@ export const ChatBubble = memo(function ChatBubble({
   onRetry,
   onContinue,
   onEdit,
-  agentToolCall,
-  onAgentApproval,
-  agentApprovalBusy,
   readOnly = false,
 }: {
   item: ChatItem;
@@ -33,12 +30,18 @@ export const ChatBubble = memo(function ChatBubble({
   // onContinue is set on the latest step-limit notice; it starts a new run in the same conversation.
   onContinue?: () => void;
   onEdit: (item: ChatItem) => void;
-  agentToolCall: AgentToolCall | null;
-  onAgentApproval: (requestId: string, decision: AgentApprovalDecision) => void;
-  agentApprovalBusy: boolean;
   // readOnly shows a saved conversation without its actions (edit, retry, plan approval), as in the AI workbench.
   readOnly?: boolean;
 }) {
+  if (item.role === "user" && item.event) {
+    return (
+      <div className="flex items-center gap-1.5 text-[11px] text-neutral-500" data-testid="ai-event-trigger">
+        <span className="h-px flex-1 bg-neutral-800" />
+        <span title={item.text}>{t("由终端事件触发的运行")}</span>
+        <span className="h-px flex-1 bg-neutral-800" />
+      </div>
+    );
+  }
   if (item.role === "user") {
     const { refs, body } = splitUserRefs(item.text);
     return (
@@ -168,25 +171,11 @@ export const ChatBubble = memo(function ChatBubble({
       </div>
     );
   }
-  if (item.role === "diff") return <DiffBubble item={item} />;
+  if (item.role === "diff") return <DiffBubble item={item} readOnly={readOnly} />;
   if (item.role === "plan") {
     return <PlanBubble item={item} approved={planApproved} onApprove={onApprovePlan} readOnly={readOnly} />;
   }
-  if (item.role === "tool") {
-    // A tool call with a verified roster handle renders the reviewed agent
-    // tool card (roster-joined identity, run evidence and approval actions);
-    // anything else keeps the plain bubble and claims no roster identity.
-    if (agentToolCall) {
-      return (
-        <AgentToolCard
-          call={agentToolCall}
-          onApproval={onAgentApproval}
-          approvalBusy={agentApprovalBusy}
-        />
-      );
-    }
-    return <ToolBubble item={item} />;
-  }
+  if (item.role === "tool") return <ToolBubble item={item} />;
   return null;
 });
 
@@ -606,7 +595,9 @@ export function ProductionEnvironmentChallenge({
   );
 }
 
-function DiffBubble({ item }: { item: Extract<ChatItem, { role: "diff" }> }) {
+function DiffBubble({ item, readOnly }: { item: Extract<ChatItem, { role: "diff" }>; readOnly: boolean }) {
+  const sessionId = item.sessionId;
+  const sessionOpen = useUi((s) => !!sessionId && s.sessions.some((session) => session.id === sessionId));
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-900/70 px-2.5 py-2 text-[11.5px]">
       <div className="mb-1.5 flex items-center gap-1.5">
@@ -615,6 +606,17 @@ function DiffBubble({ item }: { item: Extract<ChatItem, { role: "diff" }> }) {
         <span className="min-w-0 flex-1 truncate font-mono text-neutral-400" title={item.path}>
           {item.path}
         </span>
+        {!readOnly && sessionId && (
+          <button
+            type="button"
+            className="nx-link shrink-0"
+            disabled={!sessionOpen}
+            title={sessionOpen ? undefined : t("该文件所在的会话已关闭")}
+            onClick={() => openAiChangeReview(sessionId, item.path, { before: item.before, after: item.after })}
+          >
+            {t("在编辑器中查看差异")}
+          </button>
+        )}
       </div>
       <pre className="max-h-44 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] leading-relaxed">
         <DiffLines before={item.before} after={item.after} />

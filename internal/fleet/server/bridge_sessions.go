@@ -30,6 +30,9 @@ type bridgeSessions struct {
 	interval time.Duration
 	ticker   func(time.Duration) (<-chan time.Time, func())
 	check    func(context.Context, string) (*account.Identity, error)
+	// onSessionInvalid runs after the periodic recheck closed an invalid session's relays, so the direct
+	// sessions granted to it end too.
+	onSessionInvalid func(sessionID string)
 }
 
 type bridgeSession struct {
@@ -103,6 +106,9 @@ func (b *bridgeSessions) supervise(ctx context.Context, ticks <-chan time.Time, 
 		case <-ticks:
 			if b.sessionInvalid(ctx, identity, token) {
 				b.revokeSession(identity.SessionID)
+				if b.onSessionInvalid != nil {
+					b.onSessionInvalid(identity.SessionID)
+				}
 				return
 			}
 		}
@@ -163,6 +169,7 @@ func (b *bridgeSessions) revokeMatching(match func(string, *bridgeSession) bool)
 func (s *Service) CloseAccountSession(sessionID string) error {
 	if sessionID != "" {
 		s.bridges.revokeSession(sessionID)
+		s.revokeP2PGrants(func(entry *activeGrant) bool { return entry.sessionID == sessionID }, p2pRevokeSession, true)
 	}
 	return nil
 }
@@ -172,6 +179,9 @@ func (s *Service) CloseAccountSession(sessionID string) error {
 func (s *Service) CloseAccountUser(userID, exceptSession string) {
 	if userID != "" {
 		s.bridges.revokeUser(userID, exceptSession)
+		s.revokeP2PGrants(func(entry *activeGrant) bool {
+			return entry.userID == userID && ipc.MatchesRevoked(entry.sessionID, exceptSession)
+		}, p2pRevokeSession, true)
 	}
 }
 
@@ -179,5 +189,8 @@ func (s *Service) CloseAccountUser(userID, exceptSession string) {
 func (s *Service) CloseAccountDevice(userID, deviceID string) {
 	if userID != "" && deviceID != "" {
 		s.bridges.revokeDevice(userID, deviceID)
+		s.revokeP2PGrants(func(entry *activeGrant) bool {
+			return entry.userID == userID && entry.loginDeviceID == deviceID
+		}, p2pRevokeSession, true)
 	}
 }

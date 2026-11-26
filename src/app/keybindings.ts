@@ -33,6 +33,7 @@ export type KeybindingActionId =
   | "nextPrompt"
   | "copyLastOutput"
   | "generateCommand"
+  | "askAiSelection"
   | "reclaimTakeover"
   | "openSettings"
   | "focusAiInput"
@@ -102,6 +103,8 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "copyLastOutput", label: t("选中并复制上一条命令的输出"), defaultBinding: "Mod+Shift+o" },
   // Ctrl+I is Tab in a terminal, and browsers keep Ctrl+Shift+I for developer tools, so only macOS uses Cmd+I.
   { id: "generateCommand", label: t("用 AI 生成命令"), defaultBinding: "Ctrl+Shift+g", macBinding: "Primary+i" },
+  // Pairs with the AI input's Mod+Shift+A.
+  { id: "askAiSelection", label: t("向 AI 询问选中内容"), defaultBinding: "Mod+Shift+Alt+a" },
   // A bare Escape also closes dialogs and menus and is a terminal key (vim, readline), so the default is a chord.
   { id: "reclaimTakeover", label: t("AI 接管时收回控制权"), defaultBinding: "Mod+Shift+e" },
   { id: "openSettings", label: t("打开设置"), defaultBinding: "Mod+," },
@@ -700,6 +703,7 @@ const TERMINAL_PANE_ACTIONS: readonly KeybindingActionId[] = [
   "nextPrompt",
   "copyLastOutput",
   "generateCommand",
+  "askAiSelection",
 ];
 
 export const TERMINAL_WITHHELD_ACTIONS: readonly KeybindingActionId[] = [...APP_ACTION_ORDER, ...TERMINAL_PANE_ACTIONS];

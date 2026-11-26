@@ -4,7 +4,6 @@ package production
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"sync"
 	"testing"
@@ -221,17 +220,10 @@ func TestProductionWatchDurableRecoveryReattachesAndStaysHonest(t *testing.T) {
 		t.Fatal(err)
 	}
 	tab := openWatchDurableTab(t, ctx, manager1, connected1, provider, "durable-tab-1", false)
-	service1, dispatcher1 := newWatchTestService(t, database, manager1, events, 10*time.Millisecond)
-	conversationID := provisionWatchConversation(t, database, ctx, tab.ID)
+	service1, _ := newWatchTestService(t, database, manager1, events, 10*time.Millisecond)
+	conversationID := createWatchConversation(t, database, ctx)
 
-	create := dispatchWatch(t, ctx, dispatcher1, "ai_watch_create", `{"targetId":"`+tab.ID+`","condition":{"type":"contains","pattern":"nexterm-durable-ready"},"repeat":false,"expiresAt":0}`)
-	if !create.OK {
-		t.Fatalf("ai_watch_create = %+v", create.Error)
-	}
-	var summary WatchSummary
-	if err := json.Unmarshal(create.Data, &summary); err != nil {
-		t.Fatal(err)
-	}
+	summary := subscribeWatchOutput(t, ctx, service1, conversationID, tab.ID, "nexterm-durable-ready")
 	identity1 := summaryIdentity(t, ctx, manager1, tab.ID)
 	provider.emit(t, tab.ID, []byte("boot\n"))
 	waitWatchAnchorAdvance(t, database, ctx, summary.ID, 0)
@@ -265,7 +257,7 @@ func TestProductionWatchDurableRecoveryReattachesAndStaysHonest(t *testing.T) {
 			service2.onSessionEvent(eventCtx, event)
 		}
 	})
-	service2, dispatcher2 := newWatchTestService(t, database, manager2, events, 10*time.Millisecond)
+	service2, _ = newWatchTestService(t, database, manager2, events, 10*time.Millisecond)
 	service2.attachHook = func(targetID string) { attached <- targetID }
 	connected2, err := manager2.Connect(ctx, session.Asset{ID: "asset-durable", Kind: session.KindLocal})
 	if err != nil {
@@ -298,10 +290,7 @@ func TestProductionWatchDurableRecoveryReattachesAndStaysHonest(t *testing.T) {
 
 	// A new watch on the recovered stream fires on new output with the new
 	// stream's coordinates.
-	create2 := dispatchWatch(t, ctx, dispatcher2, "ai_watch_create", `{"targetId":"`+tab.ID+`","condition":{"type":"contains","pattern":"nexterm-durable-ready"},"repeat":false,"expiresAt":0}`)
-	if !create2.OK {
-		t.Fatalf("ai_watch_create after recovery = %+v", create2.Error)
-	}
+	subscribeWatchOutput(t, ctx, service2, conversationID, tab.ID, "nexterm-durable-ready")
 	provider.emit(t, tab.ID, []byte("nexterm-durable-ready\n"))
 	waitWatchHistoryDeliveries(t, database, ctx, conversationID, 1)
 	rows, err := database.MsgList(ctx, conversationID)

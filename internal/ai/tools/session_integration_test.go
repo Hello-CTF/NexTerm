@@ -153,3 +153,43 @@ func TestSendKeysSessionPasteNewlineRefusedWhenModeOff(t *testing.T) {
 		t.Fatalf("refused paste wrote %q", writes)
 	}
 }
+
+// Every terminal write the AI makes through the session adapter is reported
+// as AI input for its tab, while the bytes written stay unchanged.
+func TestSessionAdapterMarksAIWrites(t *testing.T) {
+	fixture := newAtomicSessionFixture(t, false)
+	adapter := SessionTerminal(fixture.manager)
+	ctx := trustedContext()
+	want := session.InputSourceEvent{TabID: fixture.tabID, Source: session.InputSourceAI}
+
+	if err := adapter.Write(ctx, fixture.tabID, []byte("ls\r")); err != nil {
+		t.Fatal(err)
+	}
+	if events := fixture.takeInputSources(); len(events) != 1 || events[0] != want {
+		t.Fatalf("raw write input sources = %+v", events)
+	}
+	if err := adapter.(PasteLiteralTerminal).WritePasteLiteral(ctx, fixture.tabID, "pwd"); err != nil {
+		t.Fatal(err)
+	}
+	if events := fixture.takeInputSources(); len(events) != 1 || events[0] != want {
+		t.Fatalf("literal paste input sources = %+v", events)
+	}
+	if err := adapter.(PasteTerminal).WritePaste(ctx, fixture.tabID, "id"); err != nil {
+		t.Fatal(err)
+	}
+	if events := fixture.takeInputSources(); len(events) != 1 || events[0] != want {
+		t.Fatalf("paste input sources = %+v", events)
+	}
+	// send_keys writes the paste and the Enter key as two writes, each reported.
+	if err := adapter.(PasteSubmitTerminal).WritePasteSubmit(ctx, fixture.tabID, "uptime", true, 0); err != nil {
+		t.Fatal(err)
+	}
+	if events := fixture.takeInputSources(); len(events) != 2 || events[0] != want || events[1] != want {
+		t.Fatalf("paste submit input sources = %+v", events)
+	}
+	writes := fixture.channel.successfulWrites()
+	if len(writes) != 5 || string(writes[0]) != "ls\r" || string(writes[1]) != "pwd" || string(writes[2]) != "id" ||
+		string(writes[3]) != "uptime" || string(writes[4]) != "\r" {
+		t.Fatalf("writes = %q", writes)
+	}
+}

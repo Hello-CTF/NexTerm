@@ -153,6 +153,9 @@ func (s *Server) eventFilter(identity *account.Identity) func(ipc.Event) bool {
 		case ipc.TopicTerminalAttention:
 			_, ok := event.Payload.(session.AttentionEvent)
 			return ok && event.OwnerID != "" && event.OwnerID == userID
+		case ipc.TopicTerminalInputSource:
+			_, ok := event.Payload.(session.InputSourceEvent)
+			return ok && event.OwnerID != "" && event.OwnerID == userID
 		case ipc.TopicTerminalSessions:
 			_, ok := event.Payload.(session.AggregateUpdate)
 			return ok && event.OwnerID != "" && event.OwnerID == userID

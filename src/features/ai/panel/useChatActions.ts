@@ -4,14 +4,10 @@ import { chatPrivacyChoice } from "../chatPrivacyChoice";
 import { createAiChannel, onChannelReopen, disposeChannel } from "../../../ipc/events";
 import { aiApi } from "../../../ipc/commands";
 import { describeError } from "../../../ui/errorText";
-import { useRef, useCallback, useState, useMemo, useEffect } from "react";
-import { type ChatItem, type ConfirmItem, type InteractionItem, INTERACTION_HANDLED_ELSEWHERE, pendingInteraction, type ToolItem } from "../conversation";
+import { useRef, useCallback, useState, useEffect } from "react";
+import { type ChatItem, type ConfirmItem, type InteractionItem, INTERACTION_HANDLED_ELSEWHERE } from "../conversation";
 import { confirmationInput, answerInput } from "../aiWire";
 import { useAuth } from "../../auth/store";
-import type { AgentApprovalDecision, AgentRosterEntry, AgentToolCall } from "../agentTypes";
-import { createAgentRosterApi } from "../agentProduction";
-import { useAgentRosterSnapshot, refreshAgentRosterSnapshot } from "../agentRosterSnapshot";
-import { runSummaryFromAttempt, buildAgentToolCall, approvalFromConfirmCard } from "../agentToolData";
 import { type RefChip, runScopeForRefs, splitUserRefs, latestPlanApproved, isStaleInteractionError, PLAN_EXECUTE_MESSAGE, CONFIRM_RESOLUTION, type AiChatBase } from "./aiSidebarShared";
 import type { UseChatRunSessionOut } from "./useChatRunSession";
 import type { UseChatPanelStateOut } from "./useChatPanelState";
@@ -19,7 +15,7 @@ import type { UseChatRunRecoveryOut } from "./useChatRunRecovery";
 import { t } from "../../../i18n";
 
 export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPanelStateOut & UseChatRunRecoveryOut) {
-  const { input, images, refs, planMode, busyRef, tabKey, activeRunRef, permOpen, setPermOpen, beginRun, requestSnapshotsRef, setBusy, setInput, setRefs, setAtOpen, setImages, stream, isLifecycleActive, clearResyncState, pushAgentEvent, resyncRun, maybeOpenAiCreatedTerminal, settleRestoredRun, pushToast, runChannelRef, conversationId, aiScope, composeMessage, deletedConversationIdsRef, updateConversationId, setActiveRun, driveCancellation, hydrateMessageIds, unconfirmCancellation, conv, setPlanMode, busy, conversationRuns, inputRef, conversationIdRef, disposeRestoredChannel, submittingCardIdRef, setSubmittingCardId, restoredChannelRef, replayHitl, replayRestoredIfBound, confirmCard, submittingCardId, currentProductionConfirm, questionCard, questionInput, productionConfirmRef, toolHandleVersion, lastRefreshedHandleVersionRef, toolHandlesRef, clearExpiryWatch, noteLiveDelivery } = p;
+  const { input, images, refs, planMode, busyRef, tabKey, activeRunRef, permOpen, setPermOpen, beginRun, requestSnapshotsRef, setBusy, setInput, setRefs, setAtOpen, setImages, stream, isLifecycleActive, clearResyncState, pushAgentEvent, resyncRun, maybeOpenAiCreatedTerminal, settleRestoredRun, pushToast, runChannelRef, conversationId, aiScope, composeMessage, deletedConversationIdsRef, updateConversationId, setActiveRun, driveCancellation, hydrateMessageIds, unconfirmCancellation, conv, setPlanMode, busy, conversationRuns, inputRef, conversationIdRef, disposeRestoredChannel, submittingCardIdRef, setSubmittingCardId, restoredChannelRef, replayHitl, replayRestoredIfBound, confirmCard, submittingCardId, currentProductionConfirm, questionCard, questionInput, clearExpiryWatch, noteLiveDelivery } = p;
 
   const send = async (override?: {
     message?: string;
@@ -470,125 +466,10 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     }
   };
 
-  // Agent production wiring: the reviewed roster/history panels consume the
-  // real generated IPC through the adapter (no unsafeCall), and the approval
-  // delegate maps reviewed decisions onto the pending HITL interaction.
   const authUser = useAuth((s) => s.user);
-  const agentOwnerId = authUser?.id ?? "";
-  const agentOwnerName = authUser?.display_name || authUser?.username || "";
-  const resolveAgentApproval = useCallback(
-    async (requestId: string, decision: AgentApprovalDecision) => {
-      const run = activeRunRef.current;
-      const card = pendingInteraction(stream.getState(), run?.generation ?? null, "confirm");
-      if (!run?.jobId || !card || card.requestId !== requestId) {
-        throw { code: "conflict", message: t("审批请求不存在或已解决，请稍后刷新重试") };
-      }
-      // The same production challenge gate as the card buttons: only the
-      // user's actual typed names, bound to this exact card, reach the
-      // backend — never an auto-echoed or missing answer.
-      let environmentNames: string[] | undefined;
-      if (decision !== "deny" && card.requiredEnvironmentNames) {
-        const challenge = productionConfirmRef.current;
-        if (!challenge || challenge.cardId !== card.id || !challenge.canConfirm) {
-          throw { code: "conflict", message: t("生产环境挑战未完成：请先在确认卡片中输入环境名称") };
-        }
-        environmentNames = challenge.submittedNames;
-      }
-      const mapped =
-        decision === "approve_once"
-          ? "allow"
-          : decision === "approve_session"
-            ? "allow_session"
-            : decision === "approve_persistent"
-              ? "allow_persistent"
-              : "deny";
-      const submitted = await submitConfirmCard(card, mapped, environmentNames);
-      if (!submitted) {
-        throw { code: "internal", message: t("审批提交失败，请重试") };
-      }
-    },
-    [activeRunRef, productionConfirmRef, stream, submitConfirmCard],
-  );
-  const agentRosterApi = useMemo(
-    () =>
-      conversationId === undefined
-        ? null
-        : createAgentRosterApi({
-            conversationId,
-            identity: { ownerId: agentOwnerId, ownerName: agentOwnerName },
-            activeJobId: () => activeRunRef.current?.jobId ?? "",
-            resolveApproval: resolveAgentApproval,
-          }),
-    [conversationId, agentOwnerId, agentOwnerName, resolveAgentApproval, activeRunRef],
-  );
-  const watchOwner = agentOwnerId === "" ? "local" : agentOwnerId;
+  const watchOwner = authUser?.id ? authUser.id : "local";
 
-  // The roster snapshot joins the recorded handles onto real roster rows,
-  // with an independent slot per conversation. It reloads once per
-  // recorded-handle change, and again when the slot is empty (for example
-  // after a store reset): a handle the roster never covers stays honestly
-  // unknown instead of spinning reloads, and a failed load never retries in
-  // a loop.
-  const rosterSnapshot = useAgentRosterSnapshot(conversationId);
-  const rosterByHandle = useMemo(() => {
-    const map = new Map<string, AgentRosterEntry>();
-    for (const entry of rosterSnapshot ?? []) map.set(entry.handle, entry);
-    return map;
-  }, [rosterSnapshot]);
-  useEffect(() => {
-    if (!conversationId || !agentRosterApi || toolHandleVersion === 0) return;
-    if (lastRefreshedHandleVersionRef.current === toolHandleVersion && rosterSnapshot !== null) return;
-    lastRefreshedHandleVersionRef.current = toolHandleVersion;
-    void refreshAgentRosterSnapshot(agentRosterApi, conversationId);
-  }, [conversationId, agentRosterApi, toolHandleVersion, rosterSnapshot, lastRefreshedHandleVersionRef]);
-  const runRowsByJobId = useMemo(() => {
-    const map = new Map<string, (typeof conversationRuns)[number]>();
-    for (const row of conversationRuns) map.set(row.id, row);
-    return map;
-  }, [conversationRuns]);
-  const agentToolCallFor = useCallback(
-    (item: ToolItem): AgentToolCall | null => {
-      const lookup = toolHandlesRef.current?.lookup(item.attempt, item.callId) ?? { kind: "unknown" as const };
-      if (lookup.kind !== "handle") return null;
-      const attempt = conv.attempts.find((candidate) => candidate.generation === item.attempt);
-      const run = attempt
-        ? runSummaryFromAttempt(attempt.outcome, attempt.jobId ? runRowsByJobId.get(attempt.jobId) : undefined)
-        : null;
-      const confirm = [...conv.items]
-        .reverse()
-        .find(
-          (candidate): candidate is ConfirmItem =>
-            candidate.role === "confirm" &&
-            candidate.callId === item.callId &&
-            (item.attempt === null || candidate.attempt === item.attempt),
-        );
-      return buildAgentToolCall(
-        item,
-        lookup.handle,
-        rosterByHandle.get(lookup.handle),
-        run,
-        approvalFromConfirmCard(confirm),
-      );
-    },
-    [toolHandlesRef, conv.attempts, conv.items, runRowsByJobId, rosterByHandle],
-  );
-  const submitAgentApproval = useCallback(
-    (requestId: string, decision: AgentApprovalDecision) => {
-      void resolveAgentApproval(requestId, decision).catch((error: unknown) => {
-        pushToast("error", t("未能提交审批：{value}", { value: describeError(error) }));
-      });
-    },
-    [resolveAgentApproval, pushToast],
-  );
-  const mentionAgentHandle = useCallback((token: string) => {
-    setInput((prev) => {
-      const base = prev.replace(/\s+$/, "");
-      return base === "" ? `${token} ` : `${base} ${token} `;
-    });
-    inputRef.current?.focus();
-  }, [inputRef, setInput]);
-
-  return { setEditing, agentRosterApi, mentionAgentHandle, watchOwner, handleApprovePlan, handleRetryRun, handleEditResend, agentToolCallFor, submitAgentApproval, confirm, answer, editing, editSubmitting, submitEditResend, steer, send };
+  return { setEditing, watchOwner, handleApprovePlan, handleRetryRun, handleEditResend, confirm, answer, editing, editSubmitting, submitEditResend, steer, send };
 }
 
 export type UseChatActionsOut = ReturnType<typeof useChatActions>;

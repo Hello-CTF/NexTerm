@@ -6,7 +6,8 @@ var AllModels = []any{
 	AgentWatchRow{}, AgentWatchOutboxRow{}, AgentWatchTargetRow{},
 	AppUser{}, UserDEK{}, UserDevice{}, UserSession{}, SyncCredential{}, UserSetting{}, DeviceEnrollCode{}, UserSyncObject{}, UserSyncHead{}, DeviceAgent{}, DeviceMetrics{}, DeviceMetricsHourly{}, UserTOTP{}, UserTOTPRecoveryCode{},
 	SharePreviewLink{}, HostShare{}, CommandLog{}, ForwardRuleRow{}, ExecBatchRow{}, ExecBatchResultRow{}, ExecTargetSetRow{}, ExecTargetSetItemRow{}, RunbookTemplateRow{},
-	AgentRosterRow{}, AgentOutcomeRow{}, AgentEvidenceKeyRow{}, AgentEvidenceAnchorRow{},
+	AgentOutcomeRow{}, AgentEvidenceKeyRow{}, AgentEvidenceAnchorRow{},
 	StateRuleRow{},
 	DeviceAlertSettings{}, DeviceAlertState{}, DeviceAlertEvent{}, AlertEvaluatorState{},
+	P2PSigningKey{}, DeviceP2PKey{},
 }

@@ -13,7 +13,7 @@ import (
 )
 
 // enrollAgent goes through the full issue+redeem flow and returns the device credentials.
-func enrollAgent(t *testing.T, f *httpFixture, owner *account.User, name string) (deviceID, secret string) {
+func enrollAgent(t testing.TB, f *httpFixture, owner *account.User, name string) (deviceID, secret string) {
 	t.Helper()
 	session := f.session(t, owner)
 	issue := f.call(t, "POST", "/device/enroll-codes", map[string]any{"ttl_ms": 600000}, session, session.csrf)

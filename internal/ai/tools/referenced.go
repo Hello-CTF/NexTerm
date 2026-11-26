@@ -87,9 +87,3 @@ func (r *Registry) resolveReadableTab(ctx context.Context, jobID string, scope S
 	}
 	return candidate, nil
 }
-
-// readOnlyTerminalTool reports the terminal tools that resolve targets with
-// resolveReadableTab.
-func readOnlyTerminalTool(name string) bool {
-	return name == "read_screen" || name == "wait_for"
-}

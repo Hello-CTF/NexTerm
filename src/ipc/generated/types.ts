@@ -491,6 +491,9 @@ export type CollectAIProfile = {
   maxTokens?: number | null;
   proxy: string | null;
   stream: boolean;
+  provider?: string;
+  thinking?: string;
+  thinkingBudget?: number | null;
   requestTimeoutSeconds?: number | null;
   idleTimeoutSeconds?: number | null;
   circuitFailureThreshold?: number | null;
@@ -920,6 +923,40 @@ export type DeviceGrant = {
   kinds: string[];
   permanent: boolean;
   updatedAt: number;
+};
+
+export type DeviceModeDTO = {
+  mode: string;
+};
+
+export type DeviceModeRequest = {
+  deviceId: string;
+  mode: string;
+};
+
+export type DeviceP2PDiagnostics = {
+  status: DevicePathStatus;
+  localNat: string;
+  remoteNat: string;
+  stunReachable: boolean;
+  selectedPair?: P2PSelectedPair | null;
+  directRttMs?: number | null;
+  relayRttMs?: number | null;
+  lossPct?: number | null;
+  recentSwitches: PathSwitch[];
+  policy: P2PPolicy;
+};
+
+export type DevicePathRequest = {
+  deviceId: string;
+};
+
+export type DevicePathStatus = {
+  deviceId: string;
+  mode: string;
+  path: string;
+  reason: string;
+  since: number;
 };
 
 export type DiagnosticsArmRequest = {
@@ -2264,6 +2301,25 @@ export type Overview = {
   hostStats: HostStats;
 };
 
+export type P2PPolicy = {
+  server: boolean;
+  device: boolean;
+  mode: string;
+};
+
+export type P2PSelectedPair = {
+  local: string;
+  remote: string;
+  type: string;
+};
+
+export type PathSwitch = {
+  at: number;
+  from: string;
+  to: string;
+  reason: string;
+};
+
 export type PreferenceScopeView = {
   defaults: Record<string, unknown>;
   overrides: Record<string, unknown>;
@@ -2682,6 +2738,7 @@ export type RemoteFleetAgent = {
   last_seen_at: number;
   state_digest?: string;
   helper_instance_id?: string;
+  p2p_key?: RemoteFleetP2PKey | null;
 };
 
 export type RemoteFleetAlert = {
@@ -2733,6 +2790,13 @@ export type RemoteFleetDevices = {
 export type RemoteFleetOwner = {
   id: string;
   username: string;
+};
+
+export type RemoteFleetP2PKey = {
+  state: string;
+  public_key?: string;
+  pending_key?: string;
+  pending_at?: number;
 };
 
 export type RemoteFleetServiceState = {
@@ -2805,6 +2869,16 @@ export type RemoteMetricsSamples = {
 
 export type RemoteOK = {
   ok: boolean;
+};
+
+export type RemoteP2PKeyConfirmRequest = {
+  deviceId: string;
+  publicKey: string;
+};
+
+export type RemoteP2PKeyConfirmResult = {
+  ok: boolean;
+  public_key: string;
 };
 
 export type RemotePasswordChangeResult = {
@@ -2886,50 +2960,6 @@ export type RevealedCredentialDTO = {
   passphrase: string | null;
 };
 
-export type RosterAttachmentDTO = {
-  entry: RosterEntry;
-  resolution: string;
-  currentIncarnation?: string;
-  assetId: string;
-  host: string;
-  cwd: string;
-};
-
-export type RosterEntry = {
-  id: string;
-  conversationId: string;
-  handle: string;
-  alias: string;
-  tabId: string;
-  state: string;
-  incarnation: string;
-  jobId: string;
-  createdAt: number;
-  updatedAt: number;
-  releasedAt: number | null;
-};
-
-export type RosterListEntry = {
-  entry: RosterEntry;
-  presence: string;
-  assetId: string;
-  host: string;
-  cwd: string;
-};
-
-export type RosterReconcileEntry = {
-  id: string;
-  handle: string;
-  state: string;
-  outcome: string;
-  wrote: boolean;
-  reason: string;
-};
-
-export type RosterReconcileReport = {
-  entries: RosterReconcileEntry[];
-};
-
 export type RunHistoryEntry = {
   runId: string;
   state: string;
@@ -2956,10 +2986,12 @@ export type RunRequest = {
 
 export type RunSettings = {
   maxTurns: number;
+  recordEvidence: boolean;
 };
 
 export type RunSettingsInput = {
   maxTurns: number;
+  recordEvidence?: boolean | null;
 };
 
 export type RunState = {

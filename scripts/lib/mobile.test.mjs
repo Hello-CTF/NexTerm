@@ -40,3 +40,11 @@ test("stamping a release in a clean repository keeps it clean", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("android links with the linkname check off for anet; ios keeps it", async () => {
+  const { mobileLdflags } = await import("./mobile.mjs");
+  for (const production of [true, false]) {
+    assert.match(mobileLdflags({ platform: "android", production, version: "1.0.0", commit: "abc" }), /-ldflags="[^"]*-checklinkname=0/);
+    assert.doesNotMatch(mobileLdflags({ platform: "ios", production, version: "1.0.0", commit: "abc" }), /checklinkname/);
+  }
+});

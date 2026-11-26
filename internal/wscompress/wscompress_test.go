@@ -53,7 +53,7 @@ func TestPolicyByPurpose(t *testing.T) {
 			t.Errorf("opaque must never compress, got %+v", got)
 		}
 	}
-	for purpose, want := range map[string]Purpose{"": Terminal, "terminal": Terminal, "file": File, "forward": Opaque, "listen": Opaque, "accept": Opaque} {
+	for purpose, want := range map[string]Purpose{"": Terminal, "terminal": Terminal, "file": File, "file-mux": File, "forward": Opaque, "listen": Opaque, "accept": Opaque} {
 		if got := ForBridge(purpose); got != want {
 			t.Errorf("ForBridge(%q) = %v, want %v", purpose, got, want)
 		}

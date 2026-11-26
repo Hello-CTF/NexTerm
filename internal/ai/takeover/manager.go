@@ -366,6 +366,7 @@ type ResumeArgs struct {
 	Token     string `json:"token"`
 	JobID     string `json:"jobId"`
 	ChannelID string `json:"-"`
+	Locale    string `json:"locale,omitempty"`
 }
 
 func (m *Manager) Resume(ctx context.Context, args ResumeArgs, factory agent.StreamFactory) (RunResponse, error) {
@@ -525,7 +526,7 @@ func (m *Manager) recoverJob(ctx context.Context, owner *ownership, args ResumeA
 		id: args.JobID, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel,
 		owner: owner, stream: stream, memory: guard.NewMemory(), running: true, started: true, resumeNote: true, assetID: assetID, seq: record.Seq,
 		iterCtx: jobIterCtx, iterCancel: jobIterCancel,
-		args: RunArgs{TabID: args.TabID, Token: args.Token, ChannelID: args.ChannelID, Instruction: record.Instruction, AllowWrite: record.AllowWrite, MaxSteps: record.MaxSteps},
+		args: RunArgs{TabID: args.TabID, Token: args.Token, ChannelID: args.ChannelID, Instruction: record.Instruction, AllowWrite: record.AllowWrite, MaxSteps: record.MaxSteps, Locale: args.Locale},
 	}
 	m.mu.Lock()
 	if m.closed || m.owners[args.TabID] != owner || m.jobs[args.JobID] != nil {

@@ -34,6 +34,11 @@ func sessionRequestContext(ctx context.Context) context.Context {
 	return ctx
 }
 
+// aiInput marks the write as AI input so the terminal pane can show its source.
+func aiInput(ctx context.Context) context.Context {
+	return session.WithInputSource(ctx, session.InputSourceAI)
+}
+
 func (s *sessionTerminal) Snapshot(ctx context.Context, tabID string) (Screen, error) {
 	ctx = sessionRequestContext(ctx)
 	snapshot, err := s.manager.TerminalSnapshotFor(ctx, tabID)
@@ -61,11 +66,11 @@ func (s *sessionTerminal) Write(ctx context.Context, tabID string, data []byte) 
 	if _, err := s.manager.TabFor(ctx, tabID); err != nil {
 		return err
 	}
-	return s.manager.WriteInternal(ctx, tabID, data)
+	return s.manager.WriteInternal(aiInput(ctx), tabID, data)
 }
 
 func (s *sessionTerminal) WritePaste(ctx context.Context, tabID, text string) error {
-	return s.manager.WritePasteFor(sessionRequestContext(ctx), tabID, text)
+	return s.manager.WritePasteFor(aiInput(sessionRequestContext(ctx)), tabID, text)
 }
 
 func (s *sessionTerminal) WaitSnapshot(ctx context.Context, tabID string) (Screen, error) {
@@ -230,7 +235,7 @@ func (s *sessionTerminal) TabDetail(ctx context.Context, tabID string) (TabDetai
 // false — the tools layer's own pre-write guard already refuses that shape,
 // so an in-lock refusal is a genuine mode flip and must surface.
 func (s *sessionTerminal) WritePasteLiteral(ctx context.Context, tabID, text string) error {
-	return s.manager.WritePasteLiteralFor(sessionRequestContext(ctx), tabID, text, false)
+	return s.manager.WritePasteLiteralFor(aiInput(sessionRequestContext(ctx)), tabID, text, false)
 }
 
 // WritePasteSubmit delegates to the session manager's combined paste-submit:
@@ -239,7 +244,7 @@ func (s *sessionTerminal) WritePasteLiteral(ctx context.Context, tabID, text str
 // inside that lock, so send_keys never falls back to split writes on
 // session-backed terminals.
 func (s *sessionTerminal) WritePasteSubmit(ctx context.Context, tabID, text string, submit bool, delay time.Duration) error {
-	return s.manager.WritePasteSubmitFor(sessionRequestContext(ctx), tabID, text, submit, delay)
+	return s.manager.WritePasteSubmitFor(aiInput(sessionRequestContext(ctx)), tabID, text, submit, delay)
 }
 
 // QuietGroupSnapshot delegates to the session manager's exact-roster group

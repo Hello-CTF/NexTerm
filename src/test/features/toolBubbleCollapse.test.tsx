@@ -37,9 +37,6 @@ function mountBubble(item: ToolItem): MountedView {
       onApprovePlan: vi.fn(),
       onRetry: vi.fn(),
       onEdit: vi.fn(),
-      agentToolCall: null,
-      onAgentApproval: vi.fn(),
-      agentApprovalBusy: false,
     }),
   );
   return view;
@@ -101,9 +98,6 @@ describe("reasoning bubble", () => {
         onApprovePlan: vi.fn(),
         onRetry: vi.fn(),
         onEdit: vi.fn(),
-        agentToolCall: null,
-        onAgentApproval: vi.fn(),
-        agentApprovalBusy: false,
       }),
     );
     return view;

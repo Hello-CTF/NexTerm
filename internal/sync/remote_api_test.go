@@ -69,6 +69,7 @@ func newRemoteAPIFixture(t *testing.T) *remoteAPIFixture {
 	mux.Handle("POST /fleet/devices/{id}/revoke", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveFleetRevoke))))
 	mux.Handle("POST /fleet/devices/{id}/autostart", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveFleetAutostart))))
 	mux.Handle("POST /fleet/devices/{id}/terminal-access", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveFleetTerminalAccess))))
+	mux.Handle("POST /fleet/devices/{id}/p2p/key/confirm", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveFleetP2PKeyConfirm))))
 	mux.Handle("POST /device/enroll-codes", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveEnrollCode))))
 	mux.Handle("GET /fleet/base-urls", fixture.session(http.HandlerFunc(fixture.serveBaseURLsGet)))
 	mux.Handle("PUT /fleet/base-urls", fixture.session(fixture.csrf(http.HandlerFunc(fixture.serveBaseURLsPut))))
@@ -447,6 +448,17 @@ func (f *remoteAPIFixture) serveFleetTerminalAccess(w http.ResponseWriter, r *ht
 	writeSyncJSON(w, http.StatusOK, map[string]any{"ok": true, "terminal_enabled": *request.Enabled})
 }
 
+func (f *remoteAPIFixture) serveFleetP2PKeyConfirm(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		PublicKey string `json:"public_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || r.PathValue("id") != "d-1" || request.PublicKey != "pending-key" {
+		writeSyncError(w, http.StatusBadRequest, ipc.NewError(ipc.CodeBadParam, "设备没有与之匹配的待确认直连密钥"))
+		return
+	}
+	writeSyncJSON(w, http.StatusOK, map[string]any{"ok": true, "state": "bound", "public_key": request.PublicKey})
+}
+
 func (f *remoteAPIFixture) serveEnrollCode(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		TTLMS int64 `json:"ttl_ms"`
@@ -702,6 +714,10 @@ func TestRemoteAPITypedMethodsDecode(t *testing.T) {
 	if err := client.SetDeviceTerminalAccess(ctx, "d-1", false); err != nil {
 		t.Fatal(err)
 	}
+	if err := client.ConfirmDeviceP2PKey(ctx, "d-1", "pending-key"); err != nil {
+		t.Fatal(err)
+	}
+	requireCode(t, client.ConfirmDeviceP2PKey(ctx, "d-1", "stale-key"), ipc.CodeBadParam)
 	if err := client.RevokeHostShare(ctx, "hs-1"); err != nil {
 		t.Fatal(err)
 	}

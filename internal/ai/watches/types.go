@@ -32,6 +32,14 @@ const (
 	// DefaultMaxCarryBytes bounds the durable partial-match overlap retained
 	// per watch across chunk boundaries and restarts.
 	DefaultMaxCarryBytes = 4096
+	// DefaultRepeatMinInterval and DefaultMaxRepeatFires bound a repeat
+	// watch: every fire writes into the conversation and may wake an
+	// unattended run, so matching output cannot flood the history.
+	DefaultRepeatMinInterval = store.AgentWatchRepeatMinInterval
+	DefaultMaxRepeatFires    = store.AgentWatchMaxRepeatFires
+	// RepeatLimitReason is the LastError of a repeat watch that reached
+	// DefaultMaxRepeatFires; it settles as expired.
+	RepeatLimitReason = store.AgentWatchRepeatLimitReason
 )
 
 var (
@@ -53,6 +61,16 @@ type Condition struct {
 const (
 	ConditionContains = "contains"
 	ConditionRegex    = "regex"
+	// ConditionState fires when the target's terminal attention state
+	// becomes Pattern (one of the State* values) instead of matching output.
+	ConditionState = "state"
+)
+
+// Terminal attention states a ConditionState watch can wait for.
+const (
+	StateNeedsMe      = "needs_me"
+	StateJustFinished = "just_finished"
+	StateExited       = "exited"
 )
 
 // Event is the watchEvent envelope. It is delivered to the agent runtime as
@@ -73,6 +91,8 @@ type Event struct {
 	MatchedTo   int64     `json:"matchedTo"`
 	Excerpt     string    `json:"excerpt"`
 	FiredAt     int64     `json:"firedAt"`
+	// ConversationID is the conversation that created the watch.
+	ConversationID string `json:"conversationId,omitempty"`
 }
 
 // ToolData is the delivery envelope for watch events: they travel as
@@ -122,6 +142,8 @@ type Watch struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	ExpiresAt   time.Time
+	// ConversationID is the conversation that created the watch.
+	ConversationID string
 }
 
 func watchFromRow(row model.AgentWatchRow) Watch {
@@ -133,8 +155,9 @@ func watchFromRow(row model.AgentWatchRow) Watch {
 		DeliveryID: row.DeliveryID, RunID: row.RunID,
 		MatchedFrom: row.MatchedFrom, MatchedTo: row.MatchedTo,
 		Excerpt: row.Excerpt, LastError: row.LastError,
-		CreatedAt: time.UnixMilli(row.CreatedAt).UTC(),
-		UpdatedAt: time.UnixMilli(row.UpdatedAt).UTC(),
+		CreatedAt:      time.UnixMilli(row.CreatedAt).UTC(),
+		UpdatedAt:      time.UnixMilli(row.UpdatedAt).UTC(),
+		ConversationID: row.ConversationID,
 	}
 	if row.ExpiresAt != nil {
 		watch.ExpiresAt = time.UnixMilli(*row.ExpiresAt).UTC()

@@ -31,7 +31,8 @@ type Store interface {
 	AgentWatchTargetDetach(ctx context.Context, targetID, identity string, generation uint64, now int64) (bool, error)
 	AgentWatchTargetGet(ctx context.Context, targetID string) (model.AgentWatchTargetRow, error)
 	AgentWatchEventPendingList(ctx context.Context, limit int) ([]model.AgentWatchOutboxRow, error)
-	AgentWatchEventAck(ctx context.Context, deliveryID string, expectedRevision uint64, now int64) (model.AgentWatchOutboxRow, error)
+	AgentWatchEventAckPolicy(ctx context.Context, deliveryID string, expectedRevision uint64, now int64, policy store.AgentWatchRepeatPolicy) (model.AgentWatchOutboxRow, error)
+	AgentWatchRearmDue(ctx context.Context, now int64, policy store.AgentWatchRepeatPolicy) (int64, error)
 }
 
 // maxWatchTransitionAttempts bounds the reload/re-evaluation loop used when a
@@ -54,9 +55,25 @@ type Options struct {
 	// coverage. The store enforces a hard ceiling; incomplete trailing
 	// UTF-8 sequences are always preserved on top of this bound.
 	MaxCarryBytes int
+	// RepeatMinInterval is the shortest time from a repeat watch's fire to
+	// its re-arm, and MaxRepeatFires settles a repeat watch once it fired
+	// this often; zero takes DefaultRepeatMinInterval and
+	// DefaultMaxRepeatFires, and a negative value disables the bound.
+	RepeatMinInterval time.Duration
+	MaxRepeatFires    int
+}
+
+func (o Options) repeatPolicy() store.AgentWatchRepeatPolicy {
+	return store.AgentWatchRepeatPolicy{MinInterval: max(o.RepeatMinInterval, 0), MaxFires: int64(max(o.MaxRepeatFires, 0))}
 }
 
 func (o *Options) withDefaults() {
+	if o.RepeatMinInterval == 0 {
+		o.RepeatMinInterval = DefaultRepeatMinInterval
+	}
+	if o.MaxRepeatFires == 0 {
+		o.MaxRepeatFires = DefaultMaxRepeatFires
+	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
@@ -200,12 +217,17 @@ func (e *Engine) Detach(ctx context.Context, targetID, identity string, permanen
 
 // CreateParams registers a new armed watch on an attached target.
 type CreateParams struct {
-	ID        string
-	TargetID  string
-	Name      string
-	Condition Condition
-	Repeat    bool
-	AnchorSeq int64
+	// ConversationID is the AI conversation that receives the events.
+	ConversationID string
+	// StateSince is, for a state watch, the start of the target's current
+	// attention state: that state is already known and never fires it.
+	StateSince time.Time
+	ID         string
+	TargetID   string
+	Name       string
+	Condition  Condition
+	Repeat     bool
+	AnchorSeq  int64
 	// LeftContext is the true stream history immediately before AnchorSeq
 	// (exactly min(watchContextSize, AnchorSeq) bytes, empty only when
 	// AnchorSeq is zero). It grounds ^/\b assertions at the evaluation seam.
@@ -255,7 +277,9 @@ func (e *Engine) Create(ctx context.Context, params CreateParams) (Watch, error)
 		Name: strings.TrimSpace(params.Name), ConditionJSON: string(conditionJSON),
 		Repeat: params.Repeat, AnchorSeq: anchorSeq, ContextBlob: context, CarryBlob: carry,
 		CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli(),
-		ExpiresAt: optionalMillis(params.ExpiresAt),
+		ExpiresAt:      optionalMillis(params.ExpiresAt),
+		ConversationID: strings.TrimSpace(params.ConversationID),
+		StateSinceNS:   unixNanos(params.StateSince),
 	}, binding.generation)
 	if err != nil {
 		if errors.Is(err, store.ErrAgentWatchDetached) {
@@ -413,7 +437,7 @@ func (e *Engine) ObserveEOF(ctx context.Context, targetID, identity string, from
 			}
 			continue
 		}
-		if Status(row.Status) != StatusArmed {
+		if Status(row.Status) != StatusArmed || isStateWatch(row) {
 			continue
 		}
 		event, err := e.observeWatch(ctx, row, identity, fromSeq, fromSeq, nil, now, true)
@@ -432,6 +456,10 @@ func (e *Engine) ObserveEOF(ctx context.Context, targetID, identity string, from
 // transition; only genuine store failures and a persistently conflicting
 // watch surface as errors.
 func (e *Engine) processWatch(ctx context.Context, row model.AgentWatchRow, current uint64, identity string, fromSeq, toSeq int64, data []byte, now time.Time) (*Event, error) {
+	if isStateWatch(row) {
+		// State watches fire from attention changes, never from output.
+		return nil, nil
+	}
 	for attempt := 0; attempt < maxWatchTransitionAttempts; attempt++ {
 		if row.Generation < current {
 			return nil, nil
@@ -578,11 +606,12 @@ func (e *Engine) observeWatch(ctx context.Context, row model.AgentWatchRow, iden
 		event := Event{
 			Kind: EventKind, DeliveryID: deliveryID, RunID: runID,
 			WatchID: row.ID, TargetID: row.TargetID, Identity: identity, Name: row.Name,
-			Condition:   condition,
-			MatchedFrom: row.AnchorSeq - int64(contextLen) + relFrom,
-			MatchedTo:   row.AnchorSeq - int64(contextLen) + relTo,
-			Excerpt:     excerpt,
-			FiredAt:     now.UnixMilli(),
+			ConversationID: row.ConversationID,
+			Condition:      condition,
+			MatchedFrom:    row.AnchorSeq - int64(contextLen) + relFrom,
+			MatchedTo:      row.AnchorSeq - int64(contextLen) + relTo,
+			Excerpt:        excerpt,
+			FiredAt:        now.UnixMilli(),
 		}
 		eventJSON, err := json.Marshal(event)
 		if err != nil {
@@ -686,4 +715,82 @@ func isBenignWatchRace(err error) bool {
 // SweepExpired settles armed watches whose expiry has passed.
 func (e *Engine) SweepExpired(ctx context.Context) (int64, error) {
 	return e.store.AgentWatchExpireDue(ctx, e.opts.Now().UnixMilli())
+}
+
+// RearmDue re-arms acknowledged repeat watches whose minimum re-arm interval
+// has passed since they fired.
+func (e *Engine) RearmDue(ctx context.Context) (int64, error) {
+	return e.store.AgentWatchRearmDue(ctx, e.opts.Now().UnixMilli(), e.opts.repeatPolicy())
+}
+
+// isStateWatch reports whether a stored watch waits for a terminal state.
+func isStateWatch(row model.AgentWatchRow) bool {
+	var condition Condition
+	return json.Unmarshal([]byte(row.ConditionJSON), &condition) == nil && condition.Type == ConditionState
+}
+
+func unixNanos(value time.Time) int64 {
+	if value.IsZero() {
+		return 0
+	}
+	return value.UnixNano()
+}
+
+// ObserveState fires the target's armed state watches waiting for state.
+// since is when that state began: a state no newer than the one a watch
+// last saw (its creation-time state, then each fired state) is the same
+// state republished (seen, progress, restart) and never fires it again.
+func (e *Engine) ObserveState(ctx context.Context, targetID, identity, state string, since time.Time) ([]Event, error) {
+	if since.IsZero() {
+		return nil, nil
+	}
+	binding, ok := e.binding(targetKey{owner: ipc.OwnerID(ctx), target: targetID})
+	if !ok || !binding.attached {
+		return nil, ErrDetached
+	}
+	if binding.identity != identity {
+		return nil, ErrIdentityMismatch
+	}
+	rows, err := e.store.AgentWatchListByTarget(ctx, targetID)
+	if err != nil {
+		return nil, err
+	}
+	now := e.opts.Now()
+	sinceNS := since.UnixNano()
+	var fired []Event
+	for _, row := range rows {
+		if row.Generation != binding.generation || Status(row.Status) != StatusArmed || row.StateSinceNS >= sinceNS {
+			continue
+		}
+		var condition Condition
+		if json.Unmarshal([]byte(row.ConditionJSON), &condition) != nil || condition.Type != ConditionState || condition.Pattern != state {
+			continue
+		}
+		event := Event{
+			Kind: EventKind, DeliveryID: e.opts.NewID(), RunID: e.opts.NewID(),
+			WatchID: row.ID, TargetID: row.TargetID, Identity: identity, Name: row.Name,
+			ConversationID: row.ConversationID, Condition: condition,
+			Excerpt: state, FiredAt: now.UnixMilli(),
+		}
+		eventJSON, err := json.Marshal(event)
+		if err != nil {
+			return fired, fmt.Errorf("encode watch event: %w", err)
+		}
+		if _, err := e.store.AgentWatchFire(ctx, store.AgentWatchFireParams{
+			WatchID: row.ID, ExpectedRevision: row.Revision, Identity: identity,
+			DeliveryID: event.DeliveryID, RunID: event.RunID,
+			AnchorSeq: row.AnchorSeq, Carry: row.CarryBlob, Context: row.ContextBlob, CarryLive: row.CarryLive,
+			Excerpt: state, EventKind: EventKind, EventJSON: string(eventJSON),
+			Now: now.UnixMilli(), StateSinceNS: sinceNS,
+		}); err != nil {
+			// A concurrent fire, ack, cancel or expiry settled this watch; the
+			// state is not lost for others, and this one is no longer armed.
+			if isBenignWatchRace(err) || errors.Is(err, store.ErrAgentWatchConflict) {
+				continue
+			}
+			return fired, err
+		}
+		fired = append(fired, event)
+	}
+	return fired, nil
 }

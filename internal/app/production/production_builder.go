@@ -271,8 +271,11 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	syncService := syncservice.New(database, credentialVault, syncservice.WithDeviceInstall(deviceInstall), syncservice.WithMetadata(config.Config.Version, config.Desktop), syncservice.WithGatewayAuthKey(os.Getenv("NEXTERM_GATEWAY_AUTH")), syncservice.WithEvents(config.Config.Events), syncservice.WithProfilesReload(profileManager.Reload), syncservice.WithLogger(config.Config.Logger))
 	syncService.SetStateRulesChanged(func(ctx context.Context) { stateRules.changed(ipc.OwnerID(ctx)) })
 	if config.Desktop && sshConnector != nil {
+		// Device streams start on the relay and move to a direct leg when one can be built (desktop and mobile;
+		// the browser-mode server and host shares keep the relay).
+		services.DevicePaths = newDevicePathManager(syncService.Remote(), database, config.Config.Events, config.Config.Logger)
 		sshConnector.device.Store(&DeviceConnectorConfig{
-			Dial: syncService.Remote().DialDeviceBridge,
+			Dial: services.DevicePaths.Dial,
 			Platform: func(ctx context.Context, deviceID string) (string, error) {
 				devices, err := syncService.Remote().ListDevices(ctx)
 				if err != nil {

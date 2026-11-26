@@ -49,6 +49,7 @@ import { useFileOps } from "./useFileOps";
 import { useLongPress, useMultiSelect } from "./useMultiSelect";
 import { chmodSupport, extractSupported, packDownloadSupported, validateEntryName, windowsReadOnly } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
+import { askAiAboutFile } from "./fileAiRef";
 import { conflictCaseInsensitive, findConflict } from "./transferQueue";
 import { pickFollowedTabId, useCwdFollow, type CwdFollowControl } from "./cwdFollow";
 import { terminalBufferInFront } from "../terminal/insertCommand";
@@ -77,6 +78,7 @@ import {
   IconMore,
   IconRefresh,
   IconShieldCheck,
+  IconSparkles,
   IconTerminal,
   IconTrash,
   IconUpload,
@@ -1526,6 +1528,13 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         label: t("下载当前文件"),
         icon: <IconDownload size={13} />,
         onSelect: () => void download(entry.path),
+      });
+      items.push({
+        kind: "item",
+        label: t("引用到 AI"),
+        icon: <IconSparkles size={13} />,
+        disabled: !isEditableFile(entry.name),
+        onSelect: () => askAiAboutFile(sessionId, entry.path),
       });
     }
     items.push({

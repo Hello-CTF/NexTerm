@@ -16,7 +16,9 @@ const (
 	TopicTerminalControl   Topic = "terminal://control"
 	// TopicTerminalAttention carries a tab's attention state after each change.
 	TopicTerminalAttention Topic = "terminal://attention"
-	TopicFSProgress        Topic = "fs://progress"
+	// TopicTerminalInputSource reports that the AI typed into a tab.
+	TopicTerminalInputSource Topic = "terminal://input-source"
+	TopicFSProgress          Topic = "fs://progress"
 	// TopicFSChanged reports changes inside directories the file manager watches.
 	TopicFSChanged Topic = "fs://changed"
 	// TopicFSWatch reports how a session's watched directories are followed.
@@ -36,6 +38,8 @@ const (
 	// TopicTerminalSessions carries one host's durable sessions after a
 	// cross-host listing refreshed it.
 	TopicTerminalSessions Topic = "terminal://sessions"
+	// TopicDevicePath carries a device's connection path status (relay or direct and why) after each change.
+	TopicDevicePath Topic = "fleet://device-path"
 )
 
 var ErrEventsUnavailable = errors.New("event adapter is not configured")

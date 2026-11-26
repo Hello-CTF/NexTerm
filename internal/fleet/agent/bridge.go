@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"io"
+	"net"
 	"os/exec"
 	"runtime"
 	"time"
@@ -100,11 +101,60 @@ func BridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, 
 // BridgePipeWithEnv is BridgePipe that also gives every session created through the bridge the env entries the
 // client did not set itself (the SSH session variables of the bridge connection).
 func BridgePipeWithEnv(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, stateDir string, env []string) error {
-	return bridgePipe(ctx, conn, spawn, supervisor.HelperConfig{StateDir: stateDir, SpawnedBy: supervisor.SpawnedByAgent}, env)
+	return bridgePipe(ctx, wsBridgeEnd{conn: conn}, spawn, supervisor.HelperConfig{StateDir: stateDir, SpawnedBy: supervisor.SpawnedByAgent}, env)
 }
 
+// bridgeEnd is the remote end of a terminal bridge: a websocket bridge, or a stream unwrapped from one.
+type bridgeEnd interface {
+	read(ctx context.Context) ([]byte, error)
+	write(ctx context.Context, chunk []byte) error
+	close()
+}
+
+type wsBridgeEnd struct{ conn *websocket.Conn }
+
+func (e wsBridgeEnd) read(ctx context.Context) ([]byte, error) {
+	_, payload, err := e.conn.Read(ctx)
+	return payload, err
+}
+
+func (e wsBridgeEnd) write(ctx context.Context, chunk []byte) error {
+	writeCtx, cancel := context.WithTimeout(ctx, defaultWSPingTimeout)
+	defer cancel()
+	return e.conn.Write(writeCtx, websocket.MessageBinary, chunk)
+}
+
+func (e wsBridgeEnd) close() { _ = e.conn.Close(websocket.StatusNormalClosure, "bridge closed") }
+
+// streamBridgeEnd is a terminal stream unwrapped from a stream bridge. Its writes carry no timeout: the stream
+// buffers them across carrier switches and only its window holds the helper output back, so a carrier loss
+// within the stream's retention does not end the bridge.
+type streamBridgeEnd struct {
+	conn   net.Conn
+	buffer []byte
+}
+
+func newStreamBridgeEnd(conn net.Conn) *streamBridgeEnd {
+	return &streamBridgeEnd{conn: conn, buffer: make([]byte, bridgeReadSize)}
+}
+
+func (e *streamBridgeEnd) read(context.Context) ([]byte, error) {
+	n, err := e.conn.Read(e.buffer)
+	if n > 0 {
+		return e.buffer[:n], nil
+	}
+	return nil, err
+}
+
+func (e *streamBridgeEnd) write(_ context.Context, chunk []byte) error {
+	_, err := e.conn.Write(chunk)
+	return err
+}
+
+func (e *streamBridgeEnd) close() { _ = e.conn.Close() }
+
 // bridgePipe is BridgePipeWithEnv for the helper of helper.StateDir; a consented replacement starts helper.
-func bridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, helper supervisor.HelperConfig, env []string) error {
+func bridgePipe(ctx context.Context, conn bridgeEnd, spawn BridgeSpawner, helper supervisor.HelperConfig, env []string) error {
 	stateDir := helper.StateDir
 	pipe, err := spawn(ctx, stateDir)
 	if err != nil {
@@ -114,14 +164,12 @@ func bridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, 
 	go func() {
 		defer close(done)
 		_ = coalescePump(pipe, bridgeReadSize, bridgeMergeLimit, func(chunk []byte) error {
-			writeCtx, cancel := context.WithTimeout(ctx, defaultWSPingTimeout)
-			defer cancel()
-			return conn.Write(writeCtx, websocket.MessageBinary, chunk)
+			return conn.write(ctx, chunk)
 		})
 	}()
 	filter := supervisor.NewStreamFilter(bridgeCreateDefaults(env))
 	for {
-		_, payload, err := conn.Read(ctx)
+		payload, err := conn.read(ctx)
 		if err != nil {
 			break
 		}
@@ -134,13 +182,13 @@ func bridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, 
 		if replaceToken != "" {
 			reply := supervisor.ReplaceStaleHelperFrame(ctx, helper, replaceToken)
 			if len(reply) > 0 {
-				_ = conn.Write(ctx, websocket.MessageBinary, reply)
+				_ = conn.write(ctx, reply)
 			}
 			break
 		}
 	}
 	_ = pipe.Close()
-	_ = conn.Close(websocket.StatusNormalClosure, "bridge closed")
+	conn.close()
 	select {
 	case <-done:
 	case <-ctx.Done():

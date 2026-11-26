@@ -120,8 +120,33 @@ func TestRenderRefsTextKind(t *testing.T) {
 	rendered := builder.RenderRefs(context.Background(), []RefSpec{
 		{Kind: "text", Label: "ls -la\n(exit 0)", Text: "total 8\nfile-a"},
 	}, nil)
-	if rendered != "[Reference: command output ls -la (exit 0)]\ntotal 8\nfile-a\n" {
+	if rendered != "[Reference: terminal text ls -la (exit 0)]\ntotal 8\nfile-a\n" {
 		t.Fatalf("unexpected render: %q", rendered)
+	}
+}
+
+func TestRenderRefsTextWithPathIsAFileExcerptKeepingItsHead(t *testing.T) {
+	text := strings.Repeat("a", RefScreenRunes) + "tail"
+	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), []RefSpec{
+		{Kind: "text", Label: "app.go:3-4", Path: "/srv/app.go\n", Text: "func main() {}\n"},
+		{Kind: "text", Label: "big.txt:1-9", Path: "/srv/big.txt", Text: text},
+	}, nil)
+	want := "[Reference: excerpt of file /srv/app.go, app.go:3-4]\nfunc main() {}\n\n" +
+		"[Reference: excerpt of file /srv/big.txt, big.txt:1-9]\n" + strings.Repeat("a", RefScreenRunes) + "\n[Content truncated]\n"
+	if rendered != want {
+		t.Fatalf("rendered %q, want %q", rendered, want)
+	}
+}
+
+func TestRenderRefsProblemKind(t *testing.T) {
+	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), []RefSpec{
+		{Kind: "problem", Label: "问题 · relation does not exist", Text: "操作：查询\n摘要：relation does not exist"},
+		{Kind: "problem", Label: "empty", Text: " "},
+	}, nil)
+	want := "[Reference: problem recorded by NexTerm 问题 · relation does not exist]\n操作：查询\n摘要：relation does not exist\n" +
+		"- empty (empty)\n"
+	if rendered != want {
+		t.Fatalf("rendered %q, want %q", rendered, want)
 	}
 }
 
@@ -140,7 +165,7 @@ func TestRenderRefsTextKindKeepsTailWithinScreenLimit(t *testing.T) {
 	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), []RefSpec{
 		{Kind: "text", Label: "t", Text: text},
 	}, nil)
-	want := "[Reference: command output t]\n[Earlier content truncated]\n" + strings.Repeat("b", RefScreenRunes) + "\n"
+	want := "[Reference: terminal text t]\n[Earlier content truncated]\n" + strings.Repeat("b", RefScreenRunes) + "\n"
 	if rendered != want {
 		t.Fatalf("rendered %d runes, want the exact tail section of %d runes", len([]rune(rendered)), len([]rune(want)))
 	}
@@ -154,11 +179,11 @@ func TestRenderRefsTextKindHonorsRemainingBudget(t *testing.T) {
 		{Kind: "text", Label: "four", Text: strings.Repeat("d", RefScreenRunes)},
 	}
 	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), refs, nil)
-	// The first two sections leave 3934 of the 12000 runes; the third is cut to that tail and exhausts the
+	// The first two sections leave 3936 of the 12000 runes; the third is cut to that tail and exhausts the
 	// budget, so the fourth is not rendered at all.
-	want := "[Reference: command output one]\n" + strings.Repeat("a", RefScreenRunes) + "\n" +
-		"[Reference: command output two]\n" + strings.Repeat("b", RefScreenRunes) + "\n" +
-		"[Reference: command output three]\n[Earlier content truncated]\n" + strings.Repeat("c", 3934) + "\n"
+	want := "[Reference: terminal text one]\n" + strings.Repeat("a", RefScreenRunes) + "\n" +
+		"[Reference: terminal text two]\n" + strings.Repeat("b", RefScreenRunes) + "\n" +
+		"[Reference: terminal text three]\n[Earlier content truncated]\n" + strings.Repeat("c", 3936) + "\n"
 	if rendered != want {
 		t.Fatalf("rendered %d runes, want %d", len([]rune(rendered)), len([]rune(want)))
 	}
@@ -169,8 +194,8 @@ func TestRenderRefsLabelsStayOnOneLine(t *testing.T) {
 		{Kind: "text", Label: " ls\r\n\t\x1b[31mred\u0085  x\u2028y\x00 ", Text: "out"},
 		{Kind: "text", ID: "blk-2", Label: "\r\n\t\x1b\u009b", Text: "out2"},
 	}, nil)
-	want := "[Reference: command output ls [31mred x y]\nout\n" +
-		"[Reference: command output blk-2]\nout2\n"
+	want := "[Reference: terminal text ls [31mred x y]\nout\n" +
+		"[Reference: terminal text blk-2]\nout2\n"
 	if rendered != want {
 		t.Fatalf("rendered %q, want %q", rendered, want)
 	}

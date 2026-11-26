@@ -31,6 +31,16 @@ func wsDialOptions(policy DialPolicy, compression wscompress.Purpose) (*websocke
 // wsDialOptionsObserved is wsDialOptions that also reports every connection the dial opens to onDial; behind a
 // proxy that is the connection to the proxy.
 func wsDialOptionsObserved(policy DialPolicy, compression wscompress.Purpose, onDial func(net.Conn)) (*websocket.DialOptions, error) {
+	client, err := observedHTTPClient(policy, onDial)
+	if err != nil {
+		return nil, err
+	}
+	return wscompress.Dial(compression, &websocket.DialOptions{HTTPClient: client}), nil
+}
+
+// observedHTTPClient is the websocket dial client of policy: no redirects, and every connection it opens is
+// reported to onDial when set.
+func observedHTTPClient(policy DialPolicy, onDial func(net.Conn)) (*http.Client, error) {
 	transport, err := policy.transport()
 	if err != nil {
 		return nil, err
@@ -48,14 +58,12 @@ func wsDialOptionsObserved(policy DialPolicy, compression wscompress.Purpose, on
 			return conn, err
 		}
 	}
-	return wscompress.Dial(compression, &websocket.DialOptions{
-		HTTPClient: &http.Client{
-			Transport: transport,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+	return &http.Client{
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
 		},
-	}), nil
+	}, nil
 }
 
 type HelloMessage struct {
@@ -94,6 +102,9 @@ type serverMessage struct {
 	TerminalEnabled   *bool  `json:"terminal_enabled,omitempty"`
 	BridgeID          string `json:"bridge_id,omitempty"`
 	Purpose           string `json:"purpose,omitempty"`
+	GrantID           string `json:"grant_id,omitempty"`
+	// Stream says the bridge carries an rstream to unwrap before the purpose handler.
+	Stream bool `json:"stream,omitempty"`
 }
 
 // ProtocolMismatchError is the runtime error form of the version_mismatch control frame:
@@ -115,8 +126,11 @@ type ConfigUpdate struct {
 
 type channelHandlers struct {
 	onConfig func(ConfigUpdate)
-	onBridge func(bridgeID, purpose string)
+	onBridge func(bridgeID, purpose string, stream bool)
 	onRevoke func()
+	// onP2PRevoke closes the direct session of a revoked grant. The server sends p2p_revoke only to agents that
+	// advertise CapabilityP2P, so older agents never see the frame.
+	onP2PRevoke func(grantID, reason string)
 }
 
 type Channel struct {
@@ -211,7 +225,11 @@ func (c *Channel) Run(ctx context.Context, handlers channelHandlers) error {
 			}
 		case "bridge":
 			if handlers.onBridge != nil && message.BridgeID != "" {
-				handlers.onBridge(message.BridgeID, message.Purpose)
+				handlers.onBridge(message.BridgeID, message.Purpose, message.Stream)
+			}
+		case "p2p_revoke":
+			if handlers.onP2PRevoke != nil && message.GrantID != "" {
+				handlers.onP2PRevoke(message.GrantID, message.Reason)
 			}
 		case "revoke":
 			if message.Reason == ErrorCodeOwnerUnavailable {

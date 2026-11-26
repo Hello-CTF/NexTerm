@@ -10,7 +10,9 @@ import (
 func WithSession(deps Dependencies, manager *session.Manager) Dependencies {
 	terminal := tools.SessionTerminal(manager)
 	deps.Snapshot = terminal.Snapshot
-	deps.WriteAI = manager.WriteInternal
+	deps.WriteAI = func(ctx context.Context, tabID string, data []byte) error {
+		return manager.WriteInternal(session.WithInputSource(ctx, session.InputSourceAI), tabID, data)
+	}
 	deps.TabSession = func(tabID string) string {
 		tab, err := manager.Tab(tabID)
 		if err != nil {

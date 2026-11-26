@@ -130,6 +130,8 @@ func registerAICommandsGuarded(dispatcher *ipc.Dispatcher, manager *profiles.Man
 					profile = profiles.DefaultProfile()
 				}
 				config := input.Config
+				// The provider kind and thinking settings are edited on the
+				// profile itself; this legacy call keeps the stored ones.
 				profile.BaseURL = config.BaseURL
 				profile.APIKey = config.APIKey
 				profile.Model = config.Model

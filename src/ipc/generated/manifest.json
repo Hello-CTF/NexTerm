@@ -222,36 +222,6 @@
       "channel": false,
       "stream": "none"
     },
-    "ai_roster_attach": {
-      "scope": "ai-roster",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "ai_roster_list": {
-      "scope": "ai-roster",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "ai_roster_reconcile": {
-      "scope": "ai-roster",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "ai_roster_release": {
-      "scope": "ai-roster",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "ai_roster_rename": {
-      "scope": "ai-roster",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
     "ai_run_events": {
       "nested": false,
       "channel": false,
@@ -922,6 +892,30 @@
     "exec_batch_test_login": {
       "scope": "exec-batch",
       "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "fleet_device_connection_mode_get": {
+      "scope": "device-path",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fleet_device_connection_mode_set": {
+      "scope": "device-path",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fleet_device_p2p_diagnostics": {
+      "scope": "device-path",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fleet_device_path_status": {
+      "scope": "device-path",
+      "nested": false,
       "channel": false,
       "stream": "none"
     },
@@ -1609,6 +1603,12 @@
       "stream": "none"
     },
     "remote_fleet_device_metrics": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_fleet_device_p2p_key_confirm": {
       "scope": "remote",
       "nested": true,
       "channel": false,

@@ -235,7 +235,7 @@ func (r *Runner) initializeEino(current *job) error {
 }
 
 // setupEino builds the run's agent. assembleInput loads and compacts the
-// history and adds context, roster, skills and memory for a new run; a
+// history and adds context, skills and memory for a new run; a
 // restored run resumes from its checkpoint and needs none of that.
 func (r *Runner) setupEino(current *job, assembleInput bool) error {
 	var rows []store.MessageRow
@@ -334,7 +334,7 @@ func (r *Runner) setupEino(current *job, assembleInput bool) error {
 	}
 	einoTools = append(einoTools, memoryTools...)
 	runtime.input = messages
-	instruction := systemPromptFor(current.ctx, current.args.PlanMode)
+	instruction := systemPromptFor(current.ctx, current.args.PlanMode, current.args.Locale)
 	returnDirectly := map[string]bool{}
 	if current.args.PlanMode {
 		returnDirectly["exit_plan_mode"] = true
@@ -386,15 +386,6 @@ func (r *Runner) assembleInput(current *job, rows []store.MessageRow, compaction
 	}
 	if prompt := r.grantReferencedTabs(current); prompt != "" {
 		messages = append(messages, schema.UserMessage(prompt))
-	}
-	if r.config.Roster != nil {
-		injection, err := r.config.Roster.InjectContext(current.ctx, current.args.ConversationID)
-		if err != nil {
-			return nil, err
-		}
-		if len(injection.Entries) > 0 {
-			messages = append(messages, schema.UserMessage(injection.Prompt))
-		}
 	}
 	if catalog, err := r.config.Tools.SkillCatalog(current.ctx); err != nil {
 		return nil, err
@@ -777,47 +768,11 @@ func (r *Runner) emitToolCalls(current *job, calls []schema.ToolCall) error {
 		if toolCall.ID == "" {
 			return errors.New("模型返回了空 tool call ID")
 		}
-		handle := r.rosterHandleForCall(current, toolCall)
-		current.rememberCallHandle(toolCall.ID, handle)
-		if err := current.emit(current.ctx, Event{Type: "toolCall", ID: toolCall.ID, Name: toolCall.Name, Args: toolCall.Args, Display: tools.DisplayCall(toolCall), Handle: handle}); err != nil {
+		if err := current.emit(current.ctx, Event{Type: "toolCall", ID: toolCall.ID, Name: toolCall.Name, Args: toolCall.Args, Display: tools.DisplayCall(toolCall)}); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// rosterHandleForCall resolves the permanent roster handle of the call's
-// actual target tab: only a call whose resolved target is a tab claimed by
-// exactly one live roster entry yields that entry's handle. Non-terminal
-// tools, multi-tab targets, unresolvable or cross-scope targets, tabs with
-// no live roster row, and tabs claimed by more than one live row all report
-// no handle — the UI renders those as unknown, never a fabricated
-// reference.
-func (r *Runner) rosterHandleForCall(current *job, call tools.Call) string {
-	if r.config.Roster == nil || r.config.Tools == nil {
-		return ""
-	}
-	target, ok := r.config.Tools.ResolveCallTarget(current.ctx, current.id, current.args.Scope, call)
-	if !ok {
-		return ""
-	}
-	entries, err := r.config.Roster.List(current.ctx, current.args.ConversationID)
-	if err != nil {
-		return ""
-	}
-	handle := ""
-	for _, entry := range entries {
-		if entry.TabID != target.TabID || RosterStateTerminal(entry.State) {
-			continue
-		}
-		if handle != "" {
-			// Two live entries claiming one tab cannot be told apart
-			// honestly.
-			return ""
-		}
-		handle = entry.Handle
-	}
-	return handle
 }
 
 func mapSubagentEvent(parentCallID string, depth int, event subagent.Event) Event {
@@ -845,13 +800,13 @@ func (r *Runner) emitToolResult(current *job, message *schema.Message) (tools.Ou
 		return result, "", fmt.Errorf("解析领域工具 %s 结果失败: %w", message.ToolName, err)
 	}
 	if result.Change != nil {
-		if err := current.emit(current.ctx, Event{Type: "fileChange", ID: result.Change.ID, Path: result.Change.Path, Before: result.Change.Before, After: result.Change.After}); err != nil {
+		if err := current.emit(current.ctx, Event{Type: "fileChange", ID: result.Change.ID, Path: result.Change.Path, FileSessionID: result.Change.SessionID, Before: result.Change.Before, After: result.Change.After}); err != nil {
 			return result, "", err
 		}
 	}
 	text, cut := prefixBytes(result.Text, persistedToolResultLimit)
 	result.Truncated = result.Truncated || cut
-	if err := current.emit(current.ctx, Event{Type: "toolResult", ID: message.ToolCallID, OK: result.OK, Summary: summarize(result.Text), Text: text, Truncated: result.Truncated, ExitCode: result.ExitCode, Panic: result.Panic, Terminal: result.Terminal, Handle: current.callHandle(message.ToolCallID)}); err != nil {
+	if err := current.emit(current.ctx, Event{Type: "toolResult", ID: message.ToolCallID, OK: result.OK, Summary: summarize(result.Text), Text: text, Truncated: result.Truncated, ExitCode: result.ExitCode, Panic: result.Panic, Terminal: result.Terminal}); err != nil {
 		return result, "", err
 	}
 	if result.Todos != nil {

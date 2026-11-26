@@ -47,6 +47,9 @@ export type ChatItem =
       // can be placed after them and a retry can find its source message.
       jobId?: string;
       steered?: boolean;
+      // event marks the fixed note of a run a terminal event started; the
+      // user did not type it, so it shows as a notice without edit or resend.
+      event?: boolean;
     })
   | (ItemBase & {
       role: "assistant";
@@ -68,7 +71,8 @@ export type ChatItem =
       panic?: boolean;
       subagent?: SubagentTimeline;
     })
-  | (ItemBase & { role: "diff"; path: string; before: string; after: string })
+  // sessionId is the session the write went to; absent in records made before it was recorded.
+  | (ItemBase & { role: "diff"; path: string; before: string; after: string; sessionId?: string })
   | (ItemBase & { role: "plan"; text: string })
   | (ItemBase & {
       role: "confirm";
@@ -751,6 +755,7 @@ export function applyAiEvent(
             path: ev.path as string,
             before: (ev.before as string) ?? "",
             after: (ev.after as string) ?? "",
+            ...(typeof ev.sessionId === "string" && ev.sessionId !== "" ? { sessionId: ev.sessionId } : {}),
           },
         ]),
       );
@@ -1097,6 +1102,7 @@ export function historyToItems(
           path: historyString(raw, "path"),
           before: historyString(raw, "before"),
           after: historyString(raw, "after"),
+          ...(historyString(raw, "sessionId") ? { sessionId: historyString(raw, "sessionId") } : {}),
         });
         continue;
       }
@@ -1156,6 +1162,7 @@ export function historyToItems(
         ...(typeof m.id === "string" && m.id ? { messageId: m.id } : {}),
         ...(jobId ? { jobId } : {}),
         ...(historyField(raw, "steered") === true ? { steered: true } : {}),
+        ...(historyString(raw, "source") === "event" ? { event: true } : {}),
       });
     } else if (m.role === "assistant") {
       pushReasoning(raw);

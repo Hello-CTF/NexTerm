@@ -181,7 +181,7 @@ func TestRunnerEvidenceCaptureTamperFailsSanitize(t *testing.T) {
 
 func TestRunnerEvidenceCaptureUnsealedFailsSanitize(t *testing.T) {
 	runner, _, _ := recoveryRunner(t)
-	capture := runner.newJobCapture("job-live", "conv-1")
+	capture := runner.newJobCapture(context.Background(), "job-live", "conv-1")
 	if capture == nil {
 		t.Fatal("evidence recorder not wired")
 	}

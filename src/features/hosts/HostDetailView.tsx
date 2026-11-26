@@ -15,6 +15,7 @@ import { IconActivity, IconBell, IconGlobe, IconInfo, IconMonitor, IconServer, I
 import { useAssetProductionClassification } from "../production/productionSettings";
 import { fleetClient } from "../fleet/clients";
 import { DeviceAlertsCard } from "../fleet/DeviceAlertsCard";
+import { DeviceDiagnosticsSection } from "../fleet/DeviceDiagnosticsSection";
 import { deviceOpenBlockReason } from "../fleet/DeviceTreeSection";
 import { formatTime, isOnline, relativeTime } from "../fleet/format";
 import { MetricsPanel } from "../fleet/MetricsPanel";
@@ -468,6 +469,8 @@ function DeviceHostDetail({
               <HostSection key="alerts" title={t("告警")} icon={<IconBell size={14} />} testId="host-alerts">
                 {revoked ? <SectionHint>{t("设备已撤销接入，不再评估告警。")}</SectionHint> : <DeviceAlertsCard device={device} />}
               </HostSection>,
+              // Browser mode always relays, so it has no connection path to diagnose.
+              !WEB && !revoked && <DeviceDiagnosticsSection key="path" deviceId={device.id} visible={visible} />,
             ]}
             wide={
               <>

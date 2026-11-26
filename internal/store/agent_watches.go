@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/model"
@@ -435,6 +436,9 @@ type AgentWatchFireParams struct {
 	EventKind        string
 	EventJSON        string
 	Now              int64
+	// StateSinceNS, when non-zero, records the fired terminal state's start
+	// so the same state never fires the watch again.
+	StateSinceNS int64
 }
 
 // AgentWatchFire transitions an armed watch to matched and inserts the outbox
@@ -507,23 +511,30 @@ func (s *Store) AgentWatchFire(ctx context.Context, params AgentWatchFireParams)
 			return fmt.Errorf("agent watch %s anchor %d < %d: %w", params.WatchID, params.AnchorSeq, watch.AnchorSeq, ErrAgentWatchConflict)
 		}
 		fireSeq := watch.FireSeq + 1
+		updates := map[string]any{
+			"status":       AgentWatchStatusMatched,
+			"anchor_seq":   params.AnchorSeq,
+			"carry_blob":   carry,
+			"context_blob": context,
+			"carry_live":   params.CarryLive,
+			"fire_seq":     fireSeq,
+			"delivery_id":  params.DeliveryID,
+			"run_id":       params.RunID,
+			"matched_from": params.MatchedFrom,
+			"matched_to":   params.MatchedTo,
+			"excerpt":      params.Excerpt,
+			"revision":     params.ExpectedRevision + 1,
+			"updated_at":   params.Now,
+		}
+		if params.StateSinceNS != 0 {
+			if params.StateSinceNS <= watch.StateSinceNS {
+				return fmt.Errorf("agent watch %s state %d already seen: %w", params.WatchID, params.StateSinceNS, ErrAgentWatchState)
+			}
+			updates["state_since_ns"] = params.StateSinceNS
+		}
 		info := tx.Model(&model.AgentWatchRow{}).
 			Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, params.ExpectedRevision).
-			Updates(map[string]any{
-				"status":       AgentWatchStatusMatched,
-				"anchor_seq":   params.AnchorSeq,
-				"carry_blob":   carry,
-				"context_blob": context,
-				"carry_live":   params.CarryLive,
-				"fire_seq":     fireSeq,
-				"delivery_id":  params.DeliveryID,
-				"run_id":       params.RunID,
-				"matched_from": params.MatchedFrom,
-				"matched_to":   params.MatchedTo,
-				"excerpt":      params.Excerpt,
-				"revision":     params.ExpectedRevision + 1,
-				"updated_at":   params.Now,
-			})
+			Updates(updates)
 		if info.Error != nil {
 			return dbError(info.Error)
 		}
@@ -661,12 +672,44 @@ func (s *Store) AgentWatchEventGet(ctx context.Context, deliveryID string) (mode
 	return s.agentWatchEventByID(ctx, s.db.WithContext(ctx), deliveryID)
 }
 
-// AgentWatchEventAck marks a pending event acked and, in the same
-// transaction, re-arms an unexpired repeat watch from its current anchor;
-// expired repeats settle as expired. A duplicate Ack with a stale revision
-// is an idempotent no-op once
-// the row is acked; concurrent acks are serialized by CAS.
+// AgentWatchRepeatPolicy bounds how often a repeat watch fires. Each fire
+// writes a call/result pair into the owning conversation and may wake an
+// unattended run, so terminal output must not be able to fire a watch
+// without limit. A zero field disables that bound.
+type AgentWatchRepeatPolicy struct {
+	// MinInterval is the shortest time from one fire to the re-arm that
+	// allows the next; output that arrives in between is consumed unmatched.
+	MinInterval time.Duration
+	// MaxFires settles a repeat watch as expired, with
+	// AgentWatchRepeatLimitReason as its last error, once it fired this often.
+	MaxFires int64
+}
+
+const (
+	// AgentWatchRepeatMinInterval and AgentWatchMaxRepeatFires are the
+	// production repeat bounds the AI tool description states.
+	AgentWatchRepeatMinInterval = 30 * time.Second
+	AgentWatchMaxRepeatFires    = 50
+	// AgentWatchRepeatLimitReason is the last error of a repeat watch that
+	// reached its fire cap.
+	AgentWatchRepeatLimitReason = "repeat_fire_limit"
+)
+
+// AgentWatchEventAck acknowledges an event without repeat bounds; see
+// AgentWatchEventAckPolicy.
 func (s *Store) AgentWatchEventAck(ctx context.Context, deliveryID string, expectedRevision uint64, now int64) (model.AgentWatchOutboxRow, error) {
+	return s.AgentWatchEventAckPolicy(ctx, deliveryID, expectedRevision, now, AgentWatchRepeatPolicy{})
+}
+
+// AgentWatchEventAckPolicy marks a pending event acked and, in the same
+// transaction, re-arms an unexpired repeat watch from its current anchor;
+// expired repeats settle as expired, and so does a repeat watch that reached
+// the policy's fire cap. A repeat watch acknowledged before the policy's
+// minimum interval since its fire stays matched, consuming output, until
+// AgentWatchRearmDue re-arms it. A duplicate Ack with a stale revision is an
+// idempotent no-op once the row is acked; concurrent acks are serialized by
+// CAS.
+func (s *Store) AgentWatchEventAckPolicy(ctx context.Context, deliveryID string, expectedRevision uint64, now int64, policy AgentWatchRepeatPolicy) (model.AgentWatchOutboxRow, error) {
 	var updated model.AgentWatchOutboxRow
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		event, err := s.agentWatchEventByID(ctx, tx, deliveryID)
@@ -697,59 +740,114 @@ func (s *Store) AgentWatchEventAck(ctx context.Context, deliveryID string, expec
 			return err
 		}
 		if watch.Repeat && watch.Status == AgentWatchStatusMatched && watch.DeliveryID == event.DeliveryID {
-			// Re-arming hands the watch back to the live incarnation: it is
-			// only valid while the durable target still is the incarnation
-			// the watch fired under. A permanent detach or a replacement
-			// revokes that, so the acknowledgement still commits the
-			// legitimately produced event but the watch is terminated in
-			// the same transaction instead of re-arming.
-			target, found, err := s.agentWatchTargetForUpdate(ctx, tx, watch.TargetID)
-			if err != nil {
+			if err := s.rearmAgentWatch(ctx, tx, watch, event, now, policy); err != nil {
 				return err
-			}
-			if !found || target.Gone || target.Generation != watch.Generation {
-				info := tx.Model(&model.AgentWatchRow{}).
-					Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, watch.Revision).
-					Updates(map[string]any{
-						"status":     AgentWatchStatusUnverifiable,
-						"last_error": "target incarnation gone",
-						"revision":   watch.Revision + 1,
-						"updated_at": now,
-					})
-				if info.Error != nil {
-					return dbError(info.Error)
-				}
-				if info.RowsAffected != 1 {
-					return fmt.Errorf("agent watch %s terminate on ack: %w", watch.ID, ErrAgentWatchConflict)
-				}
-				updated, err = s.agentWatchEventByID(ctx, tx, deliveryID)
-				return err
-			}
-			status := AgentWatchStatusArmed
-			if watch.ExpiresAt != nil && *watch.ExpiresAt <= now {
-				status = AgentWatchStatusExpired
-			}
-			info := tx.Model(&model.AgentWatchRow{}).
-				Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, watch.Revision).
-				Updates(map[string]any{
-					"status":       status,
-					"delivery_id":  "",
-					"run_id":       "",
-					"matched_from": 0,
-					"matched_to":   0,
-					"excerpt":      "",
-					"revision":     watch.Revision + 1,
-					"updated_at":   now,
-				})
-			if info.Error != nil {
-				return dbError(info.Error)
-			}
-			if info.RowsAffected != 1 {
-				return fmt.Errorf("agent watch %s re-arm: %w", watch.ID, ErrAgentWatchConflict)
 			}
 		}
 		updated, err = s.agentWatchEventByID(ctx, tx, deliveryID)
 		return err
 	})
 	return updated, err
+}
+
+// rearmAgentWatch settles or re-arms a matched repeat watch whose event was
+// acknowledged. It leaves the watch matched while the policy's minimum
+// interval since the fire has not passed.
+func (s *Store) rearmAgentWatch(ctx context.Context, tx *gorm.DB, watch model.AgentWatchRow, event model.AgentWatchOutboxRow, now int64, policy AgentWatchRepeatPolicy) error {
+	// Re-arming hands the watch back to the live incarnation: it is only
+	// valid while the durable target still is the incarnation the watch
+	// fired under. A permanent detach or a replacement revokes that, so the
+	// acknowledgement still commits the legitimately produced event but the
+	// watch is terminated in the same transaction instead of re-arming.
+	target, found, err := s.agentWatchTargetForUpdate(ctx, tx, watch.TargetID)
+	if err != nil {
+		return err
+	}
+	updates := map[string]any{
+		"delivery_id":  "",
+		"run_id":       "",
+		"matched_from": 0,
+		"matched_to":   0,
+		"excerpt":      "",
+		"revision":     watch.Revision + 1,
+		"updated_at":   now,
+	}
+	switch {
+	case !found || target.Gone || target.Generation != watch.Generation:
+		updates = map[string]any{
+			"status":     AgentWatchStatusUnverifiable,
+			"last_error": "target incarnation gone",
+			"revision":   watch.Revision + 1,
+			"updated_at": now,
+		}
+	case watch.ExpiresAt != nil && *watch.ExpiresAt <= now:
+		updates["status"] = AgentWatchStatusExpired
+	case policy.MaxFires > 0 && watch.FireSeq >= policy.MaxFires:
+		updates["status"] = AgentWatchStatusExpired
+		updates["last_error"] = AgentWatchRepeatLimitReason
+	case policy.MinInterval > 0 && now < event.CreatedAt+policy.MinInterval.Milliseconds():
+		return nil
+	default:
+		updates["status"] = AgentWatchStatusArmed
+	}
+	info := tx.Model(&model.AgentWatchRow{}).
+		Where("id = ? AND owner_id = ? AND revision = ?", watch.ID, watch.OwnerID, watch.Revision).
+		Updates(updates)
+	if info.Error != nil {
+		return dbError(info.Error)
+	}
+	if info.RowsAffected != 1 {
+		return fmt.Errorf("agent watch %s re-arm: %w", watch.ID, ErrAgentWatchConflict)
+	}
+	return nil
+}
+
+// AgentWatchRearmDue re-arms the caller's matched repeat watches whose event
+// was acknowledged and whose minimum interval since the fire has passed, with
+// the same incarnation, expiry and cap checks as an acknowledgement. A watch
+// that moved concurrently is skipped; the next pass sees its new state.
+func (s *Store) AgentWatchRearmDue(ctx context.Context, now int64, policy AgentWatchRepeatPolicy) (int64, error) {
+	if policy.MinInterval <= 0 {
+		return 0, nil
+	}
+	due := agentWatchOwnerScope(ctx, s.db.WithContext(ctx).Model(&model.AgentWatchOutboxRow{}), "owner_id").
+		Select("delivery_id").
+		Where("status = ? AND created_at <= ?", AgentWatchEventAcked, now-policy.MinInterval.Milliseconds())
+	rows := []model.AgentWatchRow{}
+	if err := agentWatchOwnerScope(ctx, s.db.WithContext(ctx).Model(&model.AgentWatchRow{}), "owner_id").
+		Where("status = ? AND delivery_id IN (?)", AgentWatchStatusMatched, due).
+		// A map condition quotes the column, which MySQL needs for the
+		// reserved word repeat.
+		Where(map[string]any{"repeat": true}).
+		Order("id ASC").Find(&rows).Error; err != nil {
+		return 0, dbError(err)
+	}
+	var rearmed int64
+	for _, candidate := range rows {
+		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			watch, err := s.agentWatchByID(ctx, tx, candidate.ID)
+			if err != nil {
+				return err
+			}
+			if watch.Status != AgentWatchStatusMatched || watch.DeliveryID != candidate.DeliveryID {
+				return ErrAgentWatchConflict
+			}
+			event, err := s.agentWatchEventByID(ctx, tx, watch.DeliveryID)
+			if err != nil {
+				return err
+			}
+			if event.Status != AgentWatchEventAcked {
+				return ErrAgentWatchConflict
+			}
+			return s.rearmAgentWatch(ctx, tx, watch, event, now, policy)
+		})
+		if err != nil {
+			if errors.Is(err, ErrAgentWatchConflict) || errors.Is(err, ErrAgentWatchNotFound) {
+				continue
+			}
+			return rearmed, err
+		}
+		rearmed++
+	}
+	return rearmed, nil
 }

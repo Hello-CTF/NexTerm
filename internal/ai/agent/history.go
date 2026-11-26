@@ -95,6 +95,9 @@ func (r *Runner) persistToolResultRows(ctx context.Context, current *job, messag
 			"before": result.Change.Before,
 			"after":  result.Change.After,
 		}
+		if result.Change.SessionID != "" {
+			change["sessionId"] = result.Change.SessionID
+		}
 		if err := r.store.MsgInsert(ctx, current.args.ConversationID, historyTypeFileChange, change, nil, nil); err != nil {
 			return err
 		}

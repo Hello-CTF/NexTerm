@@ -1,4 +1,4 @@
-export type WatchConditionType = "contains" | "regex";
+export type WatchConditionType = "contains" | "regex" | "state";
 
 export interface WatchCondition {
   type: WatchConditionType;

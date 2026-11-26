@@ -62,6 +62,9 @@ func (r *Runtime) enterOwnerWait() time.Duration {
 	}
 	since := r.owner.since
 	r.mu.Unlock()
+	// The server no longer vouches for the owner: direct sessions move to the relay, which refuses them until
+	// the account is usable again.
+	r.revokeP2PSessions(P2PRevokeOwnerUnavailable)
 	if first {
 		r.logger.Warn("device owner account is disabled or requires a password reset; agent keeps running and will reconnect automatically once it is usable again")
 		r.writeOwnerMarker(since)

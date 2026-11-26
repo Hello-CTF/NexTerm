@@ -226,3 +226,42 @@ func TestKickFrameThenReconnectAndRevokedAfterOwnerUnavailableStops(t *testing.T
 		t.Fatalf("expected 2 owner waits before revocation, got %d", got)
 	}
 }
+
+// Entering owner wait, whether through a kick or a refused dial, and a device revocation close every direct
+// session: the server no longer vouches for them.
+func TestOwnerWaitAndRevocationCloseDirectSessions(t *testing.T) {
+	h := newOwnerHarness(t)
+	revoked := make(chan string, 8)
+	h.runtime.SetP2PRevokeAllHandler(func(reason string) { revoked <- reason })
+	h.setScript(func(dial int, conn *websocket.Conn) bool {
+		switch dial {
+		case 1:
+			_ = writeServerMessage(conn, serverMessage{Type: "hello_ok"})
+			_ = writeServerMessage(conn, serverMessage{Type: "revoke", Reason: ErrorCodeOwnerUnavailable})
+			return true
+		case 2:
+			return ownerFrame(conn)
+		default:
+			_ = writeServerMessage(conn, serverMessage{Type: "hello_ok"})
+			_ = writeServerMessage(conn, serverMessage{Type: "revoke"})
+			return true
+		}
+	})
+	stop := h.start(t)
+	defer stop()
+	for _, want := range []string{P2PRevokeOwnerUnavailable, P2PRevokeOwnerUnavailable, P2PRevokeDeviceRevoked} {
+		select {
+		case got := <-revoked:
+			if got != want {
+				t.Fatalf("revoke-all reason = %q, want %q", got, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("no revoke-all for %q", want)
+		}
+	}
+	select {
+	case <-h.runtime.revokeCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the revoke did not stop the agent")
+	}
+}

@@ -206,6 +206,15 @@ describe("M165 known_host and AI profile payloads match Go byte for byte", () =>
     };
     expect(marshalSyncPayload(aiProfilePayload(p))).toBe(fixtureText("aiProfilePrivacy"));
   });
+
+  it("places the provider kind and thinking settings after stream", () => {
+    const p: SyncCollectAIProfile = {
+      id: "p-4", name: "claude", baseUrl: "https://api.anthropic.com", model: "claude-opus-5-5",
+      contextWindow: 1000000, proxy: null, stream: true, provider: "anthropic", thinking: "budget", thinkingBudget: 4096,
+      updatedAt: 1700000004000, apiKeySet: false, apiKeyState: "revealed",
+    };
+    expect(marshalSyncPayload(aiProfilePayload(p))).toBe(fixtureText("aiProfileAnthropic"));
+  });
 });
 
 describe("ai_grant payloads match Go byte for byte", () => {

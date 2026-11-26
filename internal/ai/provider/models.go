@@ -21,6 +21,9 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 func (c *Client) ListModelsDetailed(ctx context.Context) (ModelList, error) {
 	requestContext, cancel := context.WithTimeout(ctx, c.timeouts.Models)
 	defer cancel()
+	if c.config.Kind == KindAnthropic {
+		return c.listAnthropicModels(requestContext)
+	}
 	request, err := c.newRequest(requestContext, http.MethodGet, "/models", nil)
 	if err != nil {
 		return ModelList{}, err

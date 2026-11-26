@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -61,6 +62,10 @@ type Registry struct {
 	controls map[string]*controlChannel
 	pending  map[string]*pendingBridge
 	bridges  map[string]*wsConn
+
+	// onKick runs after a device was kicked, with its revoke reason, so channels kept outside the registry
+	// (the relay links) close with it.
+	onKick func(deviceID, reason string)
 }
 
 func NewRegistry() *Registry {
@@ -206,6 +211,9 @@ func (r *Registry) kickDevice(deviceID, reason string) {
 	for _, conn := range bridges {
 		_ = conn.Close()
 	}
+	if r.onKick != nil {
+		r.onKick(deviceID, reason)
+	}
 }
 
 // RequestBridge requests a bridge over the device control channel and waits for the agent's outbound dial to pair,
@@ -216,6 +224,12 @@ func (r *Registry) kickDevice(deviceID, reason string) {
 // an already-delivered conn is taken out and closed, and after the abandoned mark later delivers close the connection instead,
 // so neither conn/goroutine nor the agent-side WS and helper subprocess ever leak.
 func (r *Registry) RequestBridge(ctx context.Context, deviceID, purpose string) (net.Conn, error) {
+	return r.RequestStreamBridge(ctx, deviceID, purpose, false)
+}
+
+// RequestStreamBridge is RequestBridge that, with stream set, asks the agent to carry an rstream on the bridge;
+// the caller checks the agent advertised the capability. The server pipes the bridge byte-transparently either way.
+func (r *Registry) RequestStreamBridge(ctx context.Context, deviceID, purpose string, stream bool) (net.Conn, error) {
 	r.mu.Lock()
 	channel := r.controls[deviceID]
 	r.mu.Unlock()
@@ -239,7 +253,7 @@ func (r *Registry) RequestBridge(ctx context.Context, deviceID, purpose string) 
 		r.mu.Unlock()
 	}()
 	writeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	err := writeControlJSON(writeCtx, conn, controlMessage{Type: "bridge", BridgeID: bridgeID, Purpose: purpose})
+	err := writeControlJSON(writeCtx, conn, controlMessage{Type: "bridge", BridgeID: bridgeID, Purpose: purpose, Stream: stream})
 	cancel()
 	if err != nil {
 		return nil, errDeviceOffline
@@ -278,6 +292,11 @@ func purposeUnsupportedMessage(purpose string) string {
 		purpose = agent.PurposeTerminal
 	}
 	return "该设备代理版本过旧，不支持「" + purpose + "」通道，请在设备上升级设备代理后重试"
+}
+
+// hasCapability reports whether an agent advertised capability.
+func hasCapability(capabilities []string, capability string) bool {
+	return slices.Contains(capabilities, capability)
 }
 
 // servesPurpose reports whether an agent advertised the requested bridge purpose.

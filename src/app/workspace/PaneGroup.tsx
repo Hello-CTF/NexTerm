@@ -51,6 +51,7 @@ import { WorkspaceEmpty } from "./EmptyStates";
 import { beginTabDrag, currentTabDrag, endTabDrag, TAB_DRAG_MIME, tabDragFrom, useTabDrag } from "./tabDrag";
 import { isTouchShell } from "../shell/shellMode";
 import { muteItem, stateMarkItems } from "../../features/session/stateMarkMenu";
+import { connectionModeMenu, deviceIdOfWorkspace, useDevicePathNote } from "../../features/fleet/devicePath";
 import { t as tr } from "../../i18n";
 
 function handleTablistKeyDown(
@@ -189,7 +190,11 @@ export function PaneGroup({
   leftOpen,
   onToggleLeft,
 }: PaneGroupProps) {
-  const workspaceKind = useUi((s) => (workspaceId ? s.workspaces.find((w) => w.id === workspaceId)?.kind : undefined));
+  const workspace = useUi((s) => (workspaceId ? s.workspaces.find((w) => w.id === workspaceId) : undefined));
+  const workspaceKind = workspace?.kind;
+  // Tabs of a managed device's workspace share its connection: their tooltip names the path and their menu sets it.
+  const pathDeviceId = deviceIdOfWorkspace(workspace);
+  const pathNote = useDevicePathNote(workspace);
   const showStrip = useUi((s) => paneShowsTabStrip(workspaceId ? s.workspaces.find((w) => w.id === workspaceId) : undefined, pane));
   const canNewTerminal = workspaceKind === undefined || workspaceKind === "session";
   const setActiveTab = useUi((s) => s.setActiveTab);
@@ -338,6 +343,8 @@ export function PaneGroup({
     if (running && t.tabId) {
       items.push({ kind: "separator" }, muteItem(t.tabId), ...stateMarkItems(t, t.tabId));
     }
+    const pathItems = pathDeviceId ? connectionModeMenu(pathDeviceId) : [];
+    if (pathItems.length > 0) items.push({ kind: "separator" }, ...pathItems);
     if (running) {
       items.push({ kind: "separator" });
       items.push({
@@ -502,7 +509,7 @@ export function PaneGroup({
                     e.preventDefault();
                     openTabMenu(t, e.clientX, e.clientY);
                   }}
-                  title={tabTooltip(t, unread, persistence, attention)}
+                  title={tabTooltip(t, unread, persistence, attention, pathNote)}
                 >
                   <span className="flex shrink-0">
                     <Icon size={13} />

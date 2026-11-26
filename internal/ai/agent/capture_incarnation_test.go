@@ -27,7 +27,7 @@ func TestCaptureRecordingIncarnationsSealIndependentAnchors(t *testing.T) {
 
 	first := NewRunner(Config{Store: storage, Runs: storage})
 	t.Cleanup(func() { _ = first.Close() })
-	cap1 := first.newJobCapture("job-1", "conv-1")
+	cap1 := first.newJobCapture(context.Background(), "job-1", "conv-1")
 	if cap1 == nil {
 		t.Fatal("evidence recorder not wired")
 	}
@@ -40,7 +40,7 @@ func TestCaptureRecordingIncarnationsSealIndependentAnchors(t *testing.T) {
 	// records a fresh incarnation of the same job.
 	second := NewRunner(Config{Store: storage, Runs: storage})
 	t.Cleanup(func() { _ = second.Close() })
-	cap2 := second.newJobCapture("job-1", "conv-1")
+	cap2 := second.newJobCapture(context.Background(), "job-1", "conv-1")
 	if cap2 == nil {
 		t.Fatal("evidence recorder not wired after restart")
 	}

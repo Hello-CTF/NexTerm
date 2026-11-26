@@ -35,6 +35,9 @@ type aiProfileRecord struct {
 	MaxTokens       *int     `json:"maxTokens,omitempty"`
 	Proxy           *string  `json:"proxy"`
 	Stream          bool     `json:"stream"`
+	Provider        string   `json:"provider,omitempty"`
+	Thinking        string   `json:"thinking,omitempty"`
+	ThinkingBudget  *int     `json:"thinkingBudget,omitempty"`
 
 	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
 	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`
@@ -56,6 +59,7 @@ func aiProfileRecordFromPayload(payload aiProfileObject) aiProfileRecord {
 		Model: payload.Model, FallbackModel: payload.FallbackModel, Temperature: payload.Temperature,
 		ReasoningEffort: payload.ReasoningEffort,
 		ContextWindow:   payload.ContextWindow, MaxTokens: payload.MaxTokens, Proxy: payload.Proxy, Stream: payload.Stream,
+		Provider: payload.Provider, Thinking: payload.Thinking, ThinkingBudget: payload.ThinkingBudget,
 		RequestTimeoutSeconds: payload.RequestTimeoutSeconds, IdleTimeoutSeconds: payload.IdleTimeoutSeconds,
 		CircuitFailureThreshold: payload.CircuitFailureThreshold, CircuitCooldownSeconds: payload.CircuitCooldownSeconds,
 		Privacy: payload.Privacy,
@@ -68,6 +72,7 @@ func aiProfilePayloadFromRecord(record aiProfileRecord, updatedAt int64) aiProfi
 		Model: record.Model, FallbackModel: record.FallbackModel, Temperature: record.Temperature,
 		ReasoningEffort: record.ReasoningEffort,
 		ContextWindow:   record.ContextWindow, MaxTokens: record.MaxTokens, Proxy: record.Proxy, Stream: record.Stream,
+		Provider: record.Provider, Thinking: record.Thinking, ThinkingBudget: record.ThinkingBudget,
 		RequestTimeoutSeconds: record.RequestTimeoutSeconds, IdleTimeoutSeconds: record.IdleTimeoutSeconds,
 		CircuitFailureThreshold: record.CircuitFailureThreshold, CircuitCooldownSeconds: record.CircuitCooldownSeconds,
 		Privacy: record.Privacy, UpdatedAt: updatedAt,

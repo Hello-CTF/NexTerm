@@ -259,10 +259,12 @@ type Question struct {
 }
 
 type Change struct {
-	ID     string `json:"id"`
-	Path   string `json:"path"`
-	Before string `json:"before"`
-	After  string `json:"after"`
+	ID   string `json:"id"`
+	Path string `json:"path"`
+	// SessionID is the session whose file system the write went to, so a client can open the file on that host.
+	SessionID string `json:"sessionId,omitempty"`
+	Before    string `json:"before"`
+	After     string `json:"after"`
 }
 
 type Preview struct {
@@ -648,6 +650,8 @@ type Dependencies struct {
 	LocalHistory                bool
 	Audit                       func(context.Context, AuditEntry) error
 	Reminders                   ReminderScheduler
+	Subscriptions               TerminalSubscriber
+	ScheduledJobs               ScheduledJobService
 	Notify                      func(context.Context, string) error
 	Grants                      *guard.Grants
 	// TakeoverActive reports whether a terminal takeover currently owns the

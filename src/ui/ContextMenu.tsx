@@ -25,6 +25,8 @@ export type MenuItem =
       hint?: string;
       danger?: boolean;
       disabled?: boolean;
+      // checked makes the item one choice of a radio group (role menuitemradio); the caller shows the mark as its icon.
+      checked?: boolean;
       submenu?: MenuItem[];
       onSelect?: () => void;
       // keepOpen runs the action without dismissing the menu, for repeated actions such as closing several rows.
@@ -299,7 +301,8 @@ function MenuList({
                 itemRefs.current[index] = element;
               }}
               type="button"
-              role="menuitem"
+              role={item.checked === undefined ? "menuitem" : "menuitemradio"}
+              aria-checked={item.checked}
               tabIndex={-1}
               className={`nx-menu-item ${item.danger ? "is-danger" : ""}`}
               disabled={item.disabled}

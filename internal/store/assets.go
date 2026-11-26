@@ -30,6 +30,18 @@ func (s *Store) AssetList(ctx context.Context, includeDeleted bool) ([]AssetRow,
 	return result, nil
 }
 
+// AssetListKind lists the live assets of one kind, oldest first.
+func (s *Store) AssetListKind(ctx context.Context, kind string) ([]AssetRow, error) {
+	asset := query.Use(s.db).AssetRow
+	result := []AssetRow{}
+	err := asset.WithContext(ctx).Where(ownerConditions(ctx, asset.TableName())...).
+		Where(asset.Kind.Eq(kind), asset.DeletedAt.IsNull()).Order(asset.CreatedAt, asset.ID).Scan(&result)
+	if err != nil {
+		return nil, dbError(err)
+	}
+	return result, nil
+}
+
 func (s *Store) AssetGet(ctx context.Context, id string) (AssetRow, error) {
 	return s.assetGet(ctx, s.db, id)
 }

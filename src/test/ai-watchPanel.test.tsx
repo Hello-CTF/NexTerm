@@ -65,6 +65,15 @@ function button(label: string): HTMLButtonElement {
 }
 
 describe("WatchPanel", () => {
+  it("describes a terminal state subscription by its state", async () => {
+    const api = new SyntheticApi();
+    api.watches = [watch({ id: "w-state", name: "", condition: { type: "state", pattern: "just_finished" } })];
+    view = mount(createElement(WatchPanel, { api, owner }));
+    await flushUntil(() => text().includes("命令结束"));
+    expect(text()).toContain("终端 dev-1命令结束时唤醒 AI");
+    expect(text()).not.toContain("just_finished");
+  });
+
   it("explains what a watch is in plain Chinese and never shows raw owner ids or English titles", async () => {
     const api = new SyntheticApi();
     api.watches = [watch({ id: "w-1", name: "等待构建" })];
@@ -76,6 +85,15 @@ describe("WatchPanel", () => {
     expect(text()).not.toContain("Watch");
     expect(text()).not.toContain(owner);
     expect(text()).not.toContain("锚点");
+  });
+
+  it("explains why a repeat watch that reached its fire cap ended", async () => {
+    const api = new SyntheticApi();
+    api.watches = [watch({ id: "w-cap", name: "错误日志", status: "expired", repeat: true, lastError: "repeat_fire_limit" })];
+    view = mount(createElement(WatchPanel, { api, owner }));
+    await flushUntil(() => text().includes("已结束（1）"));
+    expect(text()).toContain("已达到重复触发次数上限，监视已结束");
+    expect(text()).not.toContain("repeat_fire_limit");
   });
 
   it("shows an empty state when nothing is armed", async () => {

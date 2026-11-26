@@ -22,7 +22,10 @@ const captureRegistryBound = 64
 // shared capture ID would make the later legitimate anchor collide with
 // the earlier one. The job ID stays the traceable prefix and the capture's
 // JobID field.
-func (r *Runner) newJobCapture(jobID, conversationID string) *Capture {
+func (r *Runner) newJobCapture(ctx context.Context, jobID, conversationID string) *Capture {
+	if !r.recordEvidence(ctx) {
+		return nil
+	}
 	recorder := r.evidenceRecorder()
 	if recorder == nil {
 		return nil

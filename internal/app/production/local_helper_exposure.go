@@ -14,6 +14,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/localhelper"
 	"github.com/Hello-CTF/NexTerm/internal/netproxy"
+	"github.com/Hello-CTF/NexTerm/internal/p2p/agentside"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
@@ -183,7 +184,7 @@ func newLocalHelperExposureRunner(dataDir string, helper *localhelper.Service, s
 		if err != nil {
 			return nil, err
 		}
-		return agent.New(agent.Options{
+		agentRuntime, err := agent.New(agent.Options{
 			Store:          store,
 			DataDir:        dataDir,
 			Prober:         prober,
@@ -200,6 +201,13 @@ func newLocalHelperExposureRunner(dataDir string, helper *localhelper.Service, s
 			OnChannel:     onChannel,
 			Logger:        logger.With("component", "local-helper-exposure"),
 		})
+		if err != nil {
+			return nil, err
+		}
+		// The exposed desktop is a device like any agent: an app of the same account (a phone on the same
+		// network, say) may reach its terminals over a direct leg.
+		agentside.Install(agentRuntime, agentside.Options{Logger: logger.With("component", "local-helper-p2p")})
+		return agentRuntime, nil
 	}
 }
 

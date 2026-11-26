@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/platform"
+	"github.com/Hello-CTF/NexTerm/internal/relaymux"
+	"github.com/Hello-CTF/NexTerm/internal/rstream"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/coder/websocket"
@@ -75,6 +77,11 @@ type Options struct {
 	Now       func() time.Time
 	// Sleep, when set, replaces the real wait between owner_unavailable retries (tests).
 	Sleep func(ctx context.Context, d time.Duration) bool
+	// DisableRelayMux keeps this agent off the multiplexed relay: it neither advertises relaymux.Capability nor
+	// keeps a relay link, and serves every device stream over bridges as an agent that predates the relay.
+	DisableRelayMux bool
+	// RelayDialHook, when set, adjusts every relay dial configuration before the dial (tests force a carrier).
+	RelayDialHook func(*relaymux.DialConfig)
 }
 
 type Runtime struct {
@@ -128,6 +135,9 @@ type Runtime struct {
 	jitter func() float64
 	// sleep waits between owner_unavailable retries; tests inject a fake that records the delay.
 	sleep func(ctx context.Context, d time.Duration) bool
+	// relayDisabled and relayDialHook are Options.DisableRelayMux and Options.RelayDialHook.
+	relayDisabled bool
+	relayDialHook func(*relaymux.DialConfig)
 
 	// owner tracks the temporary owner_unavailable state; guarded by mu.
 	owner ownerWait
@@ -159,6 +169,15 @@ type Runtime struct {
 	healthyOnce sync.Once
 	// purposeHandlers serves non-terminal bridge purposes; terminal is built in and never enters the map.
 	purposeHandlers map[string]PurposeHandler
+	// p2pRevoke receives p2p_revoke control frames (guarded by mu); nil until direct connections are wired.
+	p2pRevoke func(grantID, reason string)
+	// p2pRevokeAll closes every direct session (guarded by mu); nil until direct connections are wired.
+	p2pRevokeAll func(reason string)
+	// streams holds the rstream streams of stream bridges, so a RESUME on a later bridge finds its stream.
+	streams *rstream.Server
+	// claimed hands a stream accepted on a stream bridge to the purpose handler that claims the bridge; keyed by
+	// bridge ID and purpose, guarded by mu.
+	claimed map[string]net.Conn
 
 	runCtx     context.Context
 	loopWg     sync.WaitGroup
@@ -253,7 +272,11 @@ func New(options Options) (*Runtime, error) {
 		logger:                  logger,
 		now:                     now,
 		sleep:                   options.Sleep,
+		relayDisabled:           options.DisableRelayMux,
+		relayDialHook:           options.RelayDialHook,
 		purposeHandlers:         make(map[string]PurposeHandler),
+		streams:                 rstream.NewServer(rstream.ServerOptions{}),
+		claimed:                 make(map[string]net.Conn),
 		revokeCh:                make(chan struct{}),
 		fatalCh:                 make(chan error, 1),
 		reconfigCh:              make(chan struct{}, 1),
@@ -444,6 +467,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	r.runCtx = runCtx
+	// Stopping resets every stream, so clients reconnect at once instead of waiting out the retention.
+	stopStreams := context.AfterFunc(runCtx, func() { _ = r.streams.Close() })
+	defer stopStreams()
 	r.clearOwnerMarker()
 	defer r.clearOwnerMarker()
 
@@ -469,6 +495,13 @@ func (r *Runtime) Run(ctx context.Context) error {
 		defer r.loopWg.Done()
 		r.channelLoop(runCtx)
 	}()
+	if !r.relayDisabled {
+		r.loopWg.Add(1)
+		go func() {
+			defer r.loopWg.Done()
+			r.relayLoop(runCtx)
+		}()
+	}
 
 	interval := time.Duration(r.desiredSnapshot().MetricsIntervalMS) * time.Millisecond
 	ticker := time.NewTicker(interval)
@@ -537,6 +570,10 @@ func (r *Runtime) capabilities() []string {
 		extra = append(extra, purpose)
 	}
 	r.mu.Unlock()
+	extra = append(extra, rstream.Capability)
+	if !r.relayDisabled {
+		extra = append(extra, relaymux.Capability)
+	}
 	sort.Strings(extra)
 	return append([]string{PurposeTerminal}, extra...)
 }
@@ -656,6 +693,7 @@ func (r *Runtime) confirmUpgradeHealthy() {
 func (r *Runtime) revoke() {
 	r.revokeOnce.Do(func() {
 		r.logger.Warn("device revoked by server; agent stopping")
+		r.revokeP2PSessions(P2PRevokeDeviceRevoked)
 		close(r.revokeCh)
 	})
 }
@@ -955,6 +993,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		r.followServerVersion(ctx, channel.ServerVersion())
 		r.ownerRecovered()
 		r.notifyCurrentURL(ctx, client)
+		r.registerP2PKeyAfterConnect(ctx, client)
 		backoff = retrySleep
 		r.reportChannel(true)
 		channelCtx, channelCancel := context.WithCancel(ctx)
@@ -970,9 +1009,10 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 			channelCancel()
 		}
 		err = channel.Run(channelCtx, channelHandlers{
-			onConfig: r.applyDesired,
-			onBridge: r.handleBridge,
-			onRevoke: r.revoke,
+			onConfig:    r.applyDesired,
+			onBridge:    r.handleBridge,
+			onRevoke:    r.revoke,
+			onP2PRevoke: r.handleP2PRevoke,
 		})
 		moved := channelCtx.Err() != nil && ctx.Err() == nil
 		channelCancel()
@@ -1131,10 +1171,25 @@ func (r *Runtime) RegisterPurposeHandler(purpose string, handler PurposeHandler)
 	r.purposeHandlers[purpose] = handler
 }
 
+// ServesPurpose reports whether a handler serves purpose, which the hello advertises as a capability.
+func (r *Runtime) ServesPurpose(purpose string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.purposeHandlers[purpose]
+	return ok
+}
+
 // DialPurposeBridge dials one purpose bridge through the current endpoint with this runtime's authenticated hello.
 // The composition root plugs the purpose servers (package purpose imports this package, so they cannot be wired
 // from here) into the runtime through it.
 func (r *Runtime) DialPurposeBridge(ctx context.Context, bridgeID, purpose string) (net.Conn, error) {
+	r.mu.Lock()
+	claimed := r.claimed[claimKey(bridgeID, purpose)]
+	delete(r.claimed, claimKey(bridgeID, purpose))
+	r.mu.Unlock()
+	if claimed != nil {
+		return claimed, nil
+	}
 	client := r.prober.Current()
 	if client == nil {
 		return nil, ErrNoEndpoint
@@ -1146,7 +1201,13 @@ func (r *Runtime) DialPurposeBridge(ctx context.Context, bridgeID, purpose strin
 	return websocket.NetConn(ctx, conn, websocket.MessageBinary), nil
 }
 
-func (r *Runtime) handleBridge(bridgeID, purpose string) {
+func claimKey(bridgeID, purpose string) string { return bridgeID + "\x00" + purpose }
+
+func (r *Runtime) handleBridge(bridgeID, purpose string, stream bool) {
+	if stream {
+		r.handleStreamBridge(bridgeID, purpose)
+		return
+	}
 	if purpose != "" && purpose != PurposeTerminal {
 		r.handlePurposeBridge(bridgeID, purpose)
 		return
@@ -1175,6 +1236,135 @@ func (r *Runtime) handlePurposeBridge(bridgeID, purpose string) {
 			r.logger.Warn("purpose bridge failed", "bridge_id", bridgeID, "purpose", purpose, "error", err)
 		}
 	}()
+}
+
+// handleStreamBridge serves a bridge that carries an rstream: it dials the bridge, and the stream server either
+// starts a stream, handed to the purpose handler (which still gets a net.Conn), or re-attaches a retained
+// stream to this bridge, which is then served by the handler already running.
+func (r *Runtime) handleStreamBridge(bridgeID, purpose string) {
+	if !r.desiredSnapshot().TerminalEnabled {
+		r.logger.Warn("stream bridge requested but terminal access is disabled", "bridge_id", bridgeID, "purpose", purpose)
+		return
+	}
+	terminal := purpose == "" || purpose == PurposeTerminal
+	var handler PurposeHandler
+	if !terminal {
+		r.mu.Lock()
+		handler = r.purposeHandlers[purpose]
+		r.mu.Unlock()
+		if handler == nil {
+			r.logger.Warn("bridge requested for an unhandled purpose; ignoring", "bridge_id", bridgeID, "purpose", purpose)
+			return
+		}
+	}
+	r.loopWg.Add(1)
+	go func() {
+		defer r.loopWg.Done()
+		ctx := r.runCtx
+		client := r.prober.Current()
+		if client == nil {
+			r.logger.Warn("bridge aborted: no healthy endpoint", "bridge_id", bridgeID)
+			return
+		}
+		ws, env, err := dialBridgeWithEnv(ctx, client.WSURL(), r.hello(bridgeID, purpose), client.DialPolicy())
+		if err != nil {
+			if r.handleDenied(err) {
+				return
+			}
+			r.logger.Warn("bridge dial failed", "bridge_id", bridgeID, "error", err)
+			return
+		}
+		// The carrier lives as long as the runtime, not as long as this bridge request: a stream outlives it.
+		if err := r.serveCarrier(ctx, websocket.NetConn(ctx, ws, websocket.MessageBinary), bridgeID, purpose, env, handler); err != nil {
+			r.logger.Warn("stream bridge refused", "bridge_id", bridgeID, "purpose", purpose, "error", err)
+		}
+	}()
+}
+
+// ServeCarrier serves an rstream carrier authorized for purpose that did not come over a relay bridge (a direct
+// stream): an OPEN starts a stream served like one on a stream bridge, a RESUME re-attaches a stream already
+// being served. bridgeID only names the stream in logs and the purpose handler's claim; env is the terminal's
+// SSH session variables. It returns once the stream is served, or at once for a RESUME. The caller has checked
+// that the carrier may carry purpose.
+func (r *Runtime) ServeCarrier(ctx context.Context, conn net.Conn, bridgeID, purpose string, env []string) error {
+	if !r.TerminalEnabled() {
+		_ = conn.Close()
+		return errors.New("terminal access is disabled")
+	}
+	var handler PurposeHandler
+	if purpose != "" && purpose != PurposeTerminal {
+		r.mu.Lock()
+		handler = r.purposeHandlers[purpose]
+		r.mu.Unlock()
+		if handler == nil {
+			_ = conn.Close()
+			return fmt.Errorf("no handler for purpose %q", purpose)
+		}
+	}
+	return r.serveCarrier(ctx, conn, bridgeID, purpose, env, handler)
+}
+
+func (r *Runtime) serveCarrier(ctx context.Context, carrier net.Conn, bridgeID, purpose string, env []string, handler PurposeHandler) error {
+	conn, resumed, err := r.streams.Accept(ctx, carrier, purpose)
+	if err != nil {
+		return err
+	}
+	if resumed {
+		return nil
+	}
+	if handler == nil {
+		r.serveTerminalStream(ctx, bridgeID, conn, env)
+		return nil
+	}
+	r.servePurposeConn(ctx, conn, bridgeID, purpose, handler)
+	return nil
+}
+
+// servePurposeConn hands conn to the purpose handler through the bridge claim, as if the handler had dialed
+// bridgeID, and returns once the handler did; a conn the handler never claimed is closed.
+func (r *Runtime) servePurposeConn(ctx context.Context, conn net.Conn, bridgeID, purpose string, handler PurposeHandler) {
+	key := claimKey(bridgeID, purpose)
+	r.mu.Lock()
+	r.claimed[key] = conn
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		unclaimed := r.claimed[key]
+		delete(r.claimed, key)
+		r.mu.Unlock()
+		if unclaimed != nil {
+			_ = unclaimed.Close()
+		}
+	}()
+	if err := handler(ctx, bridgeID); err != nil {
+		r.logger.Warn("purpose bridge failed", "bridge_id", bridgeID, "purpose", purpose, "error", err)
+	}
+}
+
+// TerminalEnabled reports the server's desired terminal switch for this device.
+func (r *Runtime) TerminalEnabled() bool { return r.desiredSnapshot().TerminalEnabled }
+
+// DeviceID is the enrolled device id; empty before Run loaded the config.
+func (r *Runtime) DeviceID() string { return r.deviceID }
+
+// serveTerminalStream pipes a new terminal stream to the supervisor helper, as handleTerminalBridge does for a
+// raw bridge.
+func (r *Runtime) serveTerminalStream(ctx context.Context, bridgeID string, conn net.Conn, env []string) {
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	defer func() { _ = conn.Close() }()
+	r.settleStateDir(ctx)
+	ensureCtx, cancel := context.WithTimeout(ctx, helperEnsureTimeout)
+	err := r.ensureHelper(ensureCtx)
+	cancel()
+	switch {
+	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
+		r.logger.Warn("supervisor helper needs upgrade; bridging to report it", "bridge_id", bridgeID, "error", err)
+	case err != nil:
+		r.logger.Warn("bridge aborted: supervisor helper unavailable", "bridge_id", bridgeID, "error", err)
+		return
+	}
+	_ = bridgePipe(ctx, newStreamBridgeEnd(conn), r.bridge, r.bridgeHelperConfig(), env)
 }
 
 func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
@@ -1215,7 +1405,7 @@ func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 			return
 		}
 		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
-		_ = bridgePipe(ctx, conn, r.bridge, r.bridgeHelperConfig(), env)
+		_ = bridgePipe(ctx, wsBridgeEnd{conn: conn}, r.bridge, r.bridgeHelperConfig(), env)
 	}()
 }
 

@@ -1,18 +1,8 @@
-import { sanitizeWorkspaceProblemText, useUi, type WorkspaceProblem } from "../../app/store";
+import { useUi, type WorkspaceProblem } from "../../app/store";
+import { askAiAboutProblem, workspaceProblemCopyText } from "./problemAiRef";
 import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
 import { t } from "../../i18n";
-
-export function workspaceProblemCopyText(problem: WorkspaceProblem): string {
-  const lines = [
-    t("时间：{toLocaleString}", { toLocaleString: new Date(problem.createdAt).toLocaleString() }),
-    t("操作：{operation}", { operation: problem.operation }),
-    t("目标：{title} · {identity}", { title: problem.target.title, identity: problem.target.identity }),
-  ];
-  if (problem.target.schema !== undefined) lines.push(`schema：${problem.target.schema || t("默认")}`);
-  lines.push(t("摘要：{summary}", { summary: problem.summary }), t("详情：{detail}", { detail: problem.detail }));
-  return sanitizeWorkspaceProblemText(lines.join("\n"));
-}
 
 interface WorkspaceProblemActions {
   onRetryRead?: (problem: WorkspaceProblem) => void;
@@ -106,6 +96,14 @@ function WorkspaceProblemSection({
                 <div className="flex flex-wrap items-center gap-2">
                   <button type="button" className="nx-link" onClick={() => void copy(problem)}>
                     {t("复制")}
+                  </button>
+                  <button
+                    type="button"
+                    className="nx-link"
+                    aria-label={t("让 AI 看看：{summary}", { summary: problem.summary })}
+                    onClick={() => askAiAboutProblem(problem)}
+                  >
+                    {t("让 AI 看看")}
                   </button>
                   {available && problem.canRetryRead && onRetryRead && (
                     <button type="button" className="nx-link" onClick={() => onRetryRead(problem)}>

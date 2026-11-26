@@ -166,15 +166,24 @@ describe("AiSidebar cron entry point", () => {
     view = null;
   });
 
-  it("offers no background tasks button before a conversation exists or while no job is scheduled", async () => {
+  it("always offers the background tasks button and explains what appears there before anything exists", async () => {
     await flush();
-    expect(view!.container.querySelector('button[aria-label^="后台任务"]')).toBeNull();
+    expect(cronButton(view!).getAttribute("aria-label")).toBe("后台任务");
+    expect(cronButton(view!).querySelector(".nx-badge")).toBeNull();
     expect(mocks.cronList).not.toHaveBeenCalled();
+
+    click(cronButton(view!));
+    await flush();
+    expect(cronButton(view!).getAttribute("aria-expanded")).toBe("true");
+    expect(textOf(view!)).toContain("暂无后台任务");
+
     await send(view!, "Question A");
     emitDone("Answer A");
-    await flush();
+    await flushUntil(() => textOf(view!).includes("此对话暂无定时任务"));
     expect(mocks.cronList).toHaveBeenCalledWith("conv-1");
-    expect(view!.container.querySelector('button[aria-label^="后台任务"]')).toBeNull();
+    await flush();
+    expect(cronButton(view!).getAttribute("aria-label")).toBe("后台任务");
+    expect(cronButton(view!).querySelector(".nx-badge")).toBeNull();
   });
 
   it("shows the button with a count when a job exists, opens the schedule section for the current conversation, and closes only on request", async () => {
@@ -191,7 +200,7 @@ describe("AiSidebar cron entry point", () => {
     await flush();
     await send(view!, "Question A");
     emitDone("Answer A");
-    await flushUntil(() => view!.container.querySelector('button[aria-label^="后台任务"]') !== null);
+    await flushUntil(() => cronButton(view!).getAttribute("aria-label") === "后台任务，共 1 项");
     expect(cronButton(view!).getAttribute("aria-label")).toBe("后台任务，共 1 项");
 
     click(cronButton(view!));
@@ -212,7 +221,7 @@ describe("AiSidebar cron entry point", () => {
     await flush();
     await send(view!, "Question A");
     emitDone("Answer A");
-    await flushUntil(() => view!.container.querySelector('button[aria-label^="后台任务"]') !== null);
+    await flushUntil(() => cronButton(view!).getAttribute("aria-label") === "后台任务，共 1 项");
     mocks.conversationList.mockResolvedValue([{ id: "conv-1", title: "Conversation A", updatedAt: 0 }]);
 
     click(cronButton(view!));
@@ -232,7 +241,7 @@ describe("AiSidebar cron entry point", () => {
     await flush();
     await send(view!, "Question A");
     emitDone("Answer A");
-    await flushUntil(() => view!.container.querySelector('button[aria-label^="后台任务"]') !== null);
+    await flushUntil(() => cronButton(view!).getAttribute("aria-label") === "后台任务，共 1 项");
     click(cronButton(view!));
     await flushUntil(() => textOf(view!).includes("每日巡检"));
 

@@ -259,7 +259,7 @@ func (r *Registry) completeWrite(ctx context.Context, jobID string, scope Scope,
 		if readErr == nil && utf8.Valid(after) && change.before.known {
 			actual := string(after)
 			if actual != change.before.content && len(change.before.content)+len(actual) <= MaxPreviewSize {
-				result.Change = &Change{ID: call.ID, Path: change.path, Before: change.before.content, After: actual}
+				result.Change = &Change{ID: call.ID, Path: change.path, SessionID: scope.SessionID, Before: change.before.content, After: actual}
 			}
 			r.state(jobID).rememberRead(change.key, versionOf(after))
 		}

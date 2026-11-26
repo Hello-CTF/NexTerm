@@ -12,30 +12,23 @@ import { findItemMatches, stepMatch } from "../conversationSearch";
 import { productionSkillsApi } from "../../settings/skillsApi";
 import { useUi } from "../../../app/store";
 import { type RefChip, type AiChatBase, composeUserMessage } from "./aiSidebarShared";
-import { currentAtQuery } from "../userRefs";
+import { currentAtQuery, MAX_MESSAGE_REFS } from "../userRefs";
 import { hasExitEvidence } from "../../../app/store";
 import type { UseChatRunSessionOut } from "./useChatRunSession";
 import { t as tr } from "../../../i18n";
 
 export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
-  const { isLifecycleActive, conversationIdRef, toolHandlesRef, setToolHandleVersion, lastRefreshedHandleVersionRef, restoreBindingRef, restoreGenerationRef, setConversationId, onConversationChangeRef, stream, conv, permScope, pushToast, input, sessionId, workspaces } = p;
+  const { isLifecycleActive, conversationIdRef, restoreBindingRef, restoreGenerationRef, setConversationId, onConversationChangeRef, stream, conv, permScope, pushToast, input, sessionId, workspaces } = p;
 
   const updateConversationId = useCallback((id: string | undefined, title?: string) => {
     if (!isLifecycleActive()) return;
-    if (conversationIdRef.current !== id) {
-      // A real conversation switch invalidates the tool-handle tracking of
-      // the previous conversation; replayed events of the new one re-record.
-      toolHandlesRef.current?.clear();
-      setToolHandleVersion(0);
-      lastRefreshedHandleVersionRef.current = 0;
-    }
     conversationIdRef.current = id;
     restoreBindingRef.current = id === undefined
       ? null
       : { id, generation: restoreGenerationRef.current };
     setConversationId(id);
     onConversationChangeRef.current(id, title);
-  }, [conversationIdRef, isLifecycleActive, lastRefreshedHandleVersionRef, onConversationChangeRef, restoreBindingRef, restoreGenerationRef, setConversationId, setToolHandleVersion, toolHandlesRef]);
+  }, [conversationIdRef, isLifecycleActive, onConversationChangeRef, restoreBindingRef, restoreGenerationRef, setConversationId]);
   const isRestoreActive = useCallback(
     (generation: number, id?: string) =>
       isLifecycleActive() &&
@@ -265,17 +258,28 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
   }, [atQuery]);
 
   // A queued reference (for example a command block to explain) is picked up by the visible panel only.
-  const { active, rightOpen, setRefs, setInput } = p;
+  const { active, rightOpen, setRefs, setInput, refs } = p;
+  const refsRef = useRef(refs);
+  refsRef.current = refs;
   const pendingRefCount = useUi((s) => s.aiPendingRefs.length);
   useEffect(() => {
     if (!active || !rightOpen || pendingRefCount === 0) return;
     const taken = useUi.getState().takeAiPendingRefs();
     if (taken.length === 0) return;
-    setRefs((prev) => [...prev, ...taken.filter((r) => !prev.some((x) => x.id === r.id))]);
-    // Only command output needs the explain prompt; a terminal or file reference just joins the list.
-    if (taken.some((r) => r.kind === "text")) setInput((prev) => (prev.trim() === "" ? tr("解释这段命令输出") : prev));
+    const current = refsRef.current;
+    const fresh = taken.filter((r) => !current.some((x) => x.id === r.id));
+    // The backend quotes at most MAX_MESSAGE_REFS references; a queued one beyond that is refused visibly.
+    const accepted = fresh.slice(0, Math.max(0, MAX_MESSAGE_REFS - current.length));
+    if (accepted.length < fresh.length) {
+      pushToast("info", tr("每条消息最多引用 {MAX_MESSAGE_REFS} 项，请先移除一个引用", { MAX_MESSAGE_REFS }));
+    }
+    if (accepted.length > 0) setRefs((prev) => [...prev, ...accepted.filter((r) => !prev.some((x) => x.id === r.id))]);
+    // Only command output needs the explain prompt; a terminal selection, terminal or file reference just joins the list.
+    if (accepted.some((r) => r.kind === "text" && !r.selection)) {
+      setInput((prev) => (prev.trim() === "" ? tr("解释这段命令输出") : prev));
+    }
     inputRef.current?.focus();
-  }, [active, rightOpen, pendingRefCount, setRefs, setInput]);
+  }, [active, rightOpen, pendingRefCount, setRefs, setInput, pushToast]);
 
   const composeMessage = composeUserMessage;
 

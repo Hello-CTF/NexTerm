@@ -29,6 +29,7 @@ var purgeUnownedModels = map[string]string{
 	"alert_evaluator_state": "instance-wide evaluator clock, owned by no account",
 	"memory_entry":          "scoped by tenant=user and subject=<user ID>; seeded explicitly",
 	"memory_settings":       "scoped by tenant=user and subject=<user ID>; seeded explicitly",
+	"p2p_signing_key":       "instance-wide direct-connection grant signing keys, owned by no account",
 }
 
 type purgeForeignKey struct {

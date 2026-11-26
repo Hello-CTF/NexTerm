@@ -203,6 +203,41 @@ describe("ModelManager AI-1 profile fields", () => {
     expect(savedPayload()).not.toHaveProperty("privacy");
   });
 
+  it("switching to Anthropic shows its fields and saves the kind, thinking budget and no temperature", async () => {
+    await mountManager({ ...demoProfile(), baseUrl: "" });
+    expect(view!.container.querySelector('button[aria-label="扩展思考"]')).toBeNull();
+
+    chooseSelectOption(view!.container, "接口类型", "Anthropic");
+    await flush();
+    expect(inputFor("Base URL").value).toBe("https://api.anthropic.com");
+    expect(view!.container.querySelector(`input[id="${inputFor("模型名").id}"]`)?.getAttribute("role")).toBe("combobox");
+    expect(view!.container.textContent).not.toContain("温度");
+
+    chooseSelectOption(view!.container, "扩展思考", "固定预算（旧模型）");
+    await flush();
+    setInputValue(view!.container.querySelector('input[aria-label="思考预算（tokens）"]') as HTMLInputElement, "4096");
+    clickButton(view!.container, "保存");
+    await flush();
+
+    const payload = savedPayload();
+    expect(payload).toMatchObject({ provider: "anthropic", thinking: "budget", thinkingBudget: 4096, baseUrl: "https://api.anthropic.com" });
+    expect(payload).not.toHaveProperty("temperature");
+  });
+
+  it("an OpenAI-compatible profile saves no Anthropic fields", async () => {
+    await mountManager({ ...demoProfile(), provider: "anthropic", thinking: "off" });
+    chooseSelectOption(view!.container, "接口类型", "OpenAI 兼容");
+    await flush();
+    expect(view!.container.querySelector('button[aria-label="扩展思考"]')).toBeNull();
+    clickButton(view!.container, "保存");
+    await flush();
+
+    const payload = savedPayload();
+    expect(payload).not.toHaveProperty("provider");
+    expect(payload).not.toHaveProperty("thinking");
+    expect(payload).toMatchObject({ temperature: 0.3 });
+  });
+
   it("new profiles start with unlimited output and empty circuit-breaker settings; circuit status is queried only after save", async () => {
     await mountManager(demoProfile());
     const callsBefore = mocks.circuitStatus.mock.calls.length;
@@ -397,7 +432,7 @@ describe("ModelManager quick-fill presets and optional parameters", () => {
     const chips = [...view!.container.querySelectorAll("button")]
       .filter((b) => b.title?.startsWith("使用 "))
       .map((b) => b.textContent?.trim());
-    expect(chips).toEqual(["Moonshot", "DeepSeek", "Zhipu", "Ollama"]);
+    expect(chips).toEqual(["Moonshot", "DeepSeek", "Zhipu", "Ollama", "Anthropic"]);
     expect(mocks.presets).not.toHaveBeenCalled();
   });
 

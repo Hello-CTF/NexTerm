@@ -41,7 +41,11 @@ func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
 		return errors.New("cron: agent executor has no runner")
 	}
 	stream := newTerminalStream()
-	args := agent.ChatArgs{ConversationID: trigger.SessionID, Message: trigger.Prompt, Source: "cron", ModelProfileID: trigger.ModelProfileID}
+	source := trigger.Source
+	if source == "" {
+		source = "cron"
+	}
+	args := agent.ChatArgs{ConversationID: trigger.SessionID, Message: trigger.Prompt, Source: source, ModelProfileID: trigger.ModelProfileID}
 	if e.ScopeFor != nil {
 		scope, err := e.ScopeFor(ctx, trigger)
 		if err != nil {
@@ -52,7 +56,11 @@ func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
 		}
 		args.Scope = scope
 	}
-	response, err := e.Runner.Start(guard.WithUnattended(ctx), args, agent.StaticStream(stream))
+	runCtx := guard.WithUnattended(ctx)
+	if source == agent.SourceEvent {
+		runCtx = guard.WithEventTriggered(ctx)
+	}
+	response, err := e.Runner.Start(runCtx, args, agent.StaticStream(stream))
 	if agent.IsConversationBusy(err) {
 		return ErrRunSkipped
 	}
@@ -82,10 +90,12 @@ func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
 // resolution reports a disconnected asset: it authorizes and dials the asset
 // once, then retries the scope query a single time. Without an explicit
 // opt-in the run keeps the original disconnected failure; every other scope
-// failure stays on the original path.
+// failure stays on the original path, and so does every event-triggered run.
 func (e *AgentExecutor) connectDisconnectedScope(ctx context.Context, trigger Trigger, scopeErr error) (tools.Scope, error) {
 	var disconnected *AssetDisconnectedError
-	if e.Connect == nil || !errors.As(scopeErr, &disconnected) || strings.TrimSpace(disconnected.AssetID) == "" {
+	// The connect opt-in covers scheduled runs; a run terminal output started
+	// never dials an asset on its own.
+	if e.Connect == nil || trigger.Source == agent.SourceEvent || !errors.As(scopeErr, &disconnected) || strings.TrimSpace(disconnected.AssetID) == "" {
 		return tools.Scope{}, scopeErr
 	}
 	if _, err := e.Connect.Connect(ctx, trigger, disconnected.AssetID); err != nil {

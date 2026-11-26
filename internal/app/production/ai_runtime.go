@@ -857,6 +857,8 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	// terminal surface's own per-user settings.
 	toolsDeps.AssetConnector = newAITerminalAssetConnector(services)
 	toolsDeps.Reminders = reminderScheduler{scheduler: cronScheduler, conversations: services.Store, scopeValidator: productionScopeValidator(services)}
+	toolsDeps.Subscriptions = lazySubscriber{services: services}
+	toolsDeps.ScheduledJobs = scheduledJobService{scheduler: cronScheduler, conversations: services.Store, scopeValidator: productionScopeValidator(services)}
 	// The skills backend is the single services-level manager: the ai-skills
 	// IPC module registers the same instance, so the load_skill tool and the
 	// IPC surface share per-owner state instead of splitting two managers. A
@@ -898,8 +900,6 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	}
 	builder := aicontext.NewBuilder(contextDeps)
 
-	roster := agent.NewRoster(services.Store, agent.NewSessionRosterProbe(services.Store, services.Sessions))
-
 	runner := agent.NewRunner(agent.Config{
 		Profiles:        services.Profiles,
 		ModelForProfile: aiProfileModelFactory(services.Profiles),
@@ -926,7 +926,6 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		HITLAssetResolver:        aiRunAssetResolver(services),
 		HITLRequestAssetResolver: aiRunRequestAssetResolver(services),
 		HITLEnvironmentResolver:  aiRequiredEnvironmentNames(services),
-		Roster:                   roster,
 	})
 	if err := runner.RecoverRuns(store.WithAIHistoryInternalAccess(owner.WithOpenAccess(session.WithOpenAccess(ctx)))); err != nil {
 		return err
@@ -958,10 +957,13 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 
 	services.aiRelease = takeover.InstallSessionHooks(services.Sessions, takeoverManager)
 
-	// The watch service shares the AI runtime's roster and store: executors
+	// The watch service shares the AI runtime's store: executors
 	// start lazily per owner, and session events drive the lifecycle
 	// reconcile through the emitter hook installed in the builder.
-	services.watches = newWatchService(services.Store, services.Sessions, services.Events, roster, nil)
+	waker := newEventWaker(cronExecutor, func(ctx context.Context, text string) {
+		_ = ipc.Emit(ctx, services.Events, ipc.TopicAINotification, ipc.AINotificationEvent{OwnerID: ipc.OwnerID(ctx), Text: text})
+	}, nil)
+	services.watches = newWatchService(services.Store, services.Sessions, services.Events, nil, waker)
 	return nil
 }
 

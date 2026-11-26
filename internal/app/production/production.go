@@ -23,6 +23,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/localhelper"
 	"github.com/Hello-CTF/NexTerm/internal/mount"
+	p2pclient "github.com/Hello-CTF/NexTerm/internal/p2p/client"
 	"github.com/Hello-CTF/NexTerm/internal/remotedesktop"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -87,22 +88,24 @@ type ProductionServices struct {
 	// LocalHelperExposure exposes the local terminals of a desktop to its
 	// server account when the user turns it on; nil elsewhere.
 	LocalHelperExposure *exposure.Controller
-	stateRules          *stateRulesRuntime
-	Events              ipc.Emitter
-	Update              *update.Manager
-	ScreenInsets        func(context.Context) (ScreenInsets, error)
-	SystemNotifier      SystemNotifier
-	channelBridge       *terminalBridge
-	previewRelay        *previewRelayManager
-	terminalCommands    *terminalCommandService
-	fsUploads           *fsChunkUploadRegistry
-	fsWatches           *fsWatchHub
-	hostKeys            *productionHostKeyStore
-	sshConnector        *productionConnector
-	stagedBlobs         StagedBlobResolver
-	dataDir             string
-	desktop             bool
-	multiUser           bool // account-isolated server: server-path import sources and Kubernetes exec are refused
+	// DevicePaths moves device streams between the relay and direct legs; desktop and mobile only.
+	DevicePaths      *p2pclient.Manager
+	stateRules       *stateRulesRuntime
+	Events           ipc.Emitter
+	Update           *update.Manager
+	ScreenInsets     func(context.Context) (ScreenInsets, error)
+	SystemNotifier   SystemNotifier
+	channelBridge    *terminalBridge
+	previewRelay     *previewRelayManager
+	terminalCommands *terminalCommandService
+	fsUploads        *fsChunkUploadRegistry
+	fsWatches        *fsWatchHub
+	hostKeys         *productionHostKeyStore
+	sshConnector     *productionConnector
+	stagedBlobs      StagedBlobResolver
+	dataDir          string
+	desktop          bool
+	multiUser        bool // account-isolated server: server-path import sources and Kubernetes exec are refused
 	// updateChannels stores the per-machine release channel; set on the desktop only.
 	updateChannels   update.ChannelStore
 	hostKeysShared   bool
@@ -279,6 +282,45 @@ func productionModules(services ProductionServices) []Module {
 			},
 			Component: hostShare,
 		})
+	}
+	if services.Store != nil {
+		paths := &devicePathService{manager: services.DevicePaths, modes: deviceModeStore{store: services.Store}}
+		if services.Sync != nil && services.DevicePaths != nil {
+			remote := services.Sync.Remote()
+			paths.deviceName = func(ctx context.Context, deviceID string) string {
+				devices, err := remote.ListDevices(ctx)
+				if err != nil {
+					return ""
+				}
+				for _, device := range devices.Devices {
+					if device.ID == deviceID {
+						return device.Name
+					}
+				}
+				return ""
+			}
+		}
+		module := Module{Name: "device-path", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+			return registerDevicePathCommands(dispatcher, paths)
+		}}
+		if services.DevicePaths != nil {
+			manager := services.DevicePaths
+			stopWatch := func() {}
+			module.Component = core.ComponentFuncs{
+				StartFunc: func(ctx context.Context) error {
+					watchCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+					stopWatch = cancel
+					go manager.WatchNetwork(watchCtx, devicePathNetworkPoll)
+					return nil
+				},
+				ShutdownFunc: func(context.Context) error {
+					stopWatch()
+					manager.Close()
+					return nil
+				},
+			}
+		}
+		modules = append(modules, module)
 	}
 	if services.Profiles != nil {
 		modules = append(modules, Module{

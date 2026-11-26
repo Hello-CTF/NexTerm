@@ -7,10 +7,13 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/relaymux"
+	"github.com/Hello-CTF/NexTerm/internal/rstream"
 	"github.com/coder/websocket"
 )
 
@@ -223,7 +226,7 @@ func startEmbedded(t *testing.T, agentRuntime *Runtime) (cancel func(), done <-c
 }
 
 // The exposed desktop serves terminals only: it advertises exactly the
-// terminal purpose, and file, forward and listen requests are dropped without
+// terminal purpose (plus stream bridges), and file, forward and listen requests are dropped without
 // a dial while a terminal request on the same channel is served.
 func TestEmbeddedRuntimeServesTerminalOnly(t *testing.T) {
 	server := newFakeFleetServer(t)
@@ -241,8 +244,10 @@ func TestEmbeddedRuntimeServesTerminalOnly(t *testing.T) {
 
 	select {
 	case hello := <-probe.controlHello:
-		if len(hello.Capabilities) != 1 || hello.Capabilities[0] != PurposeTerminal {
-			t.Fatalf("capabilities = %v, want exactly [terminal]", hello.Capabilities)
+		// rstream and relay-mux are not purposes: terminal bridges may carry a resumable stream, and device
+		// streams may arrive over the relay link.
+		if !slices.Equal(hello.Capabilities, []string{PurposeTerminal, relaymux.Capability, rstream.Capability}) {
+			t.Fatalf("capabilities = %v, want exactly [terminal relay-mux rstream]", hello.Capabilities)
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("control channel did not come up")

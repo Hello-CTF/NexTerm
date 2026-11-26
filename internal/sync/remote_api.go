@@ -38,6 +38,16 @@ type RemoteFleetAgent struct {
 	LastSeenAt       int64                   `json:"last_seen_at"`
 	StateDigest      string                  `json:"state_digest,omitempty"`
 	HelperInstanceID string                  `json:"helper_instance_id,omitempty"`
+	// P2PKey is the device's direct-connection key; state "pending" means the owner must confirm PendingKey
+	// before the device accepts direct connections. Servers that predate direct connections omit it.
+	P2PKey *RemoteFleetP2PKey `json:"p2p_key,omitempty"`
+}
+
+type RemoteFleetP2PKey struct {
+	State      string `json:"state"`
+	PublicKey  string `json:"public_key,omitempty"`
+	PendingKey string `json:"pending_key,omitempty"`
+	PendingAt  int64  `json:"pending_at,omitempty"`
 }
 
 type RemoteFleetDevice struct {
@@ -226,6 +236,10 @@ func (c *remoteClient) SetDeviceAutostart(ctx context.Context, deviceID string, 
 
 func (c *remoteClient) SetDeviceTerminalAccess(ctx context.Context, deviceID string, enabled bool) error {
 	return c.api(ctx, http.MethodPost, "/fleet/devices/"+url.PathEscape(deviceID)+"/terminal-access", map[string]bool{"enabled": enabled}, nil)
+}
+
+func (c *remoteClient) ConfirmDeviceP2PKey(ctx context.Context, deviceID, publicKey string) error {
+	return c.api(ctx, http.MethodPost, "/fleet/devices/"+url.PathEscape(deviceID)+"/p2p/key/confirm", map[string]string{"public_key": publicKey}, nil)
 }
 
 func (c *remoteClient) CreateEnrollCode(ctx context.Context, ttlMS int64, userID string) (*RemoteEnrollCode, error) {

@@ -2,10 +2,10 @@ package agent
 
 import aicontext "github.com/Hello-CTF/NexTerm/internal/ai/context"
 
-func systemPrompt() string {
-	return aicontext.SystemPrompt()
+func systemPrompt(locale string) string {
+	return aicontext.SystemPrompt(locale)
 }
 
-func planSystemPrompt() string {
-	return aicontext.PlanPrompt()
+func planSystemPrompt(locale string) string {
+	return aicontext.PlanPrompt(locale)
 }

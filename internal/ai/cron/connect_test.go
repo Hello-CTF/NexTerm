@@ -330,3 +330,45 @@ func (s *memoryGuardSettings) SettingSet(_ context.Context, key, value string) e
 	s.values[key] = value
 	return nil
 }
+
+// A run terminal output started never dials an asset through the scheduled-run
+// connect opt-in, and it starts marked as event-triggered.
+func TestAgentExecutorEventRunSkipsConnectAndIsMarked(t *testing.T) {
+	var dials atomic.Int32
+	var eventMarked atomic.Bool
+	runner := &fakeAgentRunner{}
+	executor := &AgentExecutor{
+		Runner:  markingRunner{fakeAgentRunner: runner, marked: &eventMarked},
+		Connect: allowAllConnector(&dials),
+		ScopeFor: func(context.Context, Trigger) (tools.Scope, error) {
+			return tools.Scope{}, &AssetDisconnectedError{AssetID: "asset-1"}
+		},
+	}
+	trigger := testTrigger()
+	trigger.Source = agent.SourceEvent
+	if err := executor.Execute(context.Background(), trigger); !errors.Is(err, ErrAssetDisconnected) {
+		t.Fatalf("event run error = %v, want the original disconnected failure", err)
+	}
+	if dials.Load() != 0 {
+		t.Fatalf("event run dialed %d times", dials.Load())
+	}
+
+	executor.ScopeFor = func(context.Context, Trigger) (tools.Scope, error) { return tools.Scope{SessionID: "s"}, nil }
+	runner.emit = func(stream agent.Stream) { _ = stream.Send(context.Background(), agent.Event{Type: "done"}) }
+	if err := executor.Execute(context.Background(), trigger); err != nil {
+		t.Fatal(err)
+	}
+	if !eventMarked.Load() {
+		t.Fatal("event run started without the event-triggered marker")
+	}
+}
+
+type markingRunner struct {
+	*fakeAgentRunner
+	marked *atomic.Bool
+}
+
+func (m markingRunner) Start(ctx context.Context, args agent.ChatArgs, factory agent.StreamFactory) (agent.StartResponse, error) {
+	m.marked.Store(guard.EventTriggeredFrom(ctx) && guard.UnattendedFrom(ctx))
+	return m.fakeAgentRunner.Start(ctx, args, factory)
+}

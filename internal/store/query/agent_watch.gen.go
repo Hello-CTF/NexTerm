@@ -51,6 +51,8 @@ func newAgentWatchRow(db *gorm.DB, opts ...gen.DOOption) agentWatchRow {
 	_agentWatchRow.CreatedAt = field.NewInt64(tableName, "created_at")
 	_agentWatchRow.UpdatedAt = field.NewInt64(tableName, "updated_at")
 	_agentWatchRow.ExpiresAt = field.NewInt64(tableName, "expires_at")
+	_agentWatchRow.ConversationID = field.NewString(tableName, "conversation_id")
+	_agentWatchRow.StateSinceNS = field.NewInt64(tableName, "state_since_ns")
 
 	_agentWatchRow.fillFieldMap()
 
@@ -60,31 +62,33 @@ func newAgentWatchRow(db *gorm.DB, opts ...gen.DOOption) agentWatchRow {
 type agentWatchRow struct {
 	agentWatchRowDo agentWatchRowDo
 
-	ALL           field.Asterisk
-	ID            field.String
-	OwnerID       field.String
-	TargetID      field.String
-	Identity      field.String
-	Generation    field.Uint64
-	Name          field.String
-	ConditionJSON field.String
-	Status        field.String
-	Repeat        field.Bool
-	AnchorSeq     field.Int64
-	ContextBlob   field.Bytes
-	CarryBlob     field.Bytes
-	CarryLive     field.Int64
-	FireSeq       field.Int64
-	Revision      field.Uint64
-	DeliveryID    field.String
-	RunID         field.String
-	MatchedFrom   field.Int64
-	MatchedTo     field.Int64
-	Excerpt       field.String
-	LastError     field.String
-	CreatedAt     field.Int64
-	UpdatedAt     field.Int64
-	ExpiresAt     field.Int64
+	ALL            field.Asterisk
+	ID             field.String
+	OwnerID        field.String
+	TargetID       field.String
+	Identity       field.String
+	Generation     field.Uint64
+	Name           field.String
+	ConditionJSON  field.String
+	Status         field.String
+	Repeat         field.Bool
+	AnchorSeq      field.Int64
+	ContextBlob    field.Bytes
+	CarryBlob      field.Bytes
+	CarryLive      field.Int64
+	FireSeq        field.Int64
+	Revision       field.Uint64
+	DeliveryID     field.String
+	RunID          field.String
+	MatchedFrom    field.Int64
+	MatchedTo      field.Int64
+	Excerpt        field.String
+	LastError      field.String
+	CreatedAt      field.Int64
+	UpdatedAt      field.Int64
+	ExpiresAt      field.Int64
+	ConversationID field.String
+	StateSinceNS   field.Int64
 
 	fieldMap map[string]field.Expr
 }
@@ -125,6 +129,8 @@ func (a *agentWatchRow) updateTableName(table string) *agentWatchRow {
 	a.CreatedAt = field.NewInt64(table, "created_at")
 	a.UpdatedAt = field.NewInt64(table, "updated_at")
 	a.ExpiresAt = field.NewInt64(table, "expires_at")
+	a.ConversationID = field.NewString(table, "conversation_id")
+	a.StateSinceNS = field.NewInt64(table, "state_since_ns")
 
 	a.fillFieldMap()
 
@@ -153,7 +159,7 @@ func (a *agentWatchRow) GetFieldByName(fieldName string) (field.OrderExpr, bool)
 }
 
 func (a *agentWatchRow) fillFieldMap() {
-	a.fieldMap = make(map[string]field.Expr, 24)
+	a.fieldMap = make(map[string]field.Expr, 26)
 	a.fieldMap["id"] = a.ID
 	a.fieldMap["owner_id"] = a.OwnerID
 	a.fieldMap["target_id"] = a.TargetID
@@ -178,6 +184,8 @@ func (a *agentWatchRow) fillFieldMap() {
 	a.fieldMap["created_at"] = a.CreatedAt
 	a.fieldMap["updated_at"] = a.UpdatedAt
 	a.fieldMap["expires_at"] = a.ExpiresAt
+	a.fieldMap["conversation_id"] = a.ConversationID
+	a.fieldMap["state_since_ns"] = a.StateSinceNS
 }
 
 func (a agentWatchRow) clone(db *gorm.DB) agentWatchRow {

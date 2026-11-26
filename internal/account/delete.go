@@ -349,10 +349,6 @@ func purgeUserRows(ctx context.Context, tx *gorm.DB, userID string) error {
 			return err
 		},
 		func() error {
-			_, err := q.AgentRosterRow.WithContext(ctx).Where(q.AgentRosterRow.OwnerID.Eq(userID)).Delete()
-			return err
-		},
-		func() error {
 			_, err := q.AgentOutcomeRow.WithContext(ctx).Where(q.AgentOutcomeRow.OwnerID.Eq(userID)).Delete()
 			return err
 		},

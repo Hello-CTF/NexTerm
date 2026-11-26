@@ -21,7 +21,6 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		AgentEvidenceAnchorRow: newAgentEvidenceAnchorRow(db, opts...),
 		AgentEvidenceKeyRow:    newAgentEvidenceKeyRow(db, opts...),
 		AgentOutcomeRow:        newAgentOutcomeRow(db, opts...),
-		AgentRosterRow:         newAgentRosterRow(db, opts...),
 		AgentWatchOutboxRow:    newAgentWatchOutboxRow(db, opts...),
 		AgentWatchRow:          newAgentWatchRow(db, opts...),
 		AgentWatchTargetRow:    newAgentWatchTargetRow(db, opts...),
@@ -43,6 +42,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		DeviceEnrollCode:       newDeviceEnrollCode(db, opts...),
 		DeviceMetrics:          newDeviceMetrics(db, opts...),
 		DeviceMetricsHourly:    newDeviceMetricsHourly(db, opts...),
+		DeviceP2PKey:           newDeviceP2PKey(db, opts...),
 		ExecBatchResultRow:     newExecBatchResultRow(db, opts...),
 		ExecBatchRow:           newExecBatchRow(db, opts...),
 		ExecTargetSetItemRow:   newExecTargetSetItemRow(db, opts...),
@@ -55,6 +55,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		MemorySettings:         newMemorySettings(db, opts...),
 		MessageRow:             newMessageRow(db, opts...),
 		OutcomeRecord:          newOutcomeRecord(db, opts...),
+		P2PSigningKey:          newP2PSigningKey(db, opts...),
 		RecordingRow:           newRecordingRow(db, opts...),
 		RunEventRow:            newRunEventRow(db, opts...),
 		RunRow:                 newRunRow(db, opts...),
@@ -88,7 +89,6 @@ type Query struct {
 	AgentEvidenceAnchorRow agentEvidenceAnchorRow
 	AgentEvidenceKeyRow    agentEvidenceKeyRow
 	AgentOutcomeRow        agentOutcomeRow
-	AgentRosterRow         agentRosterRow
 	AgentWatchOutboxRow    agentWatchOutboxRow
 	AgentWatchRow          agentWatchRow
 	AgentWatchTargetRow    agentWatchTargetRow
@@ -110,6 +110,7 @@ type Query struct {
 	DeviceEnrollCode       deviceEnrollCode
 	DeviceMetrics          deviceMetrics
 	DeviceMetricsHourly    deviceMetricsHourly
+	DeviceP2PKey           deviceP2PKey
 	ExecBatchResultRow     execBatchResultRow
 	ExecBatchRow           execBatchRow
 	ExecTargetSetItemRow   execTargetSetItemRow
@@ -122,6 +123,7 @@ type Query struct {
 	MemorySettings         memorySettings
 	MessageRow             messageRow
 	OutcomeRecord          outcomeRecord
+	P2PSigningKey          p2PSigningKey
 	RecordingRow           recordingRow
 	RunEventRow            runEventRow
 	RunRow                 runRow
@@ -158,7 +160,6 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		AgentEvidenceAnchorRow: q.AgentEvidenceAnchorRow.clone(db),
 		AgentEvidenceKeyRow:    q.AgentEvidenceKeyRow.clone(db),
 		AgentOutcomeRow:        q.AgentOutcomeRow.clone(db),
-		AgentRosterRow:         q.AgentRosterRow.clone(db),
 		AgentWatchOutboxRow:    q.AgentWatchOutboxRow.clone(db),
 		AgentWatchRow:          q.AgentWatchRow.clone(db),
 		AgentWatchTargetRow:    q.AgentWatchTargetRow.clone(db),
@@ -180,6 +181,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		DeviceEnrollCode:       q.DeviceEnrollCode.clone(db),
 		DeviceMetrics:          q.DeviceMetrics.clone(db),
 		DeviceMetricsHourly:    q.DeviceMetricsHourly.clone(db),
+		DeviceP2PKey:           q.DeviceP2PKey.clone(db),
 		ExecBatchResultRow:     q.ExecBatchResultRow.clone(db),
 		ExecBatchRow:           q.ExecBatchRow.clone(db),
 		ExecTargetSetItemRow:   q.ExecTargetSetItemRow.clone(db),
@@ -192,6 +194,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		MemorySettings:         q.MemorySettings.clone(db),
 		MessageRow:             q.MessageRow.clone(db),
 		OutcomeRecord:          q.OutcomeRecord.clone(db),
+		P2PSigningKey:          q.P2PSigningKey.clone(db),
 		RecordingRow:           q.RecordingRow.clone(db),
 		RunEventRow:            q.RunEventRow.clone(db),
 		RunRow:                 q.RunRow.clone(db),
@@ -233,7 +236,6 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		AgentEvidenceAnchorRow: q.AgentEvidenceAnchorRow.replaceDB(db),
 		AgentEvidenceKeyRow:    q.AgentEvidenceKeyRow.replaceDB(db),
 		AgentOutcomeRow:        q.AgentOutcomeRow.replaceDB(db),
-		AgentRosterRow:         q.AgentRosterRow.replaceDB(db),
 		AgentWatchOutboxRow:    q.AgentWatchOutboxRow.replaceDB(db),
 		AgentWatchRow:          q.AgentWatchRow.replaceDB(db),
 		AgentWatchTargetRow:    q.AgentWatchTargetRow.replaceDB(db),
@@ -255,6 +257,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		DeviceEnrollCode:       q.DeviceEnrollCode.replaceDB(db),
 		DeviceMetrics:          q.DeviceMetrics.replaceDB(db),
 		DeviceMetricsHourly:    q.DeviceMetricsHourly.replaceDB(db),
+		DeviceP2PKey:           q.DeviceP2PKey.replaceDB(db),
 		ExecBatchResultRow:     q.ExecBatchResultRow.replaceDB(db),
 		ExecBatchRow:           q.ExecBatchRow.replaceDB(db),
 		ExecTargetSetItemRow:   q.ExecTargetSetItemRow.replaceDB(db),
@@ -267,6 +270,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		MemorySettings:         q.MemorySettings.replaceDB(db),
 		MessageRow:             q.MessageRow.replaceDB(db),
 		OutcomeRecord:          q.OutcomeRecord.replaceDB(db),
+		P2PSigningKey:          q.P2PSigningKey.replaceDB(db),
 		RecordingRow:           q.RecordingRow.replaceDB(db),
 		RunEventRow:            q.RunEventRow.replaceDB(db),
 		RunRow:                 q.RunRow.replaceDB(db),
@@ -298,7 +302,6 @@ type queryCtx struct {
 	AgentEvidenceAnchorRow *agentEvidenceAnchorRowDo
 	AgentEvidenceKeyRow    *agentEvidenceKeyRowDo
 	AgentOutcomeRow        *agentOutcomeRowDo
-	AgentRosterRow         *agentRosterRowDo
 	AgentWatchOutboxRow    *agentWatchOutboxRowDo
 	AgentWatchRow          *agentWatchRowDo
 	AgentWatchTargetRow    *agentWatchTargetRowDo
@@ -320,6 +323,7 @@ type queryCtx struct {
 	DeviceEnrollCode       *deviceEnrollCodeDo
 	DeviceMetrics          *deviceMetricsDo
 	DeviceMetricsHourly    *deviceMetricsHourlyDo
+	DeviceP2PKey           *deviceP2PKeyDo
 	ExecBatchResultRow     *execBatchResultRowDo
 	ExecBatchRow           *execBatchRowDo
 	ExecTargetSetItemRow   *execTargetSetItemRowDo
@@ -332,6 +336,7 @@ type queryCtx struct {
 	MemorySettings         *memorySettingsDo
 	MessageRow             *messageRowDo
 	OutcomeRecord          *outcomeRecordDo
+	P2PSigningKey          *p2PSigningKeyDo
 	RecordingRow           *recordingRowDo
 	RunEventRow            *runEventRowDo
 	RunRow                 *runRowDo
@@ -363,7 +368,6 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		AgentEvidenceAnchorRow: q.AgentEvidenceAnchorRow.WithContext(ctx),
 		AgentEvidenceKeyRow:    q.AgentEvidenceKeyRow.WithContext(ctx),
 		AgentOutcomeRow:        q.AgentOutcomeRow.WithContext(ctx),
-		AgentRosterRow:         q.AgentRosterRow.WithContext(ctx),
 		AgentWatchOutboxRow:    q.AgentWatchOutboxRow.WithContext(ctx),
 		AgentWatchRow:          q.AgentWatchRow.WithContext(ctx),
 		AgentWatchTargetRow:    q.AgentWatchTargetRow.WithContext(ctx),
@@ -385,6 +389,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		DeviceEnrollCode:       q.DeviceEnrollCode.WithContext(ctx),
 		DeviceMetrics:          q.DeviceMetrics.WithContext(ctx),
 		DeviceMetricsHourly:    q.DeviceMetricsHourly.WithContext(ctx),
+		DeviceP2PKey:           q.DeviceP2PKey.WithContext(ctx),
 		ExecBatchResultRow:     q.ExecBatchResultRow.WithContext(ctx),
 		ExecBatchRow:           q.ExecBatchRow.WithContext(ctx),
 		ExecTargetSetItemRow:   q.ExecTargetSetItemRow.WithContext(ctx),
@@ -397,6 +402,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		MemorySettings:         q.MemorySettings.WithContext(ctx),
 		MessageRow:             q.MessageRow.WithContext(ctx),
 		OutcomeRecord:          q.OutcomeRecord.WithContext(ctx),
+		P2PSigningKey:          q.P2PSigningKey.WithContext(ctx),
 		RecordingRow:           q.RecordingRow.WithContext(ctx),
 		RunEventRow:            q.RunEventRow.WithContext(ctx),
 		RunRow:                 q.RunRow.WithContext(ctx),

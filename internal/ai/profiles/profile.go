@@ -12,6 +12,7 @@ import (
 type Profile struct {
 	ID              string                   `json:"id"`
 	Name            string                   `json:"name"`
+	Kind            provider.Kind            `json:"provider,omitempty"`
 	BaseURL         string                   `json:"baseUrl"`
 	APIKey          string                   `json:"apiKey"`
 	Model           string                   `json:"model"`
@@ -22,6 +23,9 @@ type Profile struct {
 	MaxTokens       *int                     `json:"maxTokens,omitempty"`
 	Proxy           *string                  `json:"proxy"`
 	Stream          bool                     `json:"stream"`
+	// Thinking and ThinkingBudget apply to Anthropic profiles only.
+	Thinking       provider.ThinkingMode `json:"thinking,omitempty"`
+	ThinkingBudget *int                  `json:"thinkingBudget,omitempty"`
 
 	RequestTimeoutSeconds *int `json:"requestTimeoutSeconds,omitempty"`
 	IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds,omitempty"`
@@ -71,6 +75,9 @@ func (p Profile) Normalized() Profile {
 	config := p.ProviderConfig().Normalized()
 	p.ID = strings.TrimSpace(p.ID)
 	p.Name = strings.TrimSpace(p.Name)
+	p.Kind = config.Kind
+	p.Thinking = config.Thinking
+	p.ThinkingBudget = config.ThinkingBudget
 	p.BaseURL = config.BaseURL
 	p.APIKey = config.APIKey
 	p.Model = config.Model
@@ -121,6 +128,7 @@ func (p Profile) ClientOptions() []provider.Option {
 
 func (p Profile) ProviderConfig() provider.Config {
 	return provider.Config{
+		Kind: p.Kind, Thinking: p.Thinking, ThinkingBudget: cloneInt(p.ThinkingBudget),
 		BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.Model, FallbackModel: p.FallbackModel,
 		Temperature: cloneFloat64(p.Temperature), ReasoningEffort: p.ReasoningEffort, ContextWindow: p.ContextWindow,
 		MaxTokens: cloneInt(p.MaxTokens),
@@ -145,6 +153,7 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		ID              string                   `json:"id"`
 		Name            string                   `json:"name"`
+		Kind            provider.Kind            `json:"provider"`
 		BaseURL         string                   `json:"baseUrl"`
 		APIKey          string                   `json:"apiKey"`
 		Model           string                   `json:"model"`
@@ -155,6 +164,8 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 		MaxTokens       *int                     `json:"maxTokens"`
 		Proxy           *string                  `json:"proxy"`
 		Stream          *bool                    `json:"stream"`
+		Thinking        provider.ThinkingMode    `json:"thinking"`
+		ThinkingBudget  *int                     `json:"thinkingBudget"`
 
 		RequestTimeoutSeconds *int `json:"requestTimeoutSeconds"`
 		IdleTimeoutSeconds    *int `json:"idleTimeoutSeconds"`
@@ -169,6 +180,9 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 	}
 	p.ID = wire.ID
 	p.Name = wire.Name
+	p.Kind = wire.Kind
+	p.Thinking = wire.Thinking
+	p.ThinkingBudget = wire.ThinkingBudget
 	p.BaseURL = wire.BaseURL
 	p.APIKey = wire.APIKey
 	p.Model = wire.Model
@@ -199,7 +213,7 @@ func PresetProfile(id string) (Profile, error) {
 		return Profile{}, fmt.Errorf("%w: %s", err, id)
 	}
 	return Profile{
-		Name: id, BaseURL: config.BaseURL, Model: config.Model,
+		Name: id, Kind: config.Kind, BaseURL: config.BaseURL, Model: config.Model,
 		Temperature: cloneFloat64(config.Temperature), ReasoningEffort: config.ReasoningEffort, ContextWindow: config.ContextWindow,
 		Proxy: config.Proxy, Stream: config.Stream,
 	}, nil
@@ -214,6 +228,7 @@ func cloneProfile(profile Profile) Profile {
 	profile.Proxy = cloneString(profile.Proxy)
 	profile.Temperature = cloneFloat64(profile.Temperature)
 	profile.MaxTokens = cloneInt(profile.MaxTokens)
+	profile.ThinkingBudget = cloneInt(profile.ThinkingBudget)
 	profile.RequestTimeoutSeconds = cloneInt(profile.RequestTimeoutSeconds)
 	profile.IdleTimeoutSeconds = cloneInt(profile.IdleTimeoutSeconds)
 	profile.CircuitFailureThreshold = cloneInt(profile.CircuitFailureThreshold)

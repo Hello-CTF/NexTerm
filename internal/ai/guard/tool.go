@@ -68,7 +68,7 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 		fields = map[string]json.RawMessage{}
 	}
 	switch name {
-	case "read_file", "list_dir", "find_files", "grep_files", "search_files", "read_screen", "wait_for", "terminal_list", "operation_result", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", "notify", "load_skill":
+	case "read_file", "list_dir", "find_files", "grep_files", "search_files", "read_screen", "wait_for", "terminal_list", "operation_result", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", "notify", "load_skill", "list_scheduled_jobs":
 		return Allow()
 	case "write_file", "edit_file":
 		if matchDangerRule(stringField(fields, "path"), config.DangerRules) {
@@ -112,6 +112,12 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 		return ClassifySQL(stringField(fields, "sql"), config.DangerRules)
 	case "send_reminder":
 		return Confirm(KindSchedule, "创建定时提醒，到时间后将在本会话投递消息")
+	case "terminal_subscribe":
+		return Confirm(KindTerminalSubscribe, "订阅终端事件，触发后将在本会话启动一次无人值守运行")
+	case "schedule_job":
+		return Confirm(KindCronJob, "创建循环执行的定时任务，每次到点 AI 会在本会话无人值守地运行")
+	case "cancel_scheduled_job":
+		return Confirm(KindCronJob, "删除本会话的定时任务")
 	case "redis_command":
 		var command []string
 		if json.Unmarshal(fields["command"], &command) != nil {

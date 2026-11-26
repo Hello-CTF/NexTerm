@@ -497,6 +497,95 @@ Both units allow 60 seconds for a stop: on shutdown the server sends open
 WebSockets a going-away close (code 1001) and drops connections that have
 not closed after a short grace period (10 seconds at most).
 
+## Direct device connections
+
+The full server signs short-lived grants that authorize a direct connection
+between an account's own desktop or mobile app and that account's device
+agents, and answers STUN Binding requests so both ends can learn their public
+UDP addresses. A connection the server does not grant stays on the relay
+through this server; the server never grants one for a host share or for a
+device of another account. The sync-only peer does none of this.
+
+- `NEXTERM_P2P` (default on): set `0` to refuse every grant. The STUN
+  responder does not start either.
+- `NEXTERM_STUN_LISTEN` (default `:3478`): comma-separated UDP addresses of
+  the built-in STUN responder, for example `:3478,:5349`. Set it to an empty
+  value to disable the responder. An address that cannot be bound is logged
+  as a warning and skipped; the server still starts.
+- `NEXTERM_STUN_ADVERTISE`: comma-separated `host:port` STUN addresses given
+  to apps and agents. When unset, they get the host name they used to reach
+  the server with each port the responder listens on. Behind a reverse proxy
+  or CDN that does not forward UDP, that name does not reach the responder;
+  set this to an address that does, or connections are limited to local
+  network and directly reachable addresses.
+- `NEXTERM_STUN_EXTERNAL`: comma-separated additional STUN servers (`host` or
+  `host:port`, default port 3478). No third-party STUN server is used unless
+  it is listed here; listed servers see the public addresses of the apps and
+  agents that query them.
+
+The responder answers only Binding requests, rate limited per source IP, and
+relays no traffic. Open the listed UDP ports in the firewall to use it.
+
+Apps and agents that reach the server over plain HTTP, without certificate
+verification or through a proxy (configured or from the `HTTPS_PROXY` style
+environment variables) never connect directly and stay on the relay; agents
+in that case do not register a device key either.
+
+Behind a reverse proxy (Caddy, nginx and similar): only the relay and the
+signaling go through the proxy, over HTTPS/WSS on 443. The direct QUIC
+connection runs peer to peer between the app and the agent on ephemeral UDP
+ports; it never uses 443 or HTTP/3 on the proxy. Open the STUN UDP port(s)
+directly to nexterm-server, and publish `3478/udp` when it runs in a
+container. Set `NEXTERM_STUN_ADVERTISE` when the public name resolves to a
+CDN or another host than nexterm-server.
+Device agents report their direct streams to the server after the fact, so
+the audit log can miss streams of an agent that was killed; disable direct
+connections where every stream must be recorded by the server.
+Each server instance keeps the grants it issued in memory and tells the
+device agents it holds to end them when a login session, device or owner
+account stops being valid. With several instances sharing one database, an
+event handled by another instance (a logout or session revocation there)
+does not reach the agents of this instance. Their direct sessions end within
+30 seconds when this instance also relays for that login session (its
+periodic session recheck), and otherwise when the grant can no longer be
+renewed: at most 5 minutes after the last renewal plus a 60 second grace.
+
+## Relay sessions
+
+The full server also offers a multiplexed relay: an app or device agent that
+supports it keeps one session to the server and carries each device
+operation as a stream of that session, instead of opening a websocket per
+operation. Every stream is authorized and audited like a relayed bridge.
+
+- The QUIC carrier shares the STUN UDP sockets: each `NEXTERM_STUN_LISTEN`
+  port answers STUN and QUIC at once, so the UDP port you already opened for
+  STUN is the only one it needs. `NEXTERM_RELAY_QUIC` (default on) set to `0`
+  turns QUIC off. With the STUN responder disabled, QUIC listens on
+  `NEXTERM_RELAY_QUIC_LISTEN` (comma-separated UDP addresses, default empty:
+  no QUIC).
+- The websocket carrier uses `/relay/ws` on the HTTPS port and needs nothing
+  extra behind Caddy or another reverse proxy that already forwards
+  websockets for `/ws/device`. Where UDP is blocked, the relay client
+  switches to it after a 300 ms head start for QUIC and skips QUIC for that
+  server for the next 10 minutes.
+- QUIC endpoints given to apps and agents are the host name they used to
+  reach the server with each relay port, unless that name is a loopback,
+  private or single-label one. `NEXTERM_RELAY_QUIC_ADVERTISE`
+  (comma-separated `host:port`) replaces them, for example when a CDN in
+  front of the server does not forward UDP.
+- The QUIC certificate is self-signed by default: its key is
+  `relay-quic.key` in the data directory, and apps learn its pin over the
+  signed-in HTTPS connection, so they never trust a QUIC server the HTTPS
+  connection did not vouch for. `NEXTERM_RELAY_QUIC_CERT` and
+  `NEXTERM_RELAY_QUIC_KEY` (PEM files, set together) present a publicly
+  trusted certificate for the advertised host name instead. Apps and agents
+  that reach the server over plain HTTP, without certificate verification or
+  through a proxy use only the websocket carrier.
+- Apps and agents fall back to a websocket per operation by themselves, on a
+  server without the relay and while their relay session cannot be
+  established. Device agents without relay support keep working: the server
+  reaches them through per-operation bridges.
+
 ## Tuning and diagnostics
 
 These optional variables go in the env file of either unit:

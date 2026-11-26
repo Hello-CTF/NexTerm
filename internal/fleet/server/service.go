@@ -103,6 +103,12 @@ type Service struct {
 
 	// afterAuthenticate is a test seam fired between a successful device authentication and channel registration.
 	afterAuthenticate func(deviceID string)
+
+	// p2p holds the direct-connection settings, signing keys and live grants.
+	p2p *p2pService
+
+	// relay holds the multiplexed relay's settings and live links.
+	relay *relayService
 }
 
 type Option func(*Service)
@@ -151,6 +157,12 @@ func New(config Config, options ...Option) (*Service, error) {
 
 		shareRevalidateInterval: defaultShareRevalidateInterval,
 		bridges:                 newBridgeSessions(config.Accounts.CheckSession),
+		p2p:                     newP2PService(),
+		relay:                   newRelayService(),
+	}
+	s.registry.onKick = s.relay.kickAgent
+	s.bridges.onSessionInvalid = func(sessionID string) {
+		s.revokeP2PGrants(func(entry *activeGrant) bool { return entry.sessionID == sessionID }, p2pRevokeSession, true)
 	}
 	sharingService, err := sharing.New(sharing.Config{DB: config.DB, Accounts: config.Accounts},
 		sharing.WithAgentProbe(func(ctx context.Context, deviceID string) error {
@@ -260,6 +272,9 @@ type auditPayload struct {
 	URL       string `json:"url,omitempty"`
 	// Devices is how many devices a terminal_list covered.
 	Devices *int `json:"devices,omitempty"`
+	// Stream marks a relayed bridge that carries an rstream; Resume marks one that re-attaches an existing stream.
+	Stream bool `json:"stream,omitempty"`
+	Resume bool `json:"resume,omitempty"`
 }
 
 // audit writes a fleet audit; when the payload carries a device ID the asset_id column is populated as well, so the audit view can filter
@@ -367,7 +382,7 @@ func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant,
 
 // authorize is the single authorization point for fleet device actions: only the device owner is allowed,
 // and revoked devices are always denied; every decision (allow or deny) is written to the audit log.
-func (s *Service) authorize(ctx context.Context, identity *account.Identity, deviceID, action, kind string) (*deviceGrant, error) {
+func (s *Service) authorize(ctx context.Context, identity *account.Identity, deviceID, action, kind string, details ...func(*auditPayload)) (*deviceGrant, error) {
 	grant, err := s.loadGrant(ctx, deviceID)
 	outcome, reason := "allow", ""
 	var decision error
@@ -379,7 +394,11 @@ func (s *Service) authorize(ctx context.Context, identity *account.Identity, dev
 	case grant.userID != identity.UserID:
 		outcome, reason, decision = "deny", "not_owner", ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
 	}
-	auditErr := s.audit(ctx, kind, auditPayload{Action: action, DeviceID: deviceID, Requester: identity.UserID, Outcome: outcome, Reason: reason})
+	payload := auditPayload{Action: action, DeviceID: deviceID, Requester: identity.UserID, Outcome: outcome, Reason: reason}
+	for _, detail := range details {
+		detail(&payload)
+	}
+	auditErr := s.audit(ctx, kind, payload)
 	if decision != nil {
 		return nil, decision
 	}
@@ -650,6 +669,8 @@ func (s *Service) recheckDevice(ctx context.Context, deviceID string) error {
 
 // kickUserDevices closes the control channels and bridges of every device owned by a user that was just disabled or reset.
 func (s *Service) kickUserDevices(userID string) {
+	// The agent of a kicked channel only waits for its owner, so the direct sessions are revoked first.
+	s.revokeP2PGrantsNow(func(entry *activeGrant) bool { return entry.userID == userID }, p2pRevokeOwner)
 	userDevice := query.Use(s.db).UserDevice
 	rows, err := userDevice.WithContext(context.Background()).Where(userDevice.UserID.Eq(userID)).Find()
 	if err != nil {
@@ -769,6 +790,7 @@ func (s *Service) RevokeDevice(ctx context.Context, identity *account.Identity, 
 		return err
 	}
 	s.accounts.BumpEpoch(grant.userID)
+	s.revokeP2PGrants(func(entry *activeGrant) bool { return entry.deviceID == deviceID }, p2pRevokeDevice, false)
 	s.registry.KickDevice(deviceID)
 	// Revocation means offline: after the control channel is kicked there is no more unregistration callback (KickDevice already removed it from the table),
 	// so one offline transition is made up here, keeping the audit timeline and the device://status push complete.
@@ -851,6 +873,9 @@ func (s *Service) SetTerminalEnabled(ctx context.Context, identity *account.Iden
 	}
 	if updated.RowsAffected == 0 {
 		return ipc.NewError(ipc.CodeNotFound, "设备代理不存在")
+	}
+	if !enabled {
+		s.revokeP2PGrants(func(entry *activeGrant) bool { return entry.deviceID == deviceID }, p2pRevokeTerminal, true)
 	}
 	s.pushDesiredConfig(ctx, deviceID)
 	return nil
@@ -1363,5 +1388,6 @@ func (s *Service) SetCurrentURL(ctx context.Context, deviceID, url, reason strin
 // Close disconnects all device control channels and bridges (service shutdown).
 func (s *Service) Close() error {
 	s.registry.Close()
+	s.relay.close()
 	return nil
 }

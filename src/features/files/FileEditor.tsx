@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { EditorView, keymap } from "@codemirror/view";
@@ -6,7 +6,7 @@ import { basicSetup } from "codemirror";
 import { Compartment, EditorState } from "@codemirror/state";
 import { indentWithTab, redo, undo } from "@codemirror/commands";
 import { openSearchPanel, search } from "@codemirror/search";
-import { ask, askChoice } from "../../ui/dialogs";
+import { ask, askChoice, promptText } from "../../ui/dialogs";
 import { fsApi } from "../../ipc/commands";
 import { openLogTab, useUi } from "../../app/store";
 import { modHint } from "../../app/platform";
@@ -24,7 +24,13 @@ import {
   IconUndo,
 } from "../../ui/icons";
 import { fileVisual } from "./fileTypes";
-import { revealOffset, subscribeFileReveal, takeFileReveal } from "./fileReveal";
+import { revealLineRange, revealOffset, subscribeFileReveal, takeFileReveal } from "./fileReveal";
+import { askAiAboutEditorSelection, askAiAboutFile } from "./fileAiRef";
+import { commentAnchor, composeLineComments, quoteLine, subscribeFileReview, takeFileReview, type LineComment } from "./aiReview";
+import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
+import { copyText, readText } from "../../ui/clipboard";
+import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
+import { isImeKeyEvent } from "../../ui/imeKeyEvent";
 import { bytesFromBase64, bytesToBase64, decodeContent, type EncChoice } from "./fileCodec";
 import {
   beginFileEditorLoad,
@@ -145,6 +151,8 @@ function isVersionConflict(error: unknown): boolean {
   return code === "conflict" && !!detail && typeof detail === "object" && (detail as { reason?: unknown }).reason === "changed";
 }
 
+type ReviewConflict = "changed" | "dirty" | "unknown";
+
 export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorProps) {
   const qc = useQueryClient();
   const pushToast = useUi((state) => state.pushToast);
@@ -190,6 +198,16 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const caseInsensitiveRef = useRef(caseInsensitive);
   const languageChoiceRef = useRef(languageChoice);
   const language = useRef(new Compartment()).current;
+  // Holds the merge view while an AI change is under review; empty otherwise.
+  const merge = useRef(new Compartment()).current;
+  // An AI change shown as a diff against what the file was before it. conflict says why its per-change revert is
+  // unavailable: the file changed after the AI wrote it, or the editor held unsaved edits when the review opened.
+  // A created file (empty before) is shown without reverts: reverting it would write an empty file, not remove it.
+  const [review, setReview] = useState<{ before: string; conflict: ReviewConflict | null } | null>(null);
+  const reviewRef = useRef(review);
+  reviewRef.current = review;
+  const [comments, setComments] = useState<LineComment[]>([]);
+  const beginReviewRef = useRef<() => void>(() => undefined);
   const languageRequestRef = useRef(0);
   const languageAppliedRef = useRef(false);
   const revealRef = useRef<() => void>(() => undefined);
@@ -230,6 +248,15 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       if (!view) return;
       const position = takeFileReveal(locatorRef.current.sessionId, locatorRef.current.path);
       if (!position) return;
+      if (position.endLine !== undefined) {
+        const range = revealLineRange(view.state.doc, position.line, position.endLine);
+        view.dispatch({
+          selection: { anchor: range.from, head: range.to },
+          effects: EditorView.scrollIntoView(range.from, { y: "center" }),
+        });
+        view.focus();
+        return;
+      }
       const offset = revealOffset(view.state.doc, position);
       view.dispatch({ selection: { anchor: offset }, effects: EditorView.scrollIntoView(offset, { y: "center" }) });
       view.focus();
@@ -393,6 +420,10 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         const { text, encoding } = decodeContent(bin, reloadEnc);
         originalRef.current = text;
         versionRef.current = fileVersionOf(bin).catch(() => null);
+        // A fresh read starts a fresh editor, so a review shown in the old one ends.
+        reviewRef.current = null;
+        setReview(null);
+        setComments([]);
         setDiskChange(null);
         setShowDiff(false);
         setMeta({ encoding, size: res.size });
@@ -411,6 +442,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
                 basicSetup,
                 search({ top: true, createPanel: editorSearchPanel(setSearchHost) }),
                 language.of([]),
+                merge.of([]),
                 keymap.of([indentWithTab]),
                 nxHighlight,
                 EditorView.updateListener.of((u) => {
@@ -431,6 +463,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           languageAppliedRef.current = false;
           applyLanguage(viewRef.current, locatorRef.current.path, languageChoiceRef.current);
           revealRef.current();
+          beginReviewRef.current();
         }
       } catch (e) {
         if (!cancelled) {
@@ -453,7 +486,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [sessionId, reloadEnc, reloadKey, language, pushToast, applyLanguage]);
+  }, [sessionId, reloadEnc, reloadKey, language, merge, pushToast, applyLanguage]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -588,6 +621,8 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     }
   };
   saveRef.current = () => void save();
+  const saveNowRef = useRef(save);
+  saveNowRef.current = save;
 
   // checkDisk reads the file again after the host reported a change, or after a save was refused because of one.
   // An unchanged editor takes the new content in place; one with unsaved edits asks first.
@@ -650,6 +685,136 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     setEol(text.includes("\r\n") ? "CRLF" : "LF");
     setDiskChange(null);
     setShowDiff(false);
+    // The host content is no longer what the AI wrote, so its changes can no longer be reverted one by one.
+    markReviewConflict(view);
+  };
+
+  // applyMerge shows the review's diff in the editor. With controls, each change gets a revert button that writes
+  // the reverted file through the editor's own save; without, the diff is for reading only.
+  const applyMerge = async (view: EditorView, before: string, controls: boolean) => {
+    const { unifiedMergeView } = await import("@codemirror/merge");
+    if (viewRef.current !== view || !reviewRef.current) return;
+    view.dispatch({
+      effects: merge.reconfigure([
+        EditorState.readOnly.of(true),
+        unifiedMergeView({
+          original: before,
+          collapseUnchanged: { margin: 3, minSize: 6 },
+          mergeControls: controls
+            ? (type, action) => {
+                if (type === "accept") {
+                  const none = document.createElement("span");
+                  none.hidden = true;
+                  return none;
+                }
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "nx-btn nx-btn-xs";
+                button.textContent = t("撤销此处");
+                button.dataset.reviewRevert = "";
+                button.onmousedown = (event) => {
+                  if (event.button !== 0 || !reviewCanWrite()) return;
+                  action(event);
+                  void saveNowRef.current();
+                };
+                return button;
+              }
+            : false,
+        }),
+      ]),
+    });
+  };
+
+  // reviewCanWrite says whether a revert can be saved right now; a revert the save would refuse is not applied.
+  const reviewCanWrite = () => {
+    const { sessionId: currentSession, path: currentPath } = locatorRef.current;
+    return !!reviewRef.current && !reviewRef.current.conflict && !saveInFlightRef.current && !fileEditorRenamePending(currentSession, currentPath);
+  };
+
+  const markReviewConflict = (view: EditorView, conflict: ReviewConflict = "changed") => {
+    const current = reviewRef.current;
+    if (!current || current.conflict) return;
+    const next = { ...current, conflict };
+    reviewRef.current = next;
+    setReview(next);
+    void applyMerge(view, current.before, false);
+  };
+
+  beginReviewRef.current = () => {
+    const view = viewRef.current;
+    if (!view) return;
+    const request = takeFileReview(locatorRef.current.sessionId, locatorRef.current.path);
+    if (!request) return;
+    const conflict: ReviewConflict | null = dirtyRef.current ? "dirty" : originalRef.current !== request.after ? "changed" : null;
+    const next = { before: request.before, conflict };
+    reviewRef.current = next;
+    setReview(next);
+    setComments([]);
+    if (conflict || request.before === "") {
+      void applyMerge(view, request.before, false);
+      return;
+    }
+    // A revert is written through save(), which replaces only the host version the editor read. Without a known
+    // version that write would be unconditional, so the review stays view-only.
+    void versionRef.current.then((version) => {
+      if (reviewRef.current !== next || viewRef.current !== view) return;
+      if (!version) {
+        markReviewConflict(view, "unknown");
+        return;
+      }
+      void applyMerge(view, request.before, true);
+    });
+  };
+  useEffect(() => subscribeFileReview(() => beginReviewRef.current()), []);
+
+  const closeReview = () => {
+    reviewRef.current = null;
+    setReview(null);
+    setComments([]);
+    viewRef.current?.dispatch({ effects: merge.reconfigure([]) });
+  };
+
+  const restoreAll = async () => {
+    const view = viewRef.current;
+    const current = reviewRef.current;
+    if (!view || !current || current.before === "" || !reviewCanWrite()) return;
+    if (!(await versionRef.current)) {
+      markReviewConflict(view, "unknown");
+      return;
+    }
+    if (viewRef.current !== view || reviewRef.current !== current || !reviewCanWrite()) return;
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: current.before }, userEvent: "revert" });
+    void saveNowRef.current();
+  };
+
+  // A host change the editor could not take in place also ends per-change reverts.
+  useEffect(() => {
+    if (diskChange && viewRef.current) markReviewConflict(viewRef.current);
+    // markReviewConflict reads refs only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diskChange]);
+
+  const addComment = async () => {
+    const view = viewRef.current;
+    if (!view) return;
+    const doc = view.state.doc;
+    const range = view.state.selection.main;
+    const line = doc.lineAt(range.from).number;
+    const endAt = range.to > range.from && doc.lineAt(range.to).from === range.to ? range.to - 1 : range.to;
+    const endLine = Math.max(line, doc.lineAt(endAt).number);
+    const anchor = commentAnchor(locatorRef.current.path, { line, endLine });
+    const text = await promptText(t("评论 {anchor}", { anchor }), "", { multiLine: true });
+    if (!text?.trim() || viewRef.current !== view) return;
+    const quote = quoteLine(doc.line(line).text);
+    setComments((prev) => [...prev, { id: `${Date.now()}-${prev.length}`, line, endLine, text: text.trim(), quote }]);
+  };
+
+  const sendComments = () => {
+    if (comments.length === 0) return;
+    const { sessionId: currentSession, path: currentPath } = locatorRef.current;
+    askAiAboutFile(currentSession, currentPath);
+    useUi.getState().queueAiPrompt(composeLineComments(currentPath, comments));
+    setComments([]);
   };
 
   const parentDir = parentOf(path);
@@ -711,6 +876,121 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const withView = (fn: (v: EditorView) => void) => {
     const v = viewRef.current;
     if (v) fn(v);
+  };
+
+  // askAi adds the selected lines, or the whole file when nothing is selected, to the AI composer as a reference.
+  const askAiRef = useRef<(scope: "selection" | "file") => void>(() => undefined);
+  askAiRef.current = (scope) => {
+    const view = viewRef.current;
+    if (!view) return;
+    const { sessionId: currentSession, path: currentPath } = locatorRef.current;
+    const range = view.state.selection.main;
+    if (scope === "selection" && !range.empty) {
+      const doc = view.state.doc;
+      const first = doc.lineAt(range.from).number;
+      // A selection that ends at the start of a line does not include that line.
+      const endAt = range.to > range.from && doc.lineAt(range.to).from === range.to ? range.to - 1 : range.to;
+      askAiAboutEditorSelection({
+        sessionId: currentSession,
+        path: currentPath,
+        text: doc.sliceString(range.from, range.to),
+        line: first,
+        endLine: Math.max(first, doc.lineAt(endAt).number),
+      });
+      return;
+    }
+    askAiAboutFile(currentSession, currentPath);
+  };
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || isImeKeyEvent(e) || !matchKeybinding(e, "askAiSelection")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      askAiRef.current("selection");
+    };
+    host.addEventListener("keydown", onKey, true);
+    return () => host.removeEventListener("keydown", onKey, true);
+  }, []);
+
+  const bindings = useKeybindings();
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const openEditorMenu = (e: ReactMouseEvent) => {
+    const view = viewRef.current;
+    if (!view) return;
+    e.preventDefault();
+    const range = view.state.selection.main;
+    const selected = range.empty ? "" : view.state.doc.sliceString(range.from, range.to);
+    const askAccel = formatBinding(bindings.askAiSelection) || undefined;
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          kind: "item",
+          label: t("向 AI 询问选中内容"),
+          accel: selected ? askAccel : undefined,
+          disabled: !selected.trim(),
+          onSelect: () => askAiRef.current("selection"),
+        },
+        {
+          kind: "item",
+          label: t("向 AI 询问当前文件"),
+          accel: selected ? undefined : askAccel,
+          onSelect: () => askAiRef.current("file"),
+        },
+        ...(reviewRef.current
+          ? ([{ kind: "item", label: t("评论选中行…"), onSelect: () => void addComment() }] satisfies MenuItem[])
+          : []),
+        { kind: "separator" },
+        {
+          kind: "item",
+          label: t("复制"),
+          disabled: !selected,
+          onSelect: () => {
+            void copyText(selected).catch((error) => pushToast("error", t("复制失败：{value}", { value: describeError(error) })));
+          },
+        },
+        {
+          kind: "item",
+          label: t("剪切"),
+          disabled: !selected || view.state.readOnly,
+          onSelect: () => {
+            void copyText(selected).then(
+              () => {
+                if (viewRef.current === view && !view.state.readOnly) view.dispatch({ changes: { from: range.from, to: range.to, insert: "" } });
+              },
+              (error) => pushToast("error", t("复制失败：{value}", { value: describeError(error) })),
+            );
+          },
+        },
+        {
+          kind: "item",
+          label: t("粘贴"),
+          disabled: view.state.readOnly,
+          onSelect: () => {
+            void readText().then(
+              (text) => {
+                if (viewRef.current !== view || !text || view.state.readOnly) return;
+                view.dispatch(view.state.replaceSelection(text));
+                view.focus();
+              },
+              () => pushToast("error", t("无法读取本机剪贴板")),
+            );
+          },
+        },
+        {
+          kind: "item",
+          label: t("全选"),
+          onSelect: () => {
+            view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } });
+            view.focus();
+          },
+        },
+      ],
+    });
   };
 
   const toggleEol = () => {
@@ -973,11 +1253,68 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         </div>
       )}
 
+      {review && (
+        <div
+          className="shrink-0 border-b border-neutral-800/60 px-3 py-1.5 text-[11.5px] text-neutral-300"
+          role="region"
+          aria-label={t("AI 修改的差异")}
+          data-testid="ai-change-review"
+          data-conflict={review.conflict ?? undefined}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`min-w-0 flex-1 ${review.conflict ? "text-amber-300" : ""}`} role={review.conflict ? "alert" : undefined}>
+              {review.conflict === "changed"
+                ? t("文件在 AI 修改后又有变化，只能查看差异，不能逐处撤销。")
+                : review.conflict === "unknown"
+                  ? t("无法确认主机上的文件版本，只能查看差异。")
+                  : review.conflict === "dirty"
+                    ? t("编辑器中有未保存的改动，只能查看差异；保存或放弃改动后重新打开。")
+                    : t("AI 修改的差异")}
+            </span>
+            {!review.conflict && review.before !== "" && (
+              <button className="nx-btn nx-btn-sm" disabled={saving} onClick={() => void restoreAll()}>
+                {t("全部恢复")}
+              </button>
+            )}
+            <button className="nx-btn nx-btn-sm" onClick={closeReview}>
+              {t("关闭差异")}
+            </button>
+          </div>
+          {comments.length > 0 && (
+            <div className="mt-1.5 flex flex-col gap-1" aria-label={t("评论")}>
+              <div className="flex flex-wrap gap-1">
+                {comments.map((comment) => (
+                  <span key={comment.id} className="nx-chip" title={comment.text} data-comment-id={comment.id}>
+                    <span className="truncate">
+                      {commentAnchor(baseName(path), comment)} · {comment.text}
+                    </span>
+                    <button
+                      className="nx-chip-x"
+                      title={t("移除评论")}
+                      onClick={() => setComments((prev) => prev.filter((x) => x.id !== comment.id))}
+                    >
+                      <IconClose size={10} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div>
+                <button className="nx-btn nx-btn-sm nx-btn-primary" onClick={sendComments}>
+                  {t("发送给 AI")}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div
         ref={hostRef}
         className="min-h-0 flex-1 overflow-auto"
         style={{ fontSize: fontPx }}
+        onContextMenu={openEditorMenu}
       />
+      <ContextMenu state={menu} onClose={() => setMenu(null)} />
       {searchHost &&
         createPortal(<EditorSearchBar view={searchHost.view} state={searchHost.state} />, searchHost.dom)}
     </div>

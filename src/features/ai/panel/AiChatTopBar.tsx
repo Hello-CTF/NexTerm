@@ -23,19 +23,20 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
         >
           <IconSearch size={14} />
         </button>
-        {(backgroundTaskTotal > 0 || tasksOpen) && (
-          <button
-            className={`nx-btn nx-btn-ghost nx-btn-xs ${tasksOpen ? "is-active" : ""}`}
-            title={t("AI 创建的后台任务（定时任务、监视、子代理），可在此查看和停止")}
-            aria-label={t("后台任务，共 {backgroundTaskTotal} 项", { backgroundTaskTotal })}
-            aria-expanded={tasksOpen}
-            onClick={() => setTasksOpen((v) => !v)}
-          >
-            <IconClock size={13} />
-            {t("后台任务")}
-            <span className="nx-badge nx-badge-amber">{backgroundTaskTotal}</span>
-          </button>
-        )}
+        {/* Always offered, so the panel can explain what will appear there before anything exists. */}
+        <button
+          className={`nx-btn nx-btn-ghost nx-btn-xs ${tasksOpen ? "is-active" : ""}`}
+          title={t("AI 创建的后台任务（定时任务、监视、子代理），可在此查看和停止")}
+          aria-label={
+            backgroundTaskTotal > 0 ? t("后台任务，共 {backgroundTaskTotal} 项", { backgroundTaskTotal }) : t("后台任务")
+          }
+          aria-expanded={tasksOpen}
+          onClick={() => setTasksOpen((v) => !v)}
+        >
+          <IconClock size={13} />
+          {t("后台任务")}
+          {backgroundTaskTotal > 0 && <span className="nx-badge nx-badge-amber">{backgroundTaskTotal}</span>}
+        </button>
         <button
           className={`nx-btn nx-btn-ghost nx-btn-xs ${historyOpen ? "is-active" : ""}`}
           title={t("终端历史")}

@@ -67,6 +67,9 @@ type ExecutorOptions struct {
 	DispatchInterval time.Duration
 	// RetryBackoff is the runner's retry delay after source or store errors.
 	RetryBackoff time.Duration
+	// RepeatMinInterval and MaxRepeatFires bound repeat watches; see Options.
+	RepeatMinInterval time.Duration
+	MaxRepeatFires    int
 }
 
 func (o *ExecutorOptions) withDefaults() {
@@ -133,14 +136,16 @@ func NewExecutor(ctx context.Context, store Store, sink Sink, options ExecutorOp
 		return nil, errors.New("watches: executor store is nil")
 	}
 	options.withDefaults()
-	engine, err := New(store, Options{
+	engineOptions := Options{
 		Now: options.Now, NewID: options.NewID,
 		MaxExcerptBytes: options.MaxExcerptBytes, MaxCarryBytes: options.MaxCarryBytes,
-	})
+		RepeatMinInterval: options.RepeatMinInterval, MaxRepeatFires: options.MaxRepeatFires,
+	}
+	engine, err := New(store, engineOptions)
 	if err != nil {
 		return nil, err
 	}
-	dispatcher, err := NewDispatcher(store, sink, Options{Now: options.Now})
+	dispatcher, err := NewDispatcher(store, sink, engineOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +179,9 @@ func (e *Executor) Start(ctx context.Context) error {
 				// Expiry settles before dispatch so a due watch never fires
 				// late; a failed sweep is retried on the next tick.
 				_, _ = e.engine.SweepExpired(e.ownerCtx)
+				// Repeat watches whose re-arm interval passed are armed
+				// again; a failed pass is retried on the next tick.
+				_, _ = e.engine.RearmDue(e.ownerCtx)
 				// A failed pass leaves rows pending; the next tick retries,
 				// keeping delivery at-least-once.
 				_, _ = e.DispatchOnce(e.ownerCtx)
@@ -453,12 +461,17 @@ func (e *Executor) resumePosition(ctx context.Context, targetID string, source S
 // WatchParams mirrors CreateParams except the stream position and left
 // context: the executor owns those from the target's live stream.
 type WatchParams struct {
-	ID        string
-	TargetID  string
-	Name      string
-	Condition Condition
-	Repeat    bool
-	ExpiresAt time.Time
+	// ConversationID is the AI conversation that receives the events.
+	ConversationID string
+	// StateSince is the start of the target's current attention state for a
+	// state watch; that state does not fire it.
+	StateSince time.Time
+	ID         string
+	TargetID   string
+	Name       string
+	Condition  Condition
+	Repeat     bool
+	ExpiresAt  time.Time
 }
 
 // Watch creates an armed watch anchored at the target's current stream
@@ -493,7 +506,32 @@ func (e *Executor) Watch(ctx context.Context, params WatchParams) (Watch, error)
 		ID: params.ID, TargetID: params.TargetID, Name: params.Name,
 		Condition: params.Condition, Repeat: params.Repeat,
 		AnchorSeq: runner.pos, LeftContext: tail, ExpiresAt: params.ExpiresAt,
+		ConversationID: params.ConversationID, StateSince: params.StateSince,
 	})
+}
+
+// Watching reports whether the executor runs a consumer for the target, so
+// a caller can drop events for targets nothing watches without a store read.
+func (e *Executor) Watching(targetID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, ok := e.targets[targetID]
+	return ok
+}
+
+// ObserveState fires the target's state watches for an attention change.
+// It holds the target's observe lock, like creation, so a fire never races
+// an anchor update of the same target.
+func (e *Executor) ObserveState(ctx context.Context, targetID, state string, since time.Time) ([]Event, error) {
+	e.mu.Lock()
+	runner, ok := e.targets[targetID]
+	e.mu.Unlock()
+	if !ok {
+		return nil, ErrDetached
+	}
+	runner.observeMu.Lock()
+	defer runner.observeMu.Unlock()
+	return e.engine.ObserveState(runner.ownerCtx, targetID, runner.identity, state, since)
 }
 
 // Cancel settles a watch.

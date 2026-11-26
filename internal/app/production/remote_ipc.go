@@ -38,6 +38,11 @@ type remoteTerminalAccessRequest struct {
 	Enabled  bool   `json:"enabled"`
 }
 
+type remoteP2PKeyConfirmRequest struct {
+	DeviceID  string `json:"deviceId"`
+	PublicKey string `json:"publicKey"`
+}
+
 type remoteEnrollCodeRequest struct {
 	TTLMS  int64  `json:"ttlMs"`
 	UserID string `json:"userId,omitempty"`
@@ -143,6 +148,14 @@ func registerRemoteCommands(dispatcher *ipc.Dispatcher, syncService *syncservice
 					return syncservice.RemoteTerminalAccessResult{}, badEmpty("deviceId")
 				}
 				return remote.SetDeviceTerminalAccess(ctx, input.DeviceID, input.Enabled)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, "remote_fleet_device_p2p_key_confirm", func(ctx context.Context, _ *ipc.Call, input remoteP2PKeyConfirmRequest) (syncservice.RemoteP2PKeyConfirmResult, error) {
+				if input.DeviceID == "" || input.PublicKey == "" {
+					return syncservice.RemoteP2PKeyConfirmResult{}, badEmpty("deviceId/publicKey")
+				}
+				return remote.ConfirmDeviceP2PKey(ctx, input.DeviceID, input.PublicKey)
 			})
 		},
 		func() error {

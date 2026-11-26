@@ -4,13 +4,12 @@ package production
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
-	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -54,19 +53,36 @@ func openWatchRealCLITab(t *testing.T, ctx context.Context, sessions *session.Ma
 	return tab
 }
 
-func provisionWatchConversation(t *testing.T, database *store.Store, ctx context.Context, tabID string) string {
+func createWatchConversation(t *testing.T, database *store.Store, ctx context.Context) string {
 	t.Helper()
 	row, err := database.ConvCreate(ctx, "watch conv", map[string]any{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.AgentRosterProvision(ctx, store.AgentRosterRow{
-		ConversationID: row.ID, Handle: "handle-1", Alias: "agent", TabID: tabID,
-		State: string(agent.RosterStateActive), Incarnation: "inc-1",
-	}); err != nil {
+	return row.ID
+}
+
+// subscribeWatchOutput creates an output watch owned by the conversation
+// through the same path the terminal_subscribe tool uses, so its events are
+// routed to that conversation by the watch's own ConversationID.
+func subscribeWatchOutput(t *testing.T, ctx context.Context, service *watchService, conversationID, tabID, pattern string) WatchSummary {
+	t.Helper()
+	result, err := service.Subscribe(ctx, conversationID, tools.Subscription{TabID: tabID, On: "output", Pattern: pattern})
+	if err != nil {
 		t.Fatal(err)
 	}
-	return row.ID
+	row, err := service.store.AgentWatchGet(ctx, result.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.ConversationID != conversationID {
+		t.Fatalf("subscription conversation = %q, want %q", row.ConversationID, conversationID)
+	}
+	summary, err := watchSummaryFromRow(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return summary
 }
 
 func waitWatchHistoryDeliveries(t *testing.T, database *store.Store, ctx context.Context, conversationID string, count int) {
@@ -111,19 +127,12 @@ func waitWatchOutboxPending(t *testing.T, database *store.Store, ctx context.Con
 // same envelope — with true absolute stream positions.
 func TestProductionWatchEndToEndRealCLI(t *testing.T) {
 	database, sessions, events := newWatchRealCLIFixture(t)
-	_, dispatcher := newWatchTestService(t, database, sessions, events, 10*time.Millisecond)
+	service, dispatcher := newWatchTestService(t, database, sessions, events, 10*time.Millisecond)
 	ctx := watchOwnerCtx("owner-a")
 	tab := openWatchRealCLITab(t, ctx, sessions)
-	conversationID := provisionWatchConversation(t, database, ctx, tab.ID)
+	conversationID := createWatchConversation(t, database, ctx)
 
-	create := dispatchWatch(t, ctx, dispatcher, "ai_watch_create", `{"targetId":"`+tab.ID+`","name":"ready watch","condition":{"type":"contains","pattern":"nexterm-watch-ready"},"repeat":false,"expiresAt":0}`)
-	if !create.OK {
-		t.Fatalf("ai_watch_create = %+v", create.Error)
-	}
-	var summary WatchSummary
-	if err := json.Unmarshal(create.Data, &summary); err != nil {
-		t.Fatal(err)
-	}
+	summary := subscribeWatchOutput(t, ctx, service, conversationID, tab.ID, "nexterm-watch-ready")
 	if summary.Status != "armed" {
 		t.Fatalf("created summary = %+v", summary)
 	}
@@ -168,15 +177,12 @@ func TestProductionWatchRestartResumesDeliveryWithFixedDeliveryID(t *testing.T) 
 	database, sessions, events := newWatchRealCLIFixture(t)
 	ctx := watchOwnerCtx("owner-a")
 	tab := openWatchRealCLITab(t, ctx, sessions)
-	conversationID := provisionWatchConversation(t, database, ctx, tab.ID)
+	conversationID := createWatchConversation(t, database, ctx)
 
 	// The first service never dispatches (hourly tick), so the fired event
 	// stays pending in the outbox across the shutdown.
-	service1, dispatcher1 := newWatchTestService(t, database, sessions, events, time.Hour)
-	create := dispatchWatch(t, ctx, dispatcher1, "ai_watch_create", `{"targetId":"`+tab.ID+`","condition":{"type":"contains","pattern":"nexterm-watch-restart"},"repeat":false,"expiresAt":0}`)
-	if !create.OK {
-		t.Fatalf("ai_watch_create = %+v", create.Error)
-	}
+	service1, _ := newWatchTestService(t, database, sessions, events, time.Hour)
+	subscribeWatchOutput(t, ctx, service1, conversationID, tab.ID, "nexterm-watch-restart")
 	if err := sessions.Write(ctx, tab.ID, "client-a", []byte("printf 'nexterm-watch-restart\\n'\r")); err != nil {
 		t.Fatal(err)
 	}
@@ -263,19 +269,8 @@ func TestProductionWatchLiveStaleRunnerReplacedOnRecreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conversationID := provisionWatchConversation(t, database, ctx, tab.ID)
-	dispatcher := ipc.NewDispatcher()
-	if err := service.registerCommands(dispatcher); err != nil {
-		t.Fatal(err)
-	}
-	create := dispatchWatch(t, ctx, dispatcher, "ai_watch_create", `{"targetId":"`+tab.ID+`","condition":{"type":"contains","pattern":"nexterm-live-one"},"repeat":false,"expiresAt":0}`)
-	if !create.OK {
-		t.Fatalf("ai_watch_create = %+v", create.Error)
-	}
-	var summary WatchSummary
-	if err := json.Unmarshal(create.Data, &summary); err != nil {
-		t.Fatal(err)
-	}
+	conversationID := createWatchConversation(t, database, ctx)
+	summary := subscribeWatchOutput(t, ctx, service, conversationID, tab.ID, "nexterm-live-one")
 	drainAttachHook(attached, tab.ID)
 	executor, err := service.executorFor(ctx, "owner-a")
 	if err != nil {
@@ -344,10 +339,7 @@ func TestProductionWatchLiveStaleRunnerReplacedOnRecreate(t *testing.T) {
 	if err := executor.DetachTarget(ctx, tab.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	create2 := dispatchWatch(t, ctx, dispatcher, "ai_watch_create", `{"targetId":"`+tab.ID+`","condition":{"type":"contains","pattern":"nexterm-live-two"},"repeat":false,"expiresAt":0}`)
-	if !create2.OK {
-		t.Fatalf("ai_watch_create after recreate = %+v", create2.Error)
-	}
+	subscribeWatchOutput(t, ctx, service, conversationID, tab.ID, "nexterm-live-two")
 	if err := sessionsWithHook.Write(ctx, recreated.ID, "client-a", []byte("printf 'nexterm-live-two\\n'\r")); err != nil {
 		t.Fatal(err)
 	}

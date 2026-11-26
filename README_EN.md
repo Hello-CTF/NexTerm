@@ -63,7 +63,7 @@ The app UI is in Chinese; Chinese labels are shown in parentheses.
 
 1. Add an SSH or WinRM asset, or use the built-in "This device" (当前设备).
 2. Initialize the vault in Settings → Credential protection (凭据保护), then save passwords or keys. The protection password only unlocks this device; if you forget it, saved credentials cannot be recovered.
-3. Optionally add any OpenAI-compatible model in Settings → Models (模型).
+3. Optionally add any OpenAI-compatible model, or a Claude model through the Anthropic Messages API, in Settings → Models (模型).
 4. Optionally sign in to a server in Settings → Account and sync (账号与同步) to sync across devices.
 
 ## Deploy the server

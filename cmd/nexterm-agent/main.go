@@ -6,6 +6,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
 	fleetagent "github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent/purpose"
+	"github.com/Hello-CTF/NexTerm/internal/p2p/agentside"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 )
 
@@ -19,6 +20,7 @@ func init() {
 		r.RegisterPurposeHandler(deviceproto.PurposeForward, purpose.NewDialServer(dial).Serve)
 		r.RegisterPurposeHandler(deviceproto.PurposeListen, purpose.NewListenServer(dial, hub).Serve)
 		r.RegisterPurposeHandler(deviceproto.PurposeAccept, purpose.NewAcceptServer(dial, hub).Serve)
+		agentside.Install(r, agentside.Options{})
 	}
 }
 

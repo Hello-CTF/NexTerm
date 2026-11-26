@@ -88,10 +88,10 @@ func withoutToolName(names []string, excluded string) []string {
 	return filtered
 }
 
-func systemPromptFor(ctx context.Context, planMode bool) string {
-	prompt := systemPrompt()
+func systemPromptFor(ctx context.Context, planMode bool, locale string) string {
+	prompt := systemPrompt(locale)
 	if planMode {
-		prompt = planSystemPrompt()
+		prompt = planSystemPrompt(locale)
 	}
 	if guard.UnattendedFrom(ctx) {
 		prompt += "\nUnattended execution: do not call terminal_create or revive old tabs; use exec_commands for shell commands in the already-connected session."

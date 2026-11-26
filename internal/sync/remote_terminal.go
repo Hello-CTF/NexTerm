@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +13,10 @@ import (
 	urlpkg "net/url"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
+	"github.com/Hello-CTF/NexTerm/internal/relaymux"
+	"github.com/Hello-CTF/NexTerm/internal/relaymux/relayclient"
+	"github.com/Hello-CTF/NexTerm/internal/rstream"
 	"github.com/Hello-CTF/NexTerm/internal/wscompress"
 	"github.com/coder/websocket"
 )
@@ -25,23 +30,73 @@ import (
 // DialDeviceBridge completes the WS upgrade against the server device bridge endpoint with the logged-in session and returns a byte-stream connection;
 // purpose selects the bridge kind ("terminal"/"file"/"forward"/"listen"/"accept", empty means terminal). 401 goes through remoteCall's dropSession re-login loop,
 // same semantics as the typed remote methods.
+//
+// When the server and the device agent support it, the bridge carries an rstream: the returned connection then
+// survives a dropped websocket, re-dialing a bridge and resuming the stream on it. Otherwise it is the raw bridge.
 func (p *RemoteProxy) DialDeviceBridge(ctx context.Context, deviceID, purpose string) (net.Conn, error) {
 	if deviceID == "" {
 		return nil, ipc.NewError(ipc.CodeBadParam, "deviceId 不能为空")
 	}
-	var conn net.Conn
-	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
-		dialed, err := client.dialDeviceBridge(ctx, deviceID, purpose)
-		if err != nil {
-			return err
-		}
-		conn = dialed
-		return nil
-	})
+	conn, stream, err := p.dialDeviceBridgeCarrier(ctx, deviceID, purpose, false)
 	if err != nil {
 		return nil, err
 	}
-	return conn, nil
+	if !stream {
+		return conn, nil
+	}
+	resumable, err := rstream.Open(ctx, conn, purpose, rstream.Options{})
+	if err != nil {
+		return nil, ipc.WrapError(ipc.CodeDisconnected, "无法打开远端设备桥: "+err.Error(), err)
+	}
+	resumable.ResumeWith(func(ctx context.Context) (net.Conn, error) {
+		carrier, stream, err := p.dialDeviceBridgeCarrier(ctx, deviceID, purpose, true)
+		if err != nil {
+			return nil, resumeDialError(err)
+		}
+		if !stream {
+			_ = carrier.Close()
+			return nil, rstream.Permanent(errors.New("server answered a resume with a raw bridge"))
+		}
+		return carrier, nil
+	})
+	return resumable, nil
+}
+
+// resumeDialError marks the refusals that a retry cannot fix (the device is gone or forbidden, or its agent can no
+// longer resume), so the stream ends and the session's own reconnect takes over; anything else, such as a
+// disconnected server or a timeout, is retried within the stream's resume window.
+func resumeDialError(err error) error {
+	var ipcErr *ipc.Error
+	if errors.As(err, &ipcErr) {
+		switch ipcErr.Code {
+		case ipc.CodeForbidden, ipc.CodeNotFound, ipc.CodeBadParam, ipc.CodeUnsupported:
+			return rstream.Permanent(err)
+		}
+	}
+	return err
+}
+
+// dialDeviceBridgeCarrier dials one relay bridge asking for a stream carrier; stream reports whether the server
+// and agent agreed to carry one.
+func (p *RemoteProxy) dialDeviceBridgeCarrier(ctx context.Context, deviceID, purpose string, resume bool) (net.Conn, bool, error) {
+	var (
+		conn   net.Conn
+		stream bool
+	)
+	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
+		dialed, carriesStream, err := p.service.engine.dialDevice(ctx, client, deviceID, purpose, true, resume, func(ctx context.Context) (net.Conn, bool, error) {
+			return client.dialDeviceBridgeStream(ctx, deviceID, purpose, resume)
+		})
+		if err != nil {
+			return err
+		}
+		conn, stream = dialed, carriesStream
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return conn, stream, nil
 }
 
 // RemoteSessionFeedDial completes the WS upgrade against the remote shell feed endpoint with the logged-in session, returning a message-level
@@ -147,17 +202,36 @@ func (c *remoteClient) dialHostShareTerminal(ctx context.Context, deviceID strin
 }
 
 func (c *remoteClient) dialDeviceBridge(ctx context.Context, deviceID, purpose string) (net.Conn, error) {
+	conn, _, err := c.dialDeviceBridgeWith(ctx, deviceID, purpose, urlpkg.Values{})
+	return conn, err
+}
+
+// dialDeviceBridgeStream dials a bridge offering to carry an rstream; the server answers with the stream header
+// only when the agent will unwrap one, so stream false means a raw bridge (an older server or agent).
+func (c *remoteClient) dialDeviceBridgeStream(ctx context.Context, deviceID, purpose string, resume bool) (net.Conn, bool, error) {
+	query := urlpkg.Values{rstream.RelayStreamParam: {"1"}}
+	if resume {
+		query.Set(rstream.RelayResumeParam, "1")
+	}
+	return c.dialDeviceBridgeWith(ctx, deviceID, purpose, query)
+}
+
+func (c *remoteClient) dialDeviceBridgeWith(ctx context.Context, deviceID, purpose string, query urlpkg.Values) (net.Conn, bool, error) {
 	path := "/fleet/devices/" + urlpkg.PathEscape(deviceID) + "/bridge"
 	if purpose != "" {
-		path += "?purpose=" + urlpkg.QueryEscape(purpose)
+		query.Set("purpose", purpose)
 	}
-	conn, err := c.dialRemoteWSWith(ctx, path, "远端设备桥", wscompress.ForBridge(purpose))
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	conn, response, err := c.dialRemoteWSResponse(ctx, path, "远端设备桥", wscompress.ForBridge(purpose))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// deviceproto frames can reach 256KiB+overhead on the wire; the default 32KiB read limit would tear the bridge.
 	conn.SetReadLimit(1 << 20)
-	return websocket.NetConn(context.Background(), conn, websocket.MessageBinary), nil
+	stream := response != nil && response.Header.Get(rstream.RelayStreamHeader) == "1"
+	return websocket.NetConn(context.Background(), conn, websocket.MessageBinary), stream, nil
 }
 
 // dialRemoteWS completes the WS upgrade against path with the in-memory session credentials (cookie+CSRF); handshake failures
@@ -169,6 +243,12 @@ func (c *remoteClient) dialRemoteWS(ctx context.Context, path, endpoint string) 
 // dialRemoteWSWith is dialRemoteWS with an explicit compression purpose: text-like streams negotiate
 // no-context-takeover permessage-deflate, opaque tunnels stay uncompressed.
 func (c *remoteClient) dialRemoteWSWith(ctx context.Context, path, endpoint string, compression wscompress.Purpose) (*websocket.Conn, error) {
+	conn, _, err := c.dialRemoteWSResponse(ctx, path, endpoint, compression)
+	return conn, err
+}
+
+// dialRemoteWSResponse is dialRemoteWSWith that also returns the upgrade response.
+func (c *remoteClient) dialRemoteWSResponse(ctx context.Context, path, endpoint string, compression wscompress.Purpose) (*websocket.Conn, *http.Response, error) {
 	header := http.Header{}
 	if c.cookieToken != "" {
 		header.Set("Cookie", sessionCookieName+"="+c.cookieToken)
@@ -183,26 +263,93 @@ func (c *remoteClient) dialRemoteWSWith(ctx context.Context, path, endpoint stri
 	conn, response, err := websocket.Dial(ctx, c.base+path, wscompress.Dial(compression, &websocket.DialOptions{HTTPClient: wsClient, HTTPHeader: header}))
 	if err != nil {
 		if response != nil {
-			return nil, wsUpgradeError(response, endpoint)
+			return nil, nil, wsUpgradeError(response, endpoint)
 		}
-		return nil, ipc.WrapError(ipc.CodeDisconnected, "无法连接"+endpoint+": "+err.Error(), err)
+		return nil, nil, ipc.WrapError(ipc.CodeDisconnected, "无法连接"+endpoint+": "+err.Error(), err)
 	}
-	return conn, nil
+	return conn, response, nil
 }
 
 // wsUpgradeError maps a failed WS endpoint upgrade HTTP response to ipc.Error: 401 triggers
 // remoteCall's re-login, other statuses preferentially pass through the server rpcErr final text.
 func wsUpgradeError(response *http.Response, endpoint string) error {
-	if response.StatusCode == http.StatusUnauthorized {
-		return errSessionExpired
-	}
 	var failure struct {
 		Error *ipc.Error `json:"error"`
 	}
-	if body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20)); err == nil {
-		if json.Unmarshal(body, &failure) == nil && failure.Error != nil {
-			return ipc.NewError(failure.Error.Code, failure.Error.Message)
+	if response.StatusCode != http.StatusUnauthorized {
+		if body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20)); err == nil {
+			_ = json.Unmarshal(body, &failure)
 		}
 	}
-	return ipc.NewError(ipc.CodeDisconnected, fmt.Sprintf("%s暂不可用（HTTP %d）", endpoint, response.StatusCode))
+	return endpointRefusal(response.StatusCode, failure.Error, endpoint)
+}
+
+// endpointRefusal maps a refused WS endpoint upgrade or relay stream to ipc.Error: 401 triggers remoteCall's
+// re-login, a server error code passes through with its final text, anything else reads as the endpoint being
+// unavailable.
+func endpointRefusal(status int, rpcErr *ipc.Error, endpoint string) error {
+	if status == http.StatusUnauthorized {
+		return errSessionExpired
+	}
+	if rpcErr != nil {
+		return ipc.NewError(rpcErr.Code, rpcErr.Message)
+	}
+	return ipc.NewError(ipc.CodeDisconnected, fmt.Sprintf("%s暂不可用（HTTP %d）", endpoint, status))
+}
+
+// relaySession describes client's login to the relay dialer, with the TLS and proxy settings of its API.
+func (c *remoteClient) relaySession() relayclient.Session {
+	return relayclient.Session{
+		BaseURL:   c.base,
+		Transport: c.httpClient().Transport,
+		Insecure:  c.insecure,
+		Proxied:   c.proxied(),
+		Token:     c.cookieToken,
+	}
+}
+
+// proxied reports whether the API goes through a proxy, manual or from the environment.
+func (c *remoteClient) proxied() bool {
+	return proxiedBase(c.base, c.proxy)
+}
+
+// proxyFromEnvironment is http.ProxyFromEnvironment, replaceable in tests (it reads the environment once per
+// process and never proxies loopback hosts).
+var proxyFromEnvironment = http.ProxyFromEnvironment
+
+// proxiedBase reports whether requests to base go through a proxy, manual or from the environment.
+func proxiedBase(base string, manual netproxy.Manual) bool {
+	if manual.Enabled() {
+		return true
+	}
+	request, err := http.NewRequest(http.MethodGet, base, nil)
+	if err != nil {
+		return false
+	}
+	proxy, err := proxyFromEnvironment(request)
+	return err == nil && proxy != nil
+}
+
+// dialDevice opens a device stream over the server's multiplexed relay, or through legacy (the per-operation
+// bridge) when the server offers no usable relay. Refusals map to the errors the bridge upgrade gives.
+func (e *Engine) dialDevice(ctx context.Context, client *remoteClient, deviceID, purpose string, stream, resume bool, legacy func(context.Context) (net.Conn, bool, error)) (net.Conn, bool, error) {
+	conn, carriesStream, err := e.relay.DialDevice(ctx, client.relaySession(), deviceID, purpose, stream, resume, legacy)
+	if err == nil {
+		return conn, carriesStream, nil
+	}
+	if errors.Is(err, relayclient.ErrSessionExpired) {
+		return nil, false, errSessionExpired
+	}
+	if reply, refused := relaymux.Refused(err); refused {
+		var rpcErr *ipc.Error
+		if reply.Code != "" {
+			rpcErr = ipc.NewError(ipc.Code(reply.Code), reply.Message)
+		}
+		return nil, false, endpointRefusal(reply.Status, rpcErr, "远端设备桥")
+	}
+	var ipcErr *ipc.Error
+	if errors.As(err, &ipcErr) || errors.Is(err, errSessionExpired) || ctx.Err() != nil {
+		return nil, false, err
+	}
+	return nil, false, ipc.WrapError(ipc.CodeDisconnected, "无法连接远端设备桥: "+err.Error(), err)
 }

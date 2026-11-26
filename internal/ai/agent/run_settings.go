@@ -18,6 +18,9 @@ const (
 	DefaultMaxTurns = 999
 	MinMaxTurns     = 1
 	MaxMaxTurns     = 999
+	// RecordEvidenceSettingKey stores whether each run keeps a sealed evidence
+	// capture of its tool output and answer; recording is on unless turned off.
+	RecordEvidenceSettingKey = "ai.record_evidence"
 )
 
 var ErrMaxTurnsRange = errors.New("单轮最大步数必须是 1 到 999 之间的整数")
@@ -30,20 +33,41 @@ type RunSettingsStore interface {
 
 // RunSettings are the user's assistant run options.
 type RunSettings struct {
-	MaxTurns int `json:"maxTurns"`
+	MaxTurns       int  `json:"maxTurns"`
+	RecordEvidence bool `json:"recordEvidence"`
 }
 
+// RunSettingsInput leaves the evidence switch unchanged when it is absent.
 type RunSettingsInput struct {
-	MaxTurns int `json:"maxTurns"`
+	MaxTurns       int   `json:"maxTurns"`
+	RecordEvidence *bool `json:"recordEvidence,omitempty"`
 }
 
 // MaxTurnsSettingKeyForUser keeps each server account's limit apart; desktop and
 // open access use the instance-wide key.
 func MaxTurnsSettingKeyForUser(ctx context.Context) string {
+	return settingKeyForUser(ctx, MaxTurnsSettingKey)
+}
+
+func settingKeyForUser(ctx context.Context, key string) string {
 	if userID, ok := ipc.UserIDFromContext(ctx); ok {
-		return MaxTurnsSettingKey + ".user." + userID
+		return key + ".user." + userID
 	}
-	return MaxTurnsSettingKey
+	return key
+}
+
+// recordEvidence resolves the caller's evidence switch when a run starts. An
+// unreadable or unrecognized stored value keeps recording on.
+func (r *Runner) recordEvidence(ctx context.Context) bool {
+	if r.config.Settings == nil {
+		return true
+	}
+	raw, found, err := r.config.Settings.SettingGet(ctx, settingKeyForUser(ctx, RecordEvidenceSettingKey))
+	if err != nil {
+		slog.Warn("read AI evidence setting failed; recording stays on", "error", err)
+		return true
+	}
+	return !found || strings.TrimSpace(raw) != "false"
 }
 
 func validMaxTurns(value int) bool {
@@ -98,7 +122,7 @@ func (r *Runner) RunSettings(ctx context.Context) (RunSettings, error) {
 	if err := r.runSettingsAccess(ctx); err != nil {
 		return RunSettings{}, err
 	}
-	return RunSettings{MaxTurns: r.maxTurns(ctx)}, nil
+	return RunSettings{MaxTurns: r.maxTurns(ctx), RecordEvidence: r.recordEvidence(ctx)}, nil
 }
 
 // SetRunSettings saves the caller's step limit after validating its range.
@@ -112,5 +136,10 @@ func (r *Runner) SetRunSettings(ctx context.Context, input RunSettingsInput) (Ru
 	if err := r.config.Settings.SettingSet(ctx, MaxTurnsSettingKeyForUser(ctx), strconv.Itoa(input.MaxTurns)); err != nil {
 		return RunSettings{}, err
 	}
-	return RunSettings{MaxTurns: r.maxTurns(ctx)}, nil
+	if input.RecordEvidence != nil {
+		if err := r.config.Settings.SettingSet(ctx, settingKeyForUser(ctx, RecordEvidenceSettingKey), strconv.FormatBool(*input.RecordEvidence)); err != nil {
+			return RunSettings{}, err
+		}
+	}
+	return RunSettings{MaxTurns: r.maxTurns(ctx), RecordEvidence: r.recordEvidence(ctx)}, nil
 }

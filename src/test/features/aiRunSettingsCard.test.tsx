@@ -33,8 +33,10 @@ function saveButton(): HTMLButtonElement {
 }
 
 beforeEach(() => {
-  mocks.get.mockReset().mockResolvedValue({ maxTurns: 999 });
-  mocks.set.mockReset().mockImplementation(async (value: { maxTurns: number }) => value);
+  mocks.get.mockReset().mockResolvedValue({ maxTurns: 999, recordEvidence: true });
+  mocks.set
+    .mockReset()
+    .mockImplementation(async (value: { maxTurns: number; recordEvidence?: boolean }) => ({ recordEvidence: true, ...value }));
   mocks.toast.mockReset();
   useUi.setState({ pushToast: mocks.toast });
 });
@@ -42,6 +44,41 @@ beforeEach(() => {
 afterEach(() => {
   view?.unmount();
   view = null;
+});
+
+function evidenceSwitch(): HTMLInputElement {
+  const element = view!.container.querySelector<HTMLInputElement>('input[aria-label="记录运行证据"]');
+  if (!element) throw new Error("evidence switch not found");
+  return element;
+}
+
+describe("AI run evidence setting", () => {
+  it("starts on and saves the switch with the stored step limit", async () => {
+    view = mount(createElement(AiRunSettingsCard));
+    await flush();
+    expect(evidenceSwitch().checked).toBe(true);
+
+    click(evidenceSwitch());
+    await flush();
+
+    expect(mocks.set).toHaveBeenCalledWith({ maxTurns: 999, recordEvidence: false });
+    expect(evidenceSwitch().checked).toBe(false);
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.any(String));
+  });
+
+  it("keeps the switch off when loaded off and leaves it out of a step limit save", async () => {
+    mocks.get.mockResolvedValue({ maxTurns: 999, recordEvidence: false });
+    mocks.set.mockImplementation(async (value: { maxTurns: number }) => ({ recordEvidence: false, ...value }));
+    view = mount(createElement(AiRunSettingsCard));
+    await flush();
+    expect(evidenceSwitch().checked).toBe(false);
+
+    setInputValue(input(), "50");
+    click(saveButton());
+    await flush();
+    expect(mocks.set).toHaveBeenCalledWith({ maxTurns: 50 });
+    expect(evidenceSwitch().checked).toBe(false);
+  });
 });
 
 describe("AI step limit setting", () => {

@@ -237,46 +237,6 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
-    "ai_roster_attach": {
-      scope: "ai-roster",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "struct{Handle string \"json:\\\"handle\\\"\"; JobID string \"json:\\\"jobId\\\"\"}", ts: "{\n  handle: string;\n  jobId: string;\n}" },
-      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterAttachmentDTO", ts: "RosterAttachmentDTO" },
-    },
-    "ai_roster_list": {
-      scope: "ai-roster",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "struct{ConversationID string \"json:\\\"conversationId\\\"\"}", ts: "{\n  conversationId: string;\n}" },
-      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterListEntry", ts: "RosterListEntry[]" },
-    },
-    "ai_roster_reconcile": {
-      scope: "ai-roster",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "struct{ConversationID string \"json:\\\"conversationId\\\"\"}", ts: "{\n  conversationId: string;\n}" },
-      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterReconcileReport", ts: "RosterReconcileReport" },
-    },
-    "ai_roster_release": {
-      scope: "ai-roster",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "struct{Handle string \"json:\\\"handle\\\"\"; CreatedAt int64 \"json:\\\"createdAt\\\"\"; Incarnation string \"json:\\\"incarnation\\\"\"}", ts: "{\n  handle: string;\n  createdAt: number;\n  incarnation: string;\n}" },
-      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterEntry", ts: "RosterEntry" },
-    },
-    "ai_roster_rename": {
-      scope: "ai-roster",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "struct{Handle string \"json:\\\"handle\\\"\"; Alias string \"json:\\\"alias\\\"\"; CreatedAt int64 \"json:\\\"createdAt\\\"\"; Incarnation string \"json:\\\"incarnation\\\"\"}", ts: "{\n  handle: string;\n  alias: string;\n  createdAt: number;\n  incarnation: string;\n}" },
-      output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/agent.RosterEntry", ts: "RosterEntry" },
-    },
     "ai_run_events": {
       nested: false,
       channel: false,
@@ -1149,6 +1109,38 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetProbeBatchRequest", ts: "AssetProbeBatchRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetProbeBatchDTO", ts: "AssetProbeBatchDTO" },
+    },
+    "fleet_device_connection_mode_get": {
+      scope: "device-path",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.devicePathRequest", ts: "DevicePathRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.deviceModeDTO", ts: "DeviceModeDTO" },
+    },
+    "fleet_device_connection_mode_set": {
+      scope: "device-path",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.deviceModeRequest", ts: "DeviceModeRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.deviceModeDTO", ts: "DeviceModeDTO" },
+    },
+    "fleet_device_p2p_diagnostics": {
+      scope: "device-path",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.devicePathRequest", ts: "DevicePathRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/p2p/client.DeviceP2PDiagnostics", ts: "DeviceP2PDiagnostics" },
+    },
+    "fleet_device_path_status": {
+      scope: "device-path",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.devicePathRequest", ts: "DevicePathRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/p2p/client.DevicePathStatus", ts: "DevicePathStatus" },
     },
     "forward_create": {
       scope: "forward",
@@ -2058,6 +2050,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteMetricsRequest", ts: "RemoteMetricsRequest" },
       output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteMetricsSamples", ts: "RemoteMetricsSamples | null" },
+    },
+    "remote_fleet_device_p2p_key_confirm": {
+      scope: "remote",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteP2PKeyConfirmRequest", ts: "RemoteP2PKeyConfirmRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteP2PKeyConfirmResult", ts: "RemoteP2PKeyConfirmResult" },
     },
     "remote_fleet_device_revoke": {
       scope: "remote",
@@ -3439,42 +3439,6 @@ export interface IPCCommandTypeMap {
 };
     output: contractTypes.DeviceGrant;
   };
-  "ai_roster_attach": {
-    input: {
-  handle: string;
-  jobId: string;
-};
-    output: contractTypes.RosterAttachmentDTO;
-  };
-  "ai_roster_list": {
-    input: {
-  conversationId: string;
-};
-    output: contractTypes.RosterListEntry[];
-  };
-  "ai_roster_reconcile": {
-    input: {
-  conversationId: string;
-};
-    output: contractTypes.RosterReconcileReport;
-  };
-  "ai_roster_release": {
-    input: {
-  handle: string;
-  createdAt: number;
-  incarnation: string;
-};
-    output: contractTypes.RosterEntry;
-  };
-  "ai_roster_rename": {
-    input: {
-  handle: string;
-  alias: string;
-  createdAt: number;
-  incarnation: string;
-};
-    output: contractTypes.RosterEntry;
-  };
   "ai_run_history": {
     input: {
   conversationId: string;
@@ -3936,6 +3900,22 @@ export interface IPCCommandTypeMap {
   "exec_batch_test_login": {
     input: contractTypes.AssetProbeBatchRequest;
     output: contractTypes.AssetProbeBatchDTO;
+  };
+  "fleet_device_connection_mode_get": {
+    input: contractTypes.DevicePathRequest;
+    output: contractTypes.DeviceModeDTO;
+  };
+  "fleet_device_connection_mode_set": {
+    input: contractTypes.DeviceModeRequest;
+    output: contractTypes.DeviceModeDTO;
+  };
+  "fleet_device_p2p_diagnostics": {
+    input: contractTypes.DevicePathRequest;
+    output: contractTypes.DeviceP2PDiagnostics;
+  };
+  "fleet_device_path_status": {
+    input: contractTypes.DevicePathRequest;
+    output: contractTypes.DevicePathStatus;
   };
   "forward_create": {
     input: contractTypes.CreateLocalArgs;
@@ -4469,6 +4449,10 @@ export interface IPCCommandTypeMap {
   "remote_fleet_device_metrics": {
     input: contractTypes.RemoteMetricsRequest;
     output: contractTypes.RemoteMetricsSamples | null;
+  };
+  "remote_fleet_device_p2p_key_confirm": {
+    input: contractTypes.RemoteP2PKeyConfirmRequest;
+    output: contractTypes.RemoteP2PKeyConfirmResult;
   };
   "remote_fleet_device_revoke": {
     input: contractTypes.RemoteDeviceRequest;

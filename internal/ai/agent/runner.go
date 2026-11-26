@@ -148,6 +148,11 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 	if factory == nil {
 		return StartResponse{}, errors.New("AI 事件流未配置")
 	}
+	if args.Source == SourceEvent {
+		// A run tagged as event-triggered never gets more than one; the
+		// marker keeps every grant rule from authorizing it.
+		ctx = guard.WithEventTriggered(ctx)
+	}
 	if r.store == nil {
 		return StartResponse{}, errors.New("AI 对话存储未配置")
 	}
@@ -265,7 +270,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 			return StartResponse{}, busyErr
 		}
 	}
-	if err := r.store.MsgInsert(executionCtx, conversationID, "user", map[string]any{"role": "user", "content": args.Message, "imageCount": len(args.Images), "jobId": jobID}, nil, nil); err != nil {
+	if err := r.store.MsgInsert(executionCtx, conversationID, "user", userMessageRow(args, jobID), nil, nil); err != nil {
 		r.releaseJobID(jobID)
 		cancel()
 		forceCancel()
@@ -284,7 +289,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 	downstream := newSwitchableStream(stream)
 	stream = r.wrapStream(downstream, jobID)
 	current := &job{id: jobID, ownerID: ownerID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, downstream: downstream, memory: r.conversationMemory(ownerID, conversationID, args.Scope), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true, cancelSync: newCancelSync(), doneCh: make(chan struct{})}
-	current.capture = r.newJobCapture(jobID, conversationID)
+	current.capture = r.newJobCapture(jobContext, jobID, conversationID)
 	r.mu.Lock()
 	if r.closed || r.jobs[jobID] != nil {
 		r.mu.Unlock()
@@ -997,4 +1002,15 @@ func (r *Runner) shutdownError() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return errors.Join(r.shutdownErrs...)
+}
+
+// userMessageRow is the stored user row of a run. A run started by a
+// terminal event records that source, so the panel shows its fixed trigger
+// note as a system notice rather than as something the user typed.
+func userMessageRow(args ChatArgs, jobID string) map[string]any {
+	row := map[string]any{"role": "user", "content": args.Message, "imageCount": len(args.Images), "jobId": jobID}
+	if args.Source == SourceEvent {
+		row["source"] = SourceEvent
+	}
+	return row
 }

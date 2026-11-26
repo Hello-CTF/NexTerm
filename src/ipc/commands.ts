@@ -1,4 +1,5 @@
 import { noteIpcCall } from "./probeHooks";
+import { getLocale } from "../i18n";
 import { WEB } from "./env";
 import { clientId, httpUrl } from "./env";
 import { describeError } from "../ui/errorText";
@@ -80,7 +81,7 @@ const SYNCED_WRITES = new Set([
   "ai_set_permission", "ai_model_save", "ai_model_delete", "ai_model_activate",
   "ai_grant_set", "ai_grant_revoke", "ai_grant_rule_set", "ai_grant_rule_revoke",
   "sync_preferences_set", "inventory_sync", "transcript_sync_opt_in", "transcript_delete",
-  "transcript_purge",
+  "transcript_purge", "fleet_device_connection_mode_set",
 ]);
 export const SYNC_WAKE_DELAY_MS = 2000;
 let syncWakeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1612,7 +1613,8 @@ export const aiApi = {
     },
   ) => {
     const { channel, ...body } = args;
-    return call<{ jobId: string; conversationId: string }>("ai_chat", { args: body, channel });
+    // The interface language is the reply fallback when a message has no clear language.
+    return call<{ jobId: string; conversationId: string }>("ai_chat", { args: { ...body, locale: getLocale() }, channel });
   },
   getPermission: (scope?: Record<string, unknown>) =>
     call<AiPermissionConfig>("ai_get_permission", scope ? { scope } : {}),
@@ -1666,7 +1668,7 @@ export const aiApi = {
     channel: unknown;
   }): Promise<TakeoverRunResult> => {
     const { channel, ...body } = args;
-    return call<TakeoverRunResult>("ai_takeover_run", { ...body, channel });
+    return call<TakeoverRunResult>("ai_takeover_run", { ...body, locale: getLocale(), channel });
   },
   takeoverConfirm: (input: AiConfirmationInput) => call<void>("ai_takeover_confirm", { ...input }),
   takeoverCancel: (jobId: string) => call<void>("ai_takeover_cancel", { jobId }),
@@ -1681,7 +1683,7 @@ export const aiApi = {
     channel: unknown;
   }): Promise<TakeoverRunResult> => {
     const { channel, ...body } = args;
-    return call<TakeoverRunResult>("ai_takeover_resume", { ...body, channel });
+    return call<TakeoverRunResult>("ai_takeover_resume", { ...body, locale: getLocale(), channel });
   },
   conversationList: () =>
     call<import("./types").ConversationDto[]>("ai_conversation_list"),

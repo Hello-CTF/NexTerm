@@ -212,6 +212,9 @@ type atomicSessionFixture struct {
 
 	terminalsMu sync.Mutex
 	terminals   map[string]*hookTerminal
+
+	inputSourcesMu sync.Mutex
+	inputSources   []session.InputSourceEvent
 }
 
 func newAtomicSessionFixture(t *testing.T, manualClock bool) *atomicSessionFixture {
@@ -235,6 +238,14 @@ func newAtomicSessionFixture(t *testing.T, manualClock bool) *atomicSessionFixtu
 			fixture.terminals[config.TabID] = core
 			fixture.terminalsMu.Unlock()
 			return core, nil
+		}),
+		Emitter: session.EmitterFunc(func(_ context.Context, event session.Event) error {
+			if payload, ok := event.Payload.(session.InputSourceEvent); ok && event.Topic == session.TopicTerminalInputSource {
+				fixture.inputSourcesMu.Lock()
+				fixture.inputSources = append(fixture.inputSources, payload)
+				fixture.inputSourcesMu.Unlock()
+			}
+			return nil
 		}),
 	})
 	connected, err := fixture.manager.Connect(ipc.WithUserID(context.Background(), "owner-a"), session.Asset{ID: "asset-atomic", Kind: session.KindSSH})
@@ -262,6 +273,14 @@ func (f *atomicSessionFixture) registry() *Registry {
 
 func (f *atomicSessionFixture) scope() Scope {
 	return Scope{SessionID: f.sessionID, TabID: f.tabID, AssetID: "asset-atomic"}
+}
+
+func (f *atomicSessionFixture) takeInputSources() []session.InputSourceEvent {
+	f.inputSourcesMu.Lock()
+	defer f.inputSourcesMu.Unlock()
+	events := f.inputSources
+	f.inputSources = nil
+	return events
 }
 
 func (f *atomicSessionFixture) terminal() *hookTerminal {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
@@ -22,7 +23,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-func dialDeviceWS(t *testing.T, f *httpFixture) *websocket.Conn {
+func dialDeviceWS(t testing.TB, f *httpFixture) *websocket.Conn {
 	t.Helper()
 	conn, response, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(f.http.URL, "http")+agent.PathDeviceWS, &websocket.DialOptions{CompressionMode: websocket.CompressionContextTakeover})
 	if err != nil {
@@ -35,7 +36,7 @@ func dialDeviceWS(t *testing.T, f *httpFixture) *websocket.Conn {
 	return conn
 }
 
-func helloDevice(t *testing.T, conn *websocket.Conn, hello agent.HelloMessage) controlMessage {
+func helloDevice(t testing.TB, conn *websocket.Conn, hello agent.HelloMessage) controlMessage {
 	t.Helper()
 	payload, err := json.Marshal(hello)
 	if err != nil {
@@ -57,7 +58,7 @@ func helloDevice(t *testing.T, conn *websocket.Conn, hello agent.HelloMessage) c
 	return response
 }
 
-func enrollWSAgent(t *testing.T, f *httpFixture, owner *account.User, name string) (string, string) {
+func enrollWSAgent(t testing.TB, f *httpFixture, owner *account.User, name string) (string, string) {
 	t.Helper()
 	return enrollAgent(t, f, owner, name)
 }
@@ -590,7 +591,8 @@ func TestDeviceBridgeRelayPurposePreCheck(t *testing.T) {
 	if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge?purpose=file", nil, session, ""); response.status != http.StatusForbidden {
 		t.Fatalf("unadvertised file relay: HTTP %d %v", response.status, response.body)
 	}
-	for _, purpose := range []string{"listen", "accept"} {
+	// file-mux passes the relay allowlist and, like every purpose, still needs the agent to advertise it.
+	for _, purpose := range []string{"listen", "accept", deviceproto.PurposeFileMux} {
 		if response := f.call(t, "GET", "/fleet/devices/"+deviceID+"/bridge?purpose="+purpose, nil, session, ""); response.status != http.StatusForbidden {
 			t.Fatalf("unadvertised %s relay: HTTP %d %v", purpose, response.status, response.body)
 		}
