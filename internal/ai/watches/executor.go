@@ -67,6 +67,9 @@ type ExecutorOptions struct {
 	DispatchInterval time.Duration
 	// RetryBackoff is the runner's retry delay after source or store errors.
 	RetryBackoff time.Duration
+	// RepeatMinInterval and MaxRepeatFires bound repeat watches; see Options.
+	RepeatMinInterval time.Duration
+	MaxRepeatFires    int
 }
 
 func (o *ExecutorOptions) withDefaults() {
@@ -133,14 +136,16 @@ func NewExecutor(ctx context.Context, store Store, sink Sink, options ExecutorOp
 		return nil, errors.New("watches: executor store is nil")
 	}
 	options.withDefaults()
-	engine, err := New(store, Options{
+	engineOptions := Options{
 		Now: options.Now, NewID: options.NewID,
 		MaxExcerptBytes: options.MaxExcerptBytes, MaxCarryBytes: options.MaxCarryBytes,
-	})
+		RepeatMinInterval: options.RepeatMinInterval, MaxRepeatFires: options.MaxRepeatFires,
+	}
+	engine, err := New(store, engineOptions)
 	if err != nil {
 		return nil, err
 	}
-	dispatcher, err := NewDispatcher(store, sink, Options{Now: options.Now})
+	dispatcher, err := NewDispatcher(store, sink, engineOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +179,9 @@ func (e *Executor) Start(ctx context.Context) error {
 				// Expiry settles before dispatch so a due watch never fires
 				// late; a failed sweep is retried on the next tick.
 				_, _ = e.engine.SweepExpired(e.ownerCtx)
+				// Repeat watches whose re-arm interval passed are armed
+				// again; a failed pass is retried on the next tick.
+				_, _ = e.engine.RearmDue(e.ownerCtx)
 				// A failed pass leaves rows pending; the next tick retries,
 				// keeping delivery at-least-once.
 				_, _ = e.DispatchOnce(e.ownerCtx)

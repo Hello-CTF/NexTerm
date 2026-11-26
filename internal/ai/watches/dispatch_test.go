@@ -40,7 +40,7 @@ type ackFailStore struct {
 	failures int
 }
 
-func (s *ackFailStore) AgentWatchEventAck(ctx context.Context, deliveryID string, expectedRevision uint64, now int64) (model.AgentWatchOutboxRow, error) {
+func (s *ackFailStore) AgentWatchEventAckPolicy(ctx context.Context, deliveryID string, expectedRevision uint64, now int64, policy store.AgentWatchRepeatPolicy) (model.AgentWatchOutboxRow, error) {
 	s.mu.Lock()
 	if s.failures > 0 {
 		s.failures--
@@ -48,7 +48,7 @@ func (s *ackFailStore) AgentWatchEventAck(ctx context.Context, deliveryID string
 		return model.AgentWatchOutboxRow{}, errors.New("injected ack failure")
 	}
 	s.mu.Unlock()
-	return s.Store.AgentWatchEventAck(ctx, deliveryID, expectedRevision, now)
+	return s.Store.AgentWatchEventAckPolicy(ctx, deliveryID, expectedRevision, now, policy)
 }
 
 func fireOne(t *testing.T, engine *Engine, backend *store.Store, pattern string) Event {

@@ -26,6 +26,15 @@ const stateLabels: Record<string, string> = {
   exited: tr("退出"),
 };
 
+// Settle reasons the backend records as codes; other reasons show as stored.
+const lastErrorLabels: Record<string, string> = {
+  repeat_fire_limit: tr("已达到重复触发次数上限，监视已结束"),
+};
+
+function lastErrorText(lastError: string): string {
+  return lastErrorLabels[lastError] ?? lastError;
+}
+
 function conditionText(type: string, pattern: string, target: string): string {
   if (type === "state") return tr("{target}{state}时唤醒 AI", { target, state: stateLabels[pattern] ?? pattern });
   return tr("{value}{value2}「{pattern}」时通知 AI", { value: target, value2: conditionLabels[type as "contains" | "regex"] ?? type, pattern });
@@ -157,7 +166,7 @@ function WatchPanelContent({
       </span>
       <span className={`nx-badge ${statusClasses[watch.status]}`}>{statusLabels[watch.status]}</span>
       {watch.repeat && <span className="nx-badge">{tr("重复")}</span>}
-      {watch.lastError && <span className="text-neutral-500">{watch.lastError}</span>}
+      {watch.lastError && <span className="text-neutral-500">{lastErrorText(watch.lastError)}</span>}
       {canCancel && (
         <button
           type="button"

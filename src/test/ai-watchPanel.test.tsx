@@ -87,6 +87,15 @@ describe("WatchPanel", () => {
     expect(text()).not.toContain("锚点");
   });
 
+  it("explains why a repeat watch that reached its fire cap ended", async () => {
+    const api = new SyntheticApi();
+    api.watches = [watch({ id: "w-cap", name: "错误日志", status: "expired", repeat: true, lastError: "repeat_fire_limit" })];
+    view = mount(createElement(WatchPanel, { api, owner }));
+    await flushUntil(() => text().includes("已结束（1）"));
+    expect(text()).toContain("已达到重复触发次数上限，监视已结束");
+    expect(text()).not.toContain("repeat_fire_limit");
+  });
+
   it("shows an empty state when nothing is armed", async () => {
     const api = new SyntheticApi();
     view = mount(createElement(WatchPanel, { api, owner }));

@@ -3089,6 +3089,7 @@
     "one": "{count} espace de travail du compte chargé{value}",
     "other": "{count} espaces de travail du compte chargés{value}"
   },
+  "已达到重复触发次数上限，监视已结束": "Limite de déclenchements répétés atteinte ; la surveillance est terminée",
   "已过期": "Expiré",
   "已连接": "Connecté",
   "已连接 SSH / 设备": "SSH / appareils connectés",

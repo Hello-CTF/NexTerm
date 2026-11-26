@@ -3098,6 +3098,7 @@
     "one": "Se ha cargado {count} espacio de trabajo de la cuenta{value}",
     "other": "Se han cargado {count} espacios de trabajo de la cuenta{value}"
   },
+  "已达到重复触发次数上限，监视已结束": "Se alcanzó el límite de activaciones repetidas; la vigilancia ha terminado",
   "已过期": "Caducado",
   "已连接": "Conectado",
   "已连接 SSH / 设备": "SSH / dispositivos conectados",

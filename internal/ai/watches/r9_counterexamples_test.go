@@ -180,19 +180,43 @@ func TestExecutorRestartResumesMatchedRepeat(t *testing.T) {
 
 	// Second source reports end 7. Recovery must resume from the matched
 	// repeat's evaluated position (5), not the source end: consume XX, ack
-	// re-arms, and the second ready fires.
+	// re-arms once the repeat interval passed, and the second ready fires.
 	sink := newChanSink()
-	second := newTestExecutor(t, backend, sink)
+	clock := newTestClock()
+	second, err := NewExecutor(ctx, backend, sink, ExecutorOptions{
+		Now: clock.Now, DispatchInterval: 10 * time.Millisecond, RetryBackoff: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	secondGate := make(chan struct{})
 	secondSource := &scriptSource{endSeq: 7, gate: secondGate, gateAfter: 1, steps: []scriptStep{
 		{data: []byte("XX")},
 		{data: []byte("ready")},
 	}}
 	attachTarget(t, second, ctx, "target-1", "identity-1", secondSource)
-	// The runner consumes XX while the watch is matched; the ack re-arms it,
-	// and only then does the second ready flow.
+	// The runner consumes XX while the watch is matched; the ack and the
+	// elapsed repeat interval re-arm it, and only then does the second ready
+	// flow.
 	if _, err := second.DispatchOnce(ctx); err != nil {
 		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		after, err := backend.AgentWatchGet(ctx, watch.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after.AnchorSeq == 7 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("matched watch did not consume XX: %+v", after)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	clock.Advance(DefaultRepeatMinInterval)
+	if rearmed, err := second.engine.RearmDue(ctx); err != nil || rearmed != 1 {
+		t.Fatalf("re-arm after the interval = %d, %v", rearmed, err)
 	}
 	close(secondGate)
 	if err := second.Start(ctx); err != nil {

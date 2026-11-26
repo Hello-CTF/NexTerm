@@ -31,7 +31,8 @@ type Store interface {
 	AgentWatchTargetDetach(ctx context.Context, targetID, identity string, generation uint64, now int64) (bool, error)
 	AgentWatchTargetGet(ctx context.Context, targetID string) (model.AgentWatchTargetRow, error)
 	AgentWatchEventPendingList(ctx context.Context, limit int) ([]model.AgentWatchOutboxRow, error)
-	AgentWatchEventAck(ctx context.Context, deliveryID string, expectedRevision uint64, now int64) (model.AgentWatchOutboxRow, error)
+	AgentWatchEventAckPolicy(ctx context.Context, deliveryID string, expectedRevision uint64, now int64, policy store.AgentWatchRepeatPolicy) (model.AgentWatchOutboxRow, error)
+	AgentWatchRearmDue(ctx context.Context, now int64, policy store.AgentWatchRepeatPolicy) (int64, error)
 }
 
 // maxWatchTransitionAttempts bounds the reload/re-evaluation loop used when a
@@ -54,9 +55,25 @@ type Options struct {
 	// coverage. The store enforces a hard ceiling; incomplete trailing
 	// UTF-8 sequences are always preserved on top of this bound.
 	MaxCarryBytes int
+	// RepeatMinInterval is the shortest time from a repeat watch's fire to
+	// its re-arm, and MaxRepeatFires settles a repeat watch once it fired
+	// this often; zero takes DefaultRepeatMinInterval and
+	// DefaultMaxRepeatFires, and a negative value disables the bound.
+	RepeatMinInterval time.Duration
+	MaxRepeatFires    int
+}
+
+func (o Options) repeatPolicy() store.AgentWatchRepeatPolicy {
+	return store.AgentWatchRepeatPolicy{MinInterval: max(o.RepeatMinInterval, 0), MaxFires: int64(max(o.MaxRepeatFires, 0))}
 }
 
 func (o *Options) withDefaults() {
+	if o.RepeatMinInterval == 0 {
+		o.RepeatMinInterval = DefaultRepeatMinInterval
+	}
+	if o.MaxRepeatFires == 0 {
+		o.MaxRepeatFires = DefaultMaxRepeatFires
+	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
@@ -698,6 +715,12 @@ func isBenignWatchRace(err error) bool {
 // SweepExpired settles armed watches whose expiry has passed.
 func (e *Engine) SweepExpired(ctx context.Context) (int64, error) {
 	return e.store.AgentWatchExpireDue(ctx, e.opts.Now().UnixMilli())
+}
+
+// RearmDue re-arms acknowledged repeat watches whose minimum re-arm interval
+// has passed since they fired.
+func (e *Engine) RearmDue(ctx context.Context) (int64, error) {
+	return e.store.AgentWatchRearmDue(ctx, e.opts.Now().UnixMilli(), e.opts.repeatPolicy())
 }
 
 // isStateWatch reports whether a stored watch waits for a terminal state.

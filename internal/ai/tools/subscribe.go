@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 const (
@@ -47,7 +49,7 @@ type TerminalSubscribeArgs struct {
 	On               string `json:"on" jsonschema:"required,enum=needs_me,enum=finished,enum=exited,enum=output" jsonschema_description:"needs_me: the terminal waits for input; finished: a command just finished; exited: the shell exited; output: printed output matches pattern"`
 	Pattern          string `json:"pattern,omitempty" jsonschema_description:"Text to wait for, required with on=output and not allowed otherwise"`
 	Regex            bool   `json:"regex,omitempty" jsonschema_description:"Treat pattern as a regular expression"`
-	Repeat           bool   `json:"repeat,omitempty" jsonschema_description:"Keep the subscription after it fires (default: fire once)"`
+	Repeat           bool   `json:"repeat,omitempty" jsonschema_description:"Keep the subscription after it fires, at most once every 30 seconds and for at most 50 fires (default: fire once)"`
 	ExpiresInMinutes int    `json:"expires_in_minutes,omitempty" jsonschema_description:"Minutes until the subscription expires (1-1440, default 60)"`
 }
 
@@ -111,6 +113,10 @@ func (e *Execution) executeSubscribe(ctx context.Context, call Call) Output {
 	}
 	text := fmt.Sprintf("Subscription %s on tab %s is armed until %s. When it fires, a watch_event tool result is added to this conversation and an unattended run starts (rate limited; actions needing confirmation are denied in it).",
 		result.ID, tabID, result.ExpiresAt.Format(time.RFC3339))
+	if subscription.Repeat {
+		text += fmt.Sprintf(" It repeats: after each fire it skips output and state changes for %d seconds, and it ends after %d fires.",
+			int(store.AgentWatchRepeatMinInterval/time.Second), store.AgentWatchMaxRepeatFires)
+	}
 	if result.CurrentState != "" && result.CurrentState == subscription.On {
 		text += " The tab is already in state " + result.CurrentState + " now; that state will not fire the subscription, so act on it now."
 	}

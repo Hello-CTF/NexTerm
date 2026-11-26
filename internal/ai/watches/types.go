@@ -32,6 +32,14 @@ const (
 	// DefaultMaxCarryBytes bounds the durable partial-match overlap retained
 	// per watch across chunk boundaries and restarts.
 	DefaultMaxCarryBytes = 4096
+	// DefaultRepeatMinInterval and DefaultMaxRepeatFires bound a repeat
+	// watch: every fire writes into the conversation and may wake an
+	// unattended run, so matching output cannot flood the history.
+	DefaultRepeatMinInterval = store.AgentWatchRepeatMinInterval
+	DefaultMaxRepeatFires    = store.AgentWatchMaxRepeatFires
+	// RepeatLimitReason is the LastError of a repeat watch that reached
+	// DefaultMaxRepeatFires; it settles as expired.
+	RepeatLimitReason = store.AgentWatchRepeatLimitReason
 )
 
 var (
