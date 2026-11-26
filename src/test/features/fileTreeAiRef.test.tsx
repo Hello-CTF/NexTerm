@@ -35,7 +35,6 @@ import { useUi } from "../../app/store";
 import { clearFsRoots } from "../../ipc/fsRootsCache";
 import type { FileEntryDto } from "../../ipc/types";
 import { FileTree } from "../../features/files/FileTree";
-import { setFileEditorDirty } from "../../features/files/editorGuards";
 
 const SID = "s1";
 
@@ -84,7 +83,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  setFileEditorDirty(SID, "~/app.conf", false);
   mounted?.unmount();
   mounted = undefined;
 });
@@ -114,14 +112,6 @@ describe("FileTree references a file for the AI", () => {
     ]);
     expect(useUi.getState().setRightOpen).toHaveBeenCalledWith(true);
     expect(mocks.toast).not.toHaveBeenCalled();
-  });
-
-  it("says the saved version is read when the file has unsaved edits open", async () => {
-    setFileEditorDirty(SID, "~/app.conf", true);
-    await mountTree();
-    await openMenu("app.conf");
-    click(menuItem("引用到 AI")!);
-    expect(mocks.toast).toHaveBeenCalledWith("info", "AI 读取的是主机上已保存的版本，编辑器中未保存的改动不会包含在内");
   });
 
   it("offers no file reference for a directory", async () => {

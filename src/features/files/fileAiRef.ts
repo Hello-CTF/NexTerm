@@ -64,9 +64,9 @@ export function fileRefId(sessionId: string, path: string): string {
   return `path:${encodeURIComponent(sessionId)}:${path}`;
 }
 
-// askAiAboutFile queues a whole file as a file reference. Only the path travels; the backend reads the file from
-// the host when the message is sent, so the file does not need to be open.
-export function askAiAboutFile(sessionId: string, path: string, opts: { unsaved?: boolean } = {}): boolean {
+// askAiAboutFile queues a whole file as a file reference. Only the path travels; the backend reads the saved file
+// from the host when the message is sent, so the file does not need to be open.
+export function askAiAboutFile(sessionId: string, path: string): boolean {
   if (!sessionId || !path) return false;
   const id = fileRefId(sessionId, path);
   const ui = useUi.getState();
@@ -80,7 +80,6 @@ export function askAiAboutFile(sessionId: string, path: string, opts: { unsaved?
     sessionId,
     sourceFile: { sessionId, path },
   });
-  if (opts.unsaved) toast(t("AI 读取的是主机上已保存的版本，编辑器中未保存的改动不会包含在内"));
   ui.setRightOpen(true);
   return true;
 }

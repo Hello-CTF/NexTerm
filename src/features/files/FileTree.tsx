@@ -50,7 +50,6 @@ import { useLongPress, useMultiSelect } from "./useMultiSelect";
 import { chmodSupport, extractSupported, packDownloadSupported, validateEntryName, windowsReadOnly } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { askAiAboutFile } from "./fileAiRef";
-import { fileEditorCaseInsensitive, isDirtyFileEditor } from "./editorGuards";
 import { conflictCaseInsensitive, findConflict } from "./transferQueue";
 import { pickFollowedTabId, useCwdFollow, type CwdFollowControl } from "./cwdFollow";
 import { terminalBufferInFront } from "../terminal/insertCommand";
@@ -1534,16 +1533,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         kind: "item",
         label: t("引用到 AI"),
         icon: <IconSparkles size={13} />,
-        hint: t("按路径引用"),
         disabled: !isEditableFile(entry.name),
-        onSelect: () => {
-          const kind = useUi.getState().sessions.find((session) => session.id === sessionId)?.kind ?? "";
-          const unsaved = isDirtyFileEditor(
-            { id: "", kind: "files", title: "", sessionId, path: entry.path, closable: true },
-            fileEditorCaseInsensitive(kind),
-          );
-          askAiAboutFile(sessionId, entry.path, { unsaved });
-        },
+        onSelect: () => askAiAboutFile(sessionId, entry.path),
       });
     }
     items.push({

@@ -748,7 +748,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       });
       return;
     }
-    askAiAboutFile(currentSession, currentPath, { unsaved: dirtyRef.current });
+    askAiAboutFile(currentSession, currentPath);
   };
 
   useEffect(() => {
