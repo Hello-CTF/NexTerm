@@ -261,6 +261,8 @@ type refusalCase struct {
 	setup   func(t *testing.T, h *relayHarness, owner *account.User) (deviceID string)
 	purpose string
 	resume  bool
+	// afterHello runs once the relay session is up, for refusals that arise during a session.
+	afterHello func(t *testing.T, h *relayHarness)
 }
 
 // Every refusal of a relay stream carries the status, code and message the bridge relay answers for the same
@@ -307,6 +309,12 @@ func TestRelayStreamRefusalsMatchTheBridgeRelay(t *testing.T) {
 		}, purpose: agent.PurposeTerminal},
 		{name: "purpose unsupported", setup: online([]string{agent.PurposeTerminal, relaymux.Capability}), purpose: deviceproto.PurposeForward},
 		{name: "resume without rstream", setup: online([]string{agent.PurposeTerminal, relaymux.Capability}), purpose: agent.PurposeTerminal, resume: true},
+		{name: "TOTP enrollment enforced", setup: online(relayAgentCapabilities), purpose: agent.PurposeTerminal,
+			afterHello: func(t *testing.T, h *relayHarness) {
+				if err := h.accounts.SetMFARequired(context.Background(), true); err != nil {
+					t.Fatal(err)
+				}
+			}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -321,6 +329,10 @@ func TestRelayStreamRefusalsMatchTheBridgeRelay(t *testing.T) {
 				path += "&resume=1"
 				params[relaymux.ParamResume] = "1"
 			}
+			client := h.clientLink(t, relaymux.KindWS, session)
+			if c.afterHello != nil {
+				c.afterHello(t, h)
+			}
 			bridge := h.call(t, "GET", path, nil, session, "")
 			failure, _ := bridge.body["error"].(map[string]any)
 			if bridge.status < 400 || failure == nil {
@@ -328,7 +340,6 @@ func TestRelayStreamRefusalsMatchTheBridgeRelay(t *testing.T) {
 			}
 			before := len(auditPayloadRows(t, h.service.db, auditSourceFleet, auditKindDeviceTerminal))
 
-			client := h.clientLink(t, relaymux.KindWS, session)
 			_, _, err := client.OpenDeviceStream(context.Background(), relaymux.StreamHeader{Purpose: c.purpose, DeviceID: deviceID, Params: params})
 			reply, refused := relaymux.Refused(err)
 			if !refused {

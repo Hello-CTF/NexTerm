@@ -252,25 +252,34 @@ func (s *Service) serveRelayClient(pending *relaymux.PendingLink) {
 		_ = link.Close()
 	})
 	defer stop()
+	// linkCtx ends the streams of this link once it is gone, including those still waiting for the device.
+	linkCtx, cancelLink := context.WithCancel(sessionCtx)
 	var streams sync.WaitGroup
 	defer streams.Wait()
+	defer cancelLink()
 	for {
-		incoming, err := link.AcceptHeader(sessionCtx)
+		incoming, err := link.AcceptHeader(linkCtx)
 		if err != nil {
 			return
 		}
 		streams.Add(1)
 		go func() {
 			defer streams.Done()
-			s.serveRelayClientStream(sessionCtx, identity, token, incoming)
+			s.serveRelayClientStream(linkCtx, token, incoming)
 		}()
 	}
 }
 
 // serveRelayClientStream authorizes one client stream like the bridge endpoint, opens the device side and
-// pipes the two.
-func (s *Service) serveRelayClientStream(ctx context.Context, identity *account.Identity, token string, incoming *relaymux.IncomingStream) {
+// pipes the two. Like every bridge request passing the session middleware, each stream validates the login
+// session afresh, so a reset or an enforced TOTP enrollment after the Hello refuses new streams.
+func (s *Service) serveRelayClientStream(ctx context.Context, token string, incoming *relaymux.IncomingStream) {
 	header := incoming.Header
+	identity, refusal := s.authenticateRelayClient(ctx, token)
+	if refusal != nil {
+		incoming.Refuse(*refusal)
+		return
+	}
 	plan, refusal := s.checkRelayStream(ctx, identity, header)
 	if refusal != nil {
 		incoming.Refuse(*refusal)
