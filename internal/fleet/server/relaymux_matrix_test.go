@@ -322,3 +322,24 @@ func TestRequestDeviceBridgePurposePrefersTheRelayLink(t *testing.T) {
 		_ = conn.Close()
 	}
 }
+
+// The agent redials its relay link on its own after the link drops, while its control channel stays up, and
+// streams flow over the new link.
+func TestRelayMuxAgentRedialsItsLink(t *testing.T) {
+	rig := newE2ERigWith(t, e2eOptions{relay: true, agentCarrier: relaymux.KindQUIC, clientCarrier: relaymux.KindQUIC})
+	rig.relayOnly()
+	rig.waitFor(t, "agent relay link", func() bool { return rig.agentLink() != nil })
+	first := rig.agentLink()
+	_ = first.Close()
+	rig.waitFor(t, "a new agent relay link", func() bool {
+		link := rig.agentLink()
+		return link != nil && link != first
+	})
+	if !rig.f.service.registry.AgentOnline(rig.device) {
+		t.Fatal("the control channel went down with the relay link")
+	}
+	rig.echoTerminal(t, 256<<10)
+	if got := rig.backend.legacyDials.Load(); got != 0 {
+		t.Fatalf("client dialed %d bridges, want the stream on the relay", got)
+	}
+}
