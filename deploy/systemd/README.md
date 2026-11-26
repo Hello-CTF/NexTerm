@@ -565,9 +565,13 @@ operation. Every stream is authorized and audited like a relayed bridge.
   signed-in HTTPS connection, so they never trust a QUIC server the HTTPS
   connection did not vouch for. `NEXTERM_RELAY_QUIC_CERT` and
   `NEXTERM_RELAY_QUIC_KEY` (PEM files, set together) present a publicly
-  trusted certificate for the advertised host name instead. Apps that reach
-  the server over plain HTTP or without certificate verification use only
-  the websocket carrier.
+  trusted certificate for the advertised host name instead. Apps and agents
+  that reach the server over plain HTTP, without certificate verification or
+  through a proxy use only the websocket carrier.
+- Apps and agents fall back to a websocket per operation by themselves, on a
+  server without the relay and while their relay session cannot be
+  established. Device agents without relay support keep working: the server
+  reaches them through per-operation bridges.
 
 ## Tuning and diagnostics
 
