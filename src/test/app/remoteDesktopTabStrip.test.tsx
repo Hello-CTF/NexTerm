@@ -12,7 +12,19 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     terminalApi: { listLive: vi.fn(async () => []) },
   });
 });
-vi.mock("../../app/lazyPanels", async () => (await import("../helpers/splitViewHarness")).lazyPanelsMock());
+vi.mock("../../app/lazyPanels", async () => {
+  const { lazyPanelsMock } = await import("../helpers/splitViewHarness");
+  const { useStriplessLeftDockToggle } = await import("../../app/workspace/leftDockToggle");
+  const { createElement } = await import("react");
+  // The desktop stub offers the left dock toggle the way the real desktop toolbar does.
+  function RemoteDesktopPane({ tabId }: { tabId: string }) {
+    const leftDock = useStriplessLeftDockToggle(tabId);
+    return leftDock
+      ? createElement("button", { type: "button", "data-testid": "desktop-left-dock", "aria-pressed": leftDock.open, onClick: leftDock.toggle })
+      : null;
+  }
+  return { ...lazyPanelsMock(), RemoteDesktopPane };
+});
 
 import { useUi, type AppTab, type Workspace } from "../../app/store";
 import { WorkspaceBody } from "../../app/shell/WorkspaceBody";
@@ -24,6 +36,7 @@ let view: MountedView | null = null;
 afterEach(() => {
   view?.unmount();
   view = null;
+  setLeftOpen.mockReset();
 });
 
 const desktop: AppTab = { id: "rd", kind: "remote", title: "build-box", assetId: "asset-rd", closable: true };
@@ -42,8 +55,11 @@ function remoteWorkspace(tabs: AppTab[]): Workspace {
   };
 }
 
+const setLeftOpen = vi.fn();
+
 async function render(): Promise<void> {
-  const props = workspaceBodyProps(useUi.getState().workspaces, false);
+  const base = workspaceBodyProps(useUi.getState().workspaces, false);
+  const props = { ...base, docks: { ...base.docks, leftDockOpen: true, setLeftOpen } };
   if (!view) view = mount(createElement(WorkspaceBody, props));
   else act(() => view!.root.render(createElement(WorkspaceBody, props)));
   await flush();
@@ -51,6 +67,10 @@ async function render(): Promise<void> {
 
 function tabStrip(): Element | null {
   return view!.container.querySelector('[role="tablist"]');
+}
+
+function desktopLeftDock(): HTMLButtonElement | null {
+  return view!.container.querySelector<HTMLButtonElement>('[data-testid="desktop-left-dock"]');
 }
 
 function contentTop(tabId: string): string | undefined {
@@ -71,5 +91,21 @@ describe("remote desktop workspace chrome", () => {
     await render();
     expect(tabStrip()).not.toBeNull();
     expect(contentTop("rd")).toContain(`${DEFAULT_STRIP}px`);
+  });
+
+  it("lets the desktop shown alone collapse the left dock its missing tab strip would have", async () => {
+    useUi.setState({ workspaces: [remoteWorkspace([desktop])], activeWorkspaceId: "ws" });
+    await render();
+    const toggle = desktopLeftDock();
+    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+    act(() => toggle!.click());
+    expect(setLeftOpen).toHaveBeenCalledWith(false);
+  });
+
+  it("leaves the left dock toggle to the tab strip once the strip is back", async () => {
+    useUi.setState({ workspaces: [remoteWorkspace([desktop, notes])], activeWorkspaceId: "ws" });
+    await render();
+    expect(desktopLeftDock()).toBeNull();
+    expect(view!.container.querySelector('[aria-label="收起左侧栏"]')).not.toBeNull();
   });
 });

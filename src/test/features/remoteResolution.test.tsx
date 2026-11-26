@@ -28,7 +28,12 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 vi.mock("../../features/remote/RdpClient", () => ({ createRdpClient: mocks.createRdpClient }));
 vi.mock("../../features/remote/VncClient", () => ({ createVncClient: mocks.createVncClient }));
-vi.mock("../../app/store", () => ({ requestCloseTab: vi.fn(), useUi: { getState: () => ({ pushToast: vi.fn() }) } }));
+vi.mock("../../app/store", () => ({
+  requestCloseTab: vi.fn(),
+  useUi: Object.assign((select: (state: { workspaces: [] }) => unknown) => select({ workspaces: [] }), {
+    getState: () => ({ pushToast: vi.fn() }),
+  }),
+}));
 vi.mock("../../app/shell/shellMode", () => ({ isTouchShell: () => false }));
 vi.mock("../../ui/dialogs", () => ({ promptText: mocks.prompt, ask: vi.fn() }));
 

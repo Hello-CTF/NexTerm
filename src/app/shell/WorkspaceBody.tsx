@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   useUi,
   useHasSessions,
@@ -14,6 +14,7 @@ import { PanelFallback } from "../../ui/PanelFallback";
 import { AiSidebar, AssetTree, CredentialsSidebar, FileTree } from "../lazyPanels";
 import { PaneGroup, PaneTabPanel, type PaneMoveTarget } from "../workspace/PaneGroup";
 import { SplitView } from "../workspace/SplitView";
+import { LeftDockToggleContext } from "../workspace/leftDockToggle";
 import { workspaceLayoutTree } from "../paneLayout";
 import { focusNeighbor, paneIdsInOrder, type FocusDirection } from "../splitTree";
 import { WelcomePage, WorkspaceEmpty } from "../workspace/EmptyStates";
@@ -78,6 +79,7 @@ export function WorkspaceBody({
   const setActivePane = useUi((s) => s.setActivePane);
   const setSplitRatio = useUi((s) => s.setSplitRatio);
   const { leftDockOpen, rightDockOpen, setLeftOpen, setOverlayDock } = docks;
+  const leftDockToggle = useMemo(() => ({ open: leftDockOpen, toggle: () => setLeftOpen(!leftDockOpen) }), [leftDockOpen, setLeftOpen]);
   // Switching the left panel to one whose chunk is still loading suspends. The placeholder keeps the dock's width and
   // look, so the dock does not collapse and reopen, which would resize the terminals twice.
   const dockFallback = (
@@ -120,6 +122,7 @@ export function WorkspaceBody({
 
       <main id="nx-main" tabIndex={-1} className={`nx-workspace-main min-w-0 flex-1${workspaces.length > 0 || covered ? " flex flex-col" : ""}`}>
         {home}
+        <LeftDockToggleContext.Provider value={leftDockToggle}>
         <WorkspaceArea wrapped={home !== undefined} covered={covered}>
         {workspaces.length === 0 ? (
           hasSessions ? (
@@ -199,6 +202,7 @@ export function WorkspaceBody({
           </>
         )}
         </WorkspaceArea>
+        </LeftDockToggleContext.Provider>
       </main>
 
       <div className={`nx-right-dock ${rightDockOpen ? "" : "is-hidden"}`}>

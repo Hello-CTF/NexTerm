@@ -3,6 +3,7 @@ import { requestCloseTab } from "../../app/store";
 import { captureKeyboard, isReleaseChord, RELEASE_CHORD_LABEL, releaseKeyboard } from "../../app/inputCapture";
 import { isTouchShell } from "../../app/shell/shellMode";
 import { isMac } from "../../app/platform";
+import { useStriplessLeftDockToggle } from "../../app/workspace/leftDockToggle";
 import { promptText } from "../../ui/dialogs";
 import { IconLoader } from "../../ui/icons";
 import { parseResolutionInput } from "./resolution";
@@ -178,6 +179,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
   const session = useRemoteSession(tabId, assetId, viewportRef);
   const { clientRef, protocol, options, desktopSize, setResolution: setSessionResolution } = session;
   const touch = isTouchShell();
+  const leftDock = useStriplessLeftDockToggle(tabId);
 
   const [captured, setCaptured] = useState(false);
   const [hint, setHint] = useState(false);
@@ -753,6 +755,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
           onDisconnect={session.disconnect}
           onPinnedChange={setPinned}
           onReveal={reveal}
+          leftDock={fullscreen ? null : leftDock}
         />
         {resolutionNotice && connected && (
           <div

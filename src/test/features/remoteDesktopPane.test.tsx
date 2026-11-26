@@ -63,7 +63,9 @@ vi.mock("../../features/remote/VncClient", () => ({ createVncClient: mocks.creat
 vi.mock("../../features/remote/RdpClient", () => ({ createRdpClient: mocks.createClient }));
 vi.mock("../../app/store", () => ({
   requestCloseTab: mocks.closeTab,
-  useUi: { getState: () => ({ pushToast: mocks.toast }) },
+  useUi: Object.assign((select: (state: { workspaces: [] }) => unknown) => select({ workspaces: [] }), {
+    getState: () => ({ pushToast: mocks.toast }),
+  }),
 }));
 vi.mock("../../app/shell/shellMode", () => ({ isTouchShell: () => mocks.touch() }));
 vi.mock("../../ui/dialogs", () => ({ promptText: mocks.prompt, ask: mocks.ask }));

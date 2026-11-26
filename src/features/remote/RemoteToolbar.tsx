@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
-import { IconChevronDown, IconClose, IconMaximize, IconMore } from "../../ui/icons";
+import { IconChevronDown, IconChevronLeft, IconClose, IconMaximize, IconMore } from "../../ui/icons";
 import { filterCombos, MODIFIER_LABEL, type KeyCombo } from "./keys";
 import { RELEASE_CHORD_LABEL } from "../../app/inputCapture";
+import { formatBinding, useKeybindings } from "../../app/keybindings";
+import type { LeftDockToggle } from "../../app/workspace/leftDockToggle";
 import { FIXED_SCALES, MODIFIER_KEYS, RESOLUTION_PRESETS, type ModifierKey, type RemoteProtocol, type ScaleMode } from "./remoteTypes";
 import type { TouchMode } from "./touchGestures";
 import { t } from "../../i18n";
@@ -40,6 +42,8 @@ export interface RemoteToolbarProps {
   // The toolbar stays on screen while true: a menu is open or a modifier is held.
   onPinnedChange: (pinned: boolean) => void;
   onReveal: () => void;
+  // The left dock toggle, given when the desktop's tab strip, which normally carries it, is hidden.
+  leftDock?: LeftDockToggle | null;
 }
 
 function percentLabel(scale: number): string {
@@ -157,6 +161,7 @@ export function RemoteToolbar(props: RemoteToolbarProps) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [comboOpen, setComboOpen] = useState(false);
   const pinned = menu !== null || comboOpen || held.size > 0;
+  const sidebarKey = formatBinding(useKeybindings().toggleSidebar);
   const pinnedRef = useRef(props.onPinnedChange);
   pinnedRef.current = props.onPinnedChange;
   useEffect(() => {
@@ -243,6 +248,16 @@ export function RemoteToolbar(props: RemoteToolbarProps) {
         data-visible={props.visible || pinned ? "true" : "false"}
       >
         <div className="relative flex max-w-[calc(100vw-1rem)] items-center gap-0.5 overflow-x-auto rounded-full border border-[var(--nx-border-strong)] bg-[color-mix(in_srgb,var(--nx-bg-raised)_92%,transparent)] px-1.5 py-1 shadow-lg backdrop-blur">
+          {props.leftDock && (
+            <ToolButton
+              onClick={props.leftDock.toggle}
+              pressed={props.leftDock.open}
+              title={props.leftDock.open ? t("收起左侧栏 ({value})", { value: sidebarKey }) : t("展开左侧栏 ({value})", { value: sidebarKey })}
+              label={props.leftDock.open ? t("收起左侧栏") : t("展开左侧栏")}
+            >
+              <IconChevronLeft size={13} className={props.leftDock.open ? "" : "rotate-180"} />
+            </ToolButton>
+          )}
           <ToolButton onClick={(event) => openMenu(event, scaleItems(), t("缩放"))} title={t("缩放：{value}", { value: scaleLabel(scale) })}>
             {t("缩放")}
             <IconChevronDown size={11} />

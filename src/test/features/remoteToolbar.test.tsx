@@ -132,6 +132,25 @@ describe("RemoteToolbar visibility", () => {
   });
 });
 
+describe("RemoteToolbar left dock toggle", () => {
+  it("offers no sidebar toggle unless one is given", () => {
+    render(props());
+    expect(() => button("收起左侧栏")).toThrow();
+    expect(() => button("展开左侧栏")).toThrow();
+  });
+
+  it("collapses an open left dock and expands a closed one", () => {
+    const toggle = vi.fn();
+    const ui = render(props({ leftDock: { open: true, toggle } }));
+    expect(button("收起左侧栏").getAttribute("aria-pressed")).toBe("true");
+    click(button("收起左侧栏"));
+    expect(toggle).toHaveBeenCalledTimes(1);
+    ui.rerender(props({ leftDock: { open: false, toggle } }));
+    click(button("展开左侧栏"));
+    expect(toggle).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("RemoteToolbar scale menu", () => {
   it("lists fit and the fixed zoom levels, marks the current one and selects", () => {
     const onScale = vi.fn();
