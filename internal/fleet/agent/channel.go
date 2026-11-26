@@ -95,6 +95,8 @@ type serverMessage struct {
 	BridgeID          string `json:"bridge_id,omitempty"`
 	Purpose           string `json:"purpose,omitempty"`
 	GrantID           string `json:"grant_id,omitempty"`
+	// Stream says the bridge carries an rstream to unwrap before the purpose handler.
+	Stream bool `json:"stream,omitempty"`
 }
 
 // ProtocolMismatchError is the runtime error form of the version_mismatch control frame:
@@ -116,7 +118,7 @@ type ConfigUpdate struct {
 
 type channelHandlers struct {
 	onConfig func(ConfigUpdate)
-	onBridge func(bridgeID, purpose string)
+	onBridge func(bridgeID, purpose string, stream bool)
 	onRevoke func()
 	// onP2PRevoke closes the direct session of a revoked grant. The server sends p2p_revoke only to agents that
 	// advertise CapabilityP2P, so older agents never see the frame.
@@ -215,7 +217,7 @@ func (c *Channel) Run(ctx context.Context, handlers channelHandlers) error {
 			}
 		case "bridge":
 			if handlers.onBridge != nil && message.BridgeID != "" {
-				handlers.onBridge(message.BridgeID, message.Purpose)
+				handlers.onBridge(message.BridgeID, message.Purpose, message.Stream)
 			}
 		case "p2p_revoke":
 			if handlers.onP2PRevoke != nil && message.GrantID != "" {

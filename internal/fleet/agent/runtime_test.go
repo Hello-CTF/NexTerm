@@ -8,17 +8,21 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/releasesig"
+	"github.com/Hello-CTF/NexTerm/internal/rstream"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/coder/websocket"
@@ -800,7 +804,7 @@ func newBridgeProbeRuntime(t *testing.T, server *fakeFleetServer) *Runtime {
 }
 
 // The terminal path is byte-identical to before purposes existed: the bridge is dialed and the hello
-// echoes the purpose, with capabilities advertising exactly the terminal service.
+// echoes the purpose, with capabilities advertising the terminal service and stream bridges.
 func TestRuntimeRoutesTerminalBridge(t *testing.T) {
 	probe := newBridgeProbe(serverMessage{Type: "bridge", BridgeID: "bridge-t1", Purpose: PurposeTerminal})
 	server := newFakeFleetServer(t)
@@ -812,8 +816,8 @@ func TestRuntimeRoutesTerminalBridge(t *testing.T) {
 		if hello.BridgeID != "bridge-t1" || hello.Purpose != PurposeTerminal {
 			t.Fatalf("bridge hello = %+v, want terminal purpose echo", hello)
 		}
-		if len(hello.Capabilities) != 1 || hello.Capabilities[0] != PurposeTerminal {
-			t.Fatalf("bridge hello capabilities = %v, want [terminal]", hello.Capabilities)
+		if !slices.Equal(hello.Capabilities, []string{PurposeTerminal, rstream.Capability}) {
+			t.Fatalf("bridge hello capabilities = %v, want [terminal rstream]", hello.Capabilities)
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("terminal bridge was not dialed")
@@ -1057,5 +1061,90 @@ func TestRuntimeDefaultUpgraderSkipsUnusableLogDir(t *testing.T) {
 	}
 	if agentRuntime.upgrader == nil || agentRuntime.upgrader.LogPath != "" {
 		t.Fatalf("upgrader = %+v", agentRuntime.upgrader)
+	}
+}
+
+// A stream bridge is unwrapped before the purpose handler: the handler claims its bridge through
+// DialPurposeBridge as before and gets the stream, and a later bridge resuming the stream re-attaches it without
+// invoking the handler again.
+func TestRuntimeStreamBridgeUnwrapsForPurposeHandler(t *testing.T) {
+	server := newFakeFleetServer(t)
+	carriers := make(chan net.Conn, 4)
+	var requests atomic.Int32
+	requests.Store(1)
+	server.setWSControl(func(conn *websocket.Conn, hello HelloMessage) {
+		if err := writeServerMessage(conn, serverMessage{Type: "hello_ok"}); err != nil {
+			t.Error(err)
+			return
+		}
+		if hello.BridgeID != "" {
+			carriers <- websocket.NetConn(context.Background(), conn, websocket.MessageBinary)
+			<-t.Context().Done()
+			return
+		}
+		// The control channel asks for the first bridge and, once told to, for the resume bridge.
+		for i := int32(0); ; i++ {
+			for requests.Load() <= i {
+				if t.Context().Err() != nil {
+					return
+				}
+				time.Sleep(time.Millisecond)
+			}
+			if err := writeServerMessage(conn, serverMessage{Type: "bridge", BridgeID: fmt.Sprintf("bridge-s%d", i), Purpose: "file", Stream: true}); err != nil {
+				return
+			}
+		}
+	})
+	agentRuntime := newBridgeProbeRuntime(t, server)
+	handled := make(chan string, 4)
+	agentRuntime.RegisterPurposeHandler("file", func(ctx context.Context, bridgeID string) error {
+		handled <- bridgeID
+		conn, err := agentRuntime.DialPurposeBridge(ctx, bridgeID, "file")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = conn.Close() }()
+		_, err = io.Copy(conn, conn)
+		return err
+	})
+	runBridgeProbe(t, agentRuntime)
+
+	nextCarrier := func() net.Conn {
+		select {
+		case carrier := <-carriers:
+			return carrier
+		case <-time.After(15 * time.Second):
+			t.Fatal("stream bridge was not dialed")
+			return nil
+		}
+	}
+	client, err := rstream.Open(context.Background(), nextCarrier(), "file", rstream.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	echo := func(message string) {
+		t.Helper()
+		if _, err := client.Write([]byte(message)); err != nil {
+			t.Fatal(err)
+		}
+		got := make([]byte, len(message))
+		if _, err := io.ReadFull(client, got); err != nil || string(got) != message {
+			t.Fatalf("echo = %q, %v; want %q", got, err, message)
+		}
+	}
+	echo("first")
+	requests.Store(2)
+	if err := client.Migrate(context.Background(), nextCarrier()); err != nil {
+		t.Fatalf("resume on a second bridge: %v", err)
+	}
+	echo("after resume")
+	if bridgeID := <-handled; bridgeID != "bridge-s0" {
+		t.Fatalf("handled bridge = %q", bridgeID)
+	}
+	select {
+	case bridgeID := <-handled:
+		t.Fatalf("handler ran again for the resume bridge %q", bridgeID)
+	default:
 	}
 }

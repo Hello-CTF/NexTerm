@@ -264,6 +264,9 @@ type auditPayload struct {
 	URL       string `json:"url,omitempty"`
 	// Devices is how many devices a terminal_list covered.
 	Devices *int `json:"devices,omitempty"`
+	// Stream marks a relayed bridge that carries an rstream; Resume marks one that re-attaches an existing stream.
+	Stream bool `json:"stream,omitempty"`
+	Resume bool `json:"resume,omitempty"`
 }
 
 // audit writes a fleet audit; when the payload carries a device ID the asset_id column is populated as well, so the audit view can filter
@@ -371,7 +374,7 @@ func (s *Service) loadGrant(ctx context.Context, deviceID string) (*deviceGrant,
 
 // authorize is the single authorization point for fleet device actions: only the device owner is allowed,
 // and revoked devices are always denied; every decision (allow or deny) is written to the audit log.
-func (s *Service) authorize(ctx context.Context, identity *account.Identity, deviceID, action, kind string) (*deviceGrant, error) {
+func (s *Service) authorize(ctx context.Context, identity *account.Identity, deviceID, action, kind string, details ...func(*auditPayload)) (*deviceGrant, error) {
 	grant, err := s.loadGrant(ctx, deviceID)
 	outcome, reason := "allow", ""
 	var decision error
@@ -383,7 +386,11 @@ func (s *Service) authorize(ctx context.Context, identity *account.Identity, dev
 	case grant.userID != identity.UserID:
 		outcome, reason, decision = "deny", "not_owner", ipc.NewError(ipc.CodeForbidden, "设备不属于该用户")
 	}
-	auditErr := s.audit(ctx, kind, auditPayload{Action: action, DeviceID: deviceID, Requester: identity.UserID, Outcome: outcome, Reason: reason})
+	payload := auditPayload{Action: action, DeviceID: deviceID, Requester: identity.UserID, Outcome: outcome, Reason: reason}
+	for _, detail := range details {
+		detail(&payload)
+	}
+	auditErr := s.audit(ctx, kind, payload)
 	if decision != nil {
 		return nil, decision
 	}

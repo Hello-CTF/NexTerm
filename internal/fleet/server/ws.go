@@ -40,6 +40,9 @@ type controlMessage struct {
 	// Purpose selects the bridge service; empty means terminal. Non-terminal purposes are requested only
 	// from agents that advertised them in hello capabilities.
 	Purpose string `json:"purpose,omitempty"`
+	// Stream asks the agent to read the bridge as an rstream carrier; it is sent only to agents advertising the
+	// rstream capability.
+	Stream bool `json:"stream,omitempty"`
 }
 
 // forbiddenFrame is the handshake denial frame. It stays code forbidden for every cause so old agents stop;

@@ -23,6 +23,7 @@ type bridgeWSFixture struct {
 	*remoteAPIFixture
 	failNextDial atomic.Bool
 	sawCSRF      atomic.Bool
+	sawStream    atomic.Bool
 }
 
 func newBridgeWSFixture(t *testing.T) *bridgeWSFixture {
@@ -50,6 +51,9 @@ func newBridgeWSFixture(t *testing.T) *bridgeWSFixture {
 func (f *bridgeWSFixture) serveBridge(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get(csrfHeaderName) != "" {
 		f.sawCSRF.Store(true)
+	}
+	if r.URL.Query().Get("stream") == "1" {
+		f.sawStream.Store(true)
 	}
 	if f.failNextDial.CompareAndSwap(true, false) {
 		writeSyncError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "设备已关闭终端访问"))
@@ -93,6 +97,11 @@ func TestDialDeviceBridgeRoundTrip(t *testing.T) {
 	}
 	if !fixture.sawCSRF.Load() {
 		t.Fatal("bridge dial must carry the CSRF header like the HTTP client")
+	}
+	// The dial offers a stream carrier; a server that does not answer with the stream header gets a raw bridge,
+	// which the echo above exercised.
+	if !fixture.sawStream.Load() {
+		t.Fatal("bridge dial did not offer a stream carrier")
 	}
 	if got := fixture.logins.Load(); got != 1 {
 		t.Fatalf("logins = %d, want 1 (cached session reused)", got)

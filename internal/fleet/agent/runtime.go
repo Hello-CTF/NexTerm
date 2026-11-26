@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/platform"
+	"github.com/Hello-CTF/NexTerm/internal/rstream"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/coder/websocket"
@@ -161,6 +162,11 @@ type Runtime struct {
 	purposeHandlers map[string]PurposeHandler
 	// p2pRevoke receives p2p_revoke control frames (guarded by mu); nil until direct connections are wired.
 	p2pRevoke func(grantID, reason string)
+	// streams holds the rstream streams of stream bridges, so a RESUME on a later bridge finds its stream.
+	streams *rstream.Server
+	// claimed hands a stream accepted on a stream bridge to the purpose handler that claims the bridge; keyed by
+	// bridge ID and purpose, guarded by mu.
+	claimed map[string]net.Conn
 
 	runCtx     context.Context
 	loopWg     sync.WaitGroup
@@ -256,6 +262,8 @@ func New(options Options) (*Runtime, error) {
 		now:                     now,
 		sleep:                   options.Sleep,
 		purposeHandlers:         make(map[string]PurposeHandler),
+		streams:                 rstream.NewServer(rstream.ServerOptions{}),
+		claimed:                 make(map[string]net.Conn),
 		revokeCh:                make(chan struct{}),
 		fatalCh:                 make(chan error, 1),
 		reconfigCh:              make(chan struct{}, 1),
@@ -446,6 +454,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	r.runCtx = runCtx
+	// Stopping resets every stream, so clients reconnect at once instead of waiting out the retention.
+	stopStreams := context.AfterFunc(runCtx, func() { _ = r.streams.Close() })
+	defer stopStreams()
 	r.clearOwnerMarker()
 	defer r.clearOwnerMarker()
 
@@ -539,6 +550,7 @@ func (r *Runtime) capabilities() []string {
 		extra = append(extra, purpose)
 	}
 	r.mu.Unlock()
+	extra = append(extra, rstream.Capability)
 	sort.Strings(extra)
 	return append([]string{PurposeTerminal}, extra...)
 }
@@ -1139,6 +1151,13 @@ func (r *Runtime) RegisterPurposeHandler(purpose string, handler PurposeHandler)
 // The composition root plugs the purpose servers (package purpose imports this package, so they cannot be wired
 // from here) into the runtime through it.
 func (r *Runtime) DialPurposeBridge(ctx context.Context, bridgeID, purpose string) (net.Conn, error) {
+	r.mu.Lock()
+	claimed := r.claimed[claimKey(bridgeID, purpose)]
+	delete(r.claimed, claimKey(bridgeID, purpose))
+	r.mu.Unlock()
+	if claimed != nil {
+		return claimed, nil
+	}
 	client := r.prober.Current()
 	if client == nil {
 		return nil, ErrNoEndpoint
@@ -1150,7 +1169,13 @@ func (r *Runtime) DialPurposeBridge(ctx context.Context, bridgeID, purpose strin
 	return websocket.NetConn(ctx, conn, websocket.MessageBinary), nil
 }
 
-func (r *Runtime) handleBridge(bridgeID, purpose string) {
+func claimKey(bridgeID, purpose string) string { return bridgeID + "\x00" + purpose }
+
+func (r *Runtime) handleBridge(bridgeID, purpose string, stream bool) {
+	if stream {
+		r.handleStreamBridge(bridgeID, purpose)
+		return
+	}
 	if purpose != "" && purpose != PurposeTerminal {
 		r.handlePurposeBridge(bridgeID, purpose)
 		return
@@ -1179,6 +1204,94 @@ func (r *Runtime) handlePurposeBridge(bridgeID, purpose string) {
 			r.logger.Warn("purpose bridge failed", "bridge_id", bridgeID, "purpose", purpose, "error", err)
 		}
 	}()
+}
+
+// handleStreamBridge serves a bridge that carries an rstream: it dials the bridge, and the stream server either
+// starts a stream, handed to the purpose handler (which still gets a net.Conn), or re-attaches a retained
+// stream to this bridge, which is then served by the handler already running.
+func (r *Runtime) handleStreamBridge(bridgeID, purpose string) {
+	if !r.desiredSnapshot().TerminalEnabled {
+		r.logger.Warn("stream bridge requested but terminal access is disabled", "bridge_id", bridgeID, "purpose", purpose)
+		return
+	}
+	terminal := purpose == "" || purpose == PurposeTerminal
+	var handler PurposeHandler
+	if !terminal {
+		r.mu.Lock()
+		handler = r.purposeHandlers[purpose]
+		r.mu.Unlock()
+		if handler == nil {
+			r.logger.Warn("bridge requested for an unhandled purpose; ignoring", "bridge_id", bridgeID, "purpose", purpose)
+			return
+		}
+	}
+	r.loopWg.Add(1)
+	go func() {
+		defer r.loopWg.Done()
+		ctx := r.runCtx
+		client := r.prober.Current()
+		if client == nil {
+			r.logger.Warn("bridge aborted: no healthy endpoint", "bridge_id", bridgeID)
+			return
+		}
+		ws, env, err := dialBridgeWithEnv(ctx, client.WSURL(), r.hello(bridgeID, purpose), client.DialPolicy())
+		if err != nil {
+			if r.handleDenied(err) {
+				return
+			}
+			r.logger.Warn("bridge dial failed", "bridge_id", bridgeID, "error", err)
+			return
+		}
+		// The carrier lives as long as the runtime, not as long as this bridge request: a stream outlives it.
+		conn, resumed, err := r.streams.Accept(ctx, websocket.NetConn(ctx, ws, websocket.MessageBinary), purpose)
+		if err != nil {
+			r.logger.Warn("stream bridge refused", "bridge_id", bridgeID, "purpose", purpose, "error", err)
+			return
+		}
+		if resumed {
+			return
+		}
+		if terminal {
+			r.serveTerminalStream(ctx, bridgeID, conn, env)
+			return
+		}
+		key := claimKey(bridgeID, purpose)
+		r.mu.Lock()
+		r.claimed[key] = conn
+		r.mu.Unlock()
+		defer func() {
+			r.mu.Lock()
+			unclaimed := r.claimed[key]
+			delete(r.claimed, key)
+			r.mu.Unlock()
+			if unclaimed != nil {
+				_ = unclaimed.Close()
+			}
+		}()
+		if err := handler(ctx, bridgeID); err != nil {
+			r.logger.Warn("purpose bridge failed", "bridge_id", bridgeID, "purpose", purpose, "error", err)
+		}
+	}()
+}
+
+// serveTerminalStream pipes a new terminal stream to the supervisor helper, as handleTerminalBridge does for a
+// raw bridge.
+func (r *Runtime) serveTerminalStream(ctx context.Context, bridgeID string, conn net.Conn, env []string) {
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	defer func() { _ = conn.Close() }()
+	r.settleStateDir(ctx)
+	ensureCtx, cancel := context.WithTimeout(ctx, helperEnsureTimeout)
+	err := r.ensureHelper(ensureCtx)
+	cancel()
+	switch {
+	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
+		r.logger.Warn("supervisor helper needs upgrade; bridging to report it", "bridge_id", bridgeID, "error", err)
+	case err != nil:
+		r.logger.Warn("bridge aborted: supervisor helper unavailable", "bridge_id", bridgeID, "error", err)
+		return
+	}
+	_ = bridgePipe(ctx, newStreamBridgeEnd(conn), r.bridge, r.bridgeHelperConfig(), env)
 }
 
 func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
@@ -1219,7 +1332,7 @@ func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 			return
 		}
 		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
-		_ = bridgePipe(ctx, conn, r.bridge, r.bridgeHelperConfig(), env)
+		_ = bridgePipe(ctx, wsBridgeEnd{conn: conn}, r.bridge, r.bridgeHelperConfig(), env)
 	}()
 }
 
