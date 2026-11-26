@@ -434,6 +434,8 @@ describe("host detail page for a device", () => {
     mountView("device/d-1");
     await flushUntil(() => text().includes("nas-01"));
     expect(section("host-device-status").textContent).toBe("在线");
+    // Browser mode always relays, so the device page has no connection diagnostics.
+    expect(mounted!.container.querySelector("[data-testid='host-path-diagnostics']")).toBeNull();
     clickButton(mounted!.container, "打开工作区");
     expect(mocks.connectDevice).toHaveBeenCalledWith(expect.objectContaining({ id: "d-1" }));
   });

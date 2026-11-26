@@ -22,6 +22,7 @@ import type { AssetGroup } from "../ipc/commands";
 import { IconClose, IconDatabase, IconLayers, IconRefresh, IconSettings, assetIcon } from "../ui/icons";
 import { canSaveLayoutTemplate } from "./layoutTemplates";
 import { saveWorkspaceAsLayoutTemplate } from "./layoutTemplateOpen";
+import { connectionModeMenu, deviceIdOfWorkspace, useDevicePathNote } from "../features/fleet/devicePath";
 import { t } from "../i18n";
 
 const WORKSPACE_DRAG_MIME = "application/x-nexterm-workspace";
@@ -72,6 +73,8 @@ function WorkspaceStripTab({
   const tabCount = allTabs.length;
   const terminalTabIds = allTabs.flatMap((tab) => (tab.kind === "terminal" && !tab.exited && tab.tabId ? [tab.tabId] : []));
   const attention = useWorkspaceAttention(terminalTabIds);
+  const pathDeviceId = deviceIdOfWorkspace(workspace);
+  const pathNote = useDevicePathNote(workspace);
   const statusLabel = status ? sessionStatusText(status) : null;
   const needsReconnect = workspaceNeedsReconnect(status);
   const workspaceIndex = visibleWorkspaces.findIndex((candidate) => candidate.id === workspace.id);
@@ -97,6 +100,8 @@ function WorkspaceStripTab({
         onSelect: () => void saveWorkspaceAsLayoutTemplate(workspace.id),
       }, { kind: "separator" });
     }
+    const pathItems = pathDeviceId ? connectionModeMenu(pathDeviceId, 13) : [];
+    if (pathItems.length > 0) items.push(...pathItems, { kind: "separator" });
     items.push(
       {
         kind: "item",
@@ -132,7 +137,7 @@ function WorkspaceStripTab({
         tabIndex={selected ? 0 : -1}
         draggable={draggable}
         className={`nx-tab ${selected ? "is-active" : ""}${dropEdge ? ` nx-drop-${dropEdge}` : ""}${dragging ? " nx-drag-source" : ""}`}
-        title={[statusLabel, attention?.label, t("{tabCount} 个标签", { tabCount })].filter(Boolean).join(" · ")}
+        title={[statusLabel, pathNote, attention?.label, t("{tabCount} 个标签", { tabCount })].filter(Boolean).join(" · ")}
         onContextMenu={onContextMenu}
         {...handlers}
       >

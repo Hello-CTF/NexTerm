@@ -16,7 +16,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { connectDevice, deviceAssetId, useUi } from "../../app/store";
-import { openHostDetail } from "../hosts/hostDetail";
+import { hostWorkspaceOf, openHostDetail } from "../hosts/hostDetail";
+import { connectionModeMenu, ensureConnectionMode, useDevicePathNote, useDevicePathStore } from "./devicePath";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
@@ -168,6 +169,8 @@ export function useDeviceTree(extraMenuItems?: (device: FleetDevice) => MenuItem
       { kind: "item", label: t("主机详情"), icon: <IconInfo size={13} />, hint: t("会话、容器和指标"), onSelect: () => openHostDetail(deviceAssetId(device.id)) },
       { kind: "item", label: t("设备管理"), icon: <IconMonitor size={13} />, hint: t("接入、自动启动与撤销"), onSelect: openDevicesTab },
     );
+    const pathItems = device.revoked_at === 0 ? connectionModeMenu(device.id, 13) : [];
+    if (pathItems.length > 0) items.push({ kind: "separator" }, ...pathItems);
     const extra = extraMenuItems?.(device) ?? [];
     if (extra.length > 0) items.push({ kind: "separator" }, ...extra);
     if (device.revoked_at === 0) items.push(
@@ -188,6 +191,8 @@ export function useDeviceTree(extraMenuItems?: (device: FleetDevice) => MenuItem
   // Revoked devices are never listed in the asset tree; they stay reachable only from the device management view.
   const devices = (devicesQuery.data?.devices ?? []).filter((device) => device.revoked_at === 0);
   const menuDevice = menu ? devices.find((device) => device.id === menu.device.id) : undefined;
+  // The open menu re-renders once the device's stored connection mode has been read.
+  useDevicePathStore((state) => (menuDevice ? state.modes[menuDevice.id] : undefined));
 
   const menuElement = (
     <ContextMenu
@@ -209,7 +214,10 @@ export function useDeviceTree(extraMenuItems?: (device: FleetDevice) => MenuItem
     devices: userId ? devices : [],
     onlineOf,
     busyId,
-    openMenu: (device, x, y) => setMenu({ x, y, device }),
+    openMenu: (device, x, y) => {
+      ensureConnectionMode(device.id);
+      setMenu({ x, y, device });
+    },
     menuElement,
   };
 }
@@ -264,6 +272,7 @@ export function DeviceTreeRow({
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStart = useRef<{ x: number; y: number } | null>(null);
   const suppressClick = useRef(false);
+  const pathNote = useDevicePathNote(useUi((state) => hostWorkspaceOf(state.workspaces, deviceAssetId(device.id))));
 
   const cancelLongPress = () => {
     if (longPressTimer.current !== null) clearTimeout(longPressTimer.current);
@@ -281,6 +290,7 @@ export function DeviceTreeRow({
   const tip = [
     device.name,
     agent?.platform || "",
+    pathNote ?? "",
     disabledReason ?? t("单击打开工作区 · 右键管理"),
   ]
     .filter(Boolean)

@@ -77,6 +77,8 @@ export function tabTooltip(
   unread: boolean,
   live: PersistenceTabInfo = {},
   attention: AwarenessBadge | null = null,
+  // pathNote is the connection path line of a device workspace's tabs (经中转 / 直连), absent for other tabs.
+  pathNote: string | null = null,
 ): string {
   const notes: string[] = [];
   if (t.kind === "terminal" && attention) notes.push(attention.label);
@@ -85,6 +87,7 @@ export function tabTooltip(
   else if (t.kind === "terminal" && t.durable === true) notes.push(tr("持久终端：断开后可在「后台会话」接管"));
   else if (t.kind === "terminal" && t.regularReason) notes.push(tr("临时终端：{regularReason}", { regularReason: t.regularReason }));
   else if (t.kind === "terminal" && t.durable === false) notes.push(EPHEMERAL_NOTE);
+  if (pathNote) notes.push(pathNote);
   if (unread) notes.push(tr("有新输出"));
   if (t.closeError) notes.push(tr("上次关闭失败：{closeError}", { closeError: t.closeError }));
   return notes.length > 0 ? `${t.title}（${notes.join(" · ")}）` : t.title;
