@@ -2956,10 +2956,12 @@ export type RunRequest = {
 
 export type RunSettings = {
   maxTurns: number;
+  recordEvidence: boolean;
 };
 
 export type RunSettingsInput = {
   maxTurns: number;
+  recordEvidence?: boolean | null;
 };
 
 export type RunState = {

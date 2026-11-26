@@ -75,6 +75,8 @@ type RunArgs struct {
 	Instruction string `json:"instruction"`
 	AllowWrite  *bool  `json:"allowWrite,omitempty"`
 	MaxSteps    int    `json:"maxSteps,omitempty"`
+	// Locale is the sender's interface language, the reply fallback.
+	Locale string `json:"locale,omitempty"`
 }
 
 type RunResponse struct {

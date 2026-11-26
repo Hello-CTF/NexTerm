@@ -143,13 +143,68 @@ type LoadSkillArgs struct {
 	Name string `json:"name" jsonschema:"required" jsonschema_description:"Skill name"`
 }
 
-var einoNames = []string{
-	"exec_commands", "read_file", "write_file", "list_dir", FindFilesTool, GrepFilesTool, "read_screen", "send_keys", "wait_for",
-	"shell_history",
-	"docker_ps", "docker_logs", "docker_exec", "docker_control", "db_list_tables", "db_describe", "db_query", "redis_scan",
-	"list_assets", "ask_user", "edit_file", "todo_write", "exit_plan_mode", ReminderTool, NotifyTool,
-	"terminal_create", "terminal_rename", "terminal_list", "operation_result",
+// einoTool binds one built-in tool's name to its argument type, so the
+// advertised schema, the invokable tool and the enablement check can never
+// drift apart.
+type einoTool struct {
+	name string
+	info func() (*schema.ToolInfo, error)
+	make func(e *Execution) (tool.InvokableTool, error)
 }
+
+func defineEinoTool[T any](name string) einoTool {
+	return einoTool{
+		name: name,
+		info: func() (*schema.ToolInfo, error) {
+			return utils.GoStruct2ToolInfo[T](name, einoDescriptions[name])
+		},
+		make: func(e *Execution) (tool.InvokableTool, error) {
+			return utils.InferTool(name, einoDescriptions[name], func(ctx context.Context, input T) (Output, error) {
+				return e.run(ctx, name, input)
+			})
+		},
+	}
+}
+
+var einoTools = []einoTool{
+	defineEinoTool[ExecCommandsArgs]("exec_commands"),
+	defineEinoTool[ReadFileArgs]("read_file"),
+	defineEinoTool[WriteFileArgs]("write_file"),
+	defineEinoTool[ListDirArgs]("list_dir"),
+	defineEinoTool[FindFilesArgs](FindFilesTool),
+	defineEinoTool[GrepFilesArgs](GrepFilesTool),
+	defineEinoTool[ReadScreenArgs]("read_screen"),
+	defineEinoTool[SendKeysArgs]("send_keys"),
+	defineEinoTool[WaitForArgs]("wait_for"),
+	defineEinoTool[ShellHistoryArgs]("shell_history"),
+	defineEinoTool[EmptyArgs]("docker_ps"),
+	defineEinoTool[DockerLogsArgs]("docker_logs"),
+	defineEinoTool[DockerExecArgs]("docker_exec"),
+	defineEinoTool[DockerControlArgs]("docker_control"),
+	defineEinoTool[DBListTablesArgs]("db_list_tables"),
+	defineEinoTool[DBDescribeArgs]("db_describe"),
+	defineEinoTool[DBQueryArgs]("db_query"),
+	defineEinoTool[RedisScanArgs]("redis_scan"),
+	defineEinoTool[EmptyArgs]("list_assets"),
+	defineEinoTool[AskUserArgs]("ask_user"),
+	defineEinoTool[EditFileArgs]("edit_file"),
+	defineEinoTool[TodoWriteArgs]("todo_write"),
+	defineEinoTool[ExitPlanModeArgs]("exit_plan_mode"),
+	defineEinoTool[SendReminderArgs](ReminderTool),
+	defineEinoTool[NotifyArgs](NotifyTool),
+	defineEinoTool[TerminalCreateArgs]("terminal_create"),
+	defineEinoTool[TerminalRenameArgs]("terminal_rename"),
+	defineEinoTool[TerminalListArgs]("terminal_list"),
+	defineEinoTool[OperationResultArgs]("operation_result"),
+}
+
+var einoNames = func() []string {
+	names := make([]string, 0, len(einoTools))
+	for _, current := range einoTools {
+		names = append(names, current.name)
+	}
+	return names
+}()
 
 // fileWriteBoundHelp states fileToolTimeout and fileWriteTimeout for write_file and edit_file.
 const fileWriteBoundHelp = "Its lookups stop after 60 seconds and the write itself after 120 seconds, or when the run is cancelled. A write stopped while the remote side had not answered a write step fails with an unknown outcome: the file may or may not have been written or replaced, so read it again with read_file before any retry or further edit."
@@ -187,98 +242,10 @@ var einoDescriptions = map[string]string{
 }
 
 func einoToolSchemas() []Schema {
-	builders := map[string]func() (*schema.ToolInfo, error){
-		"exec_commands": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[ExecCommandsArgs]("exec_commands", einoDescriptions["exec_commands"])
-		},
-		"read_file": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[ReadFileArgs]("read_file", einoDescriptions["read_file"])
-		},
-		"write_file": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[WriteFileArgs]("write_file", einoDescriptions["write_file"])
-		},
-		"list_dir": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[ListDirArgs]("list_dir", einoDescriptions["list_dir"])
-		},
-		FindFilesTool: func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[FindFilesArgs](FindFilesTool, einoDescriptions[FindFilesTool])
-		},
-		GrepFilesTool: func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[GrepFilesArgs](GrepFilesTool, einoDescriptions[GrepFilesTool])
-		},
-		"read_screen": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[ReadScreenArgs]("read_screen", einoDescriptions["read_screen"])
-		},
-		"send_keys": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[SendKeysArgs]("send_keys", einoDescriptions["send_keys"])
-		},
-		"wait_for": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[WaitForArgs]("wait_for", einoDescriptions["wait_for"])
-		},
-		"shell_history": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[ShellHistoryArgs]("shell_history", einoDescriptions["shell_history"])
-		},
-		"docker_ps": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[EmptyArgs]("docker_ps", einoDescriptions["docker_ps"])
-		},
-		"docker_logs": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[DockerLogsArgs]("docker_logs", einoDescriptions["docker_logs"])
-		},
-		"docker_exec": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[DockerExecArgs]("docker_exec", einoDescriptions["docker_exec"])
-		},
-		"docker_control": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[DockerControlArgs]("docker_control", einoDescriptions["docker_control"])
-		},
-		"db_list_tables": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[DBListTablesArgs]("db_list_tables", einoDescriptions["db_list_tables"])
-		},
-		"db_describe": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[DBDescribeArgs]("db_describe", einoDescriptions["db_describe"])
-		},
-		"db_query": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[DBQueryArgs]("db_query", einoDescriptions["db_query"])
-		},
-		"redis_scan": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[RedisScanArgs]("redis_scan", einoDescriptions["redis_scan"])
-		},
-		"list_assets": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[EmptyArgs]("list_assets", einoDescriptions["list_assets"])
-		},
-		"ask_user": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[AskUserArgs]("ask_user", einoDescriptions["ask_user"])
-		},
-		"edit_file": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[EditFileArgs]("edit_file", einoDescriptions["edit_file"])
-		},
-		"todo_write": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[TodoWriteArgs]("todo_write", einoDescriptions["todo_write"])
-		},
-		"exit_plan_mode": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[ExitPlanModeArgs]("exit_plan_mode", einoDescriptions["exit_plan_mode"])
-		},
-		ReminderTool: func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[SendReminderArgs](ReminderTool, einoDescriptions[ReminderTool])
-		},
-		NotifyTool: func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[NotifyArgs](NotifyTool, einoDescriptions[NotifyTool])
-		},
-		"terminal_create": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[TerminalCreateArgs]("terminal_create", einoDescriptions["terminal_create"])
-		},
-		"terminal_rename": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[TerminalRenameArgs]("terminal_rename", einoDescriptions["terminal_rename"])
-		},
-		"terminal_list": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[TerminalListArgs]("terminal_list", einoDescriptions["terminal_list"])
-		},
-		"operation_result": func() (*schema.ToolInfo, error) {
-			return utils.GoStruct2ToolInfo[OperationResultArgs]("operation_result", einoDescriptions["operation_result"])
-		},
-	}
-	result := make([]Schema, 0, len(einoNames))
-	for _, name := range einoNames {
-		info, err := builders[name]()
+	result := make([]Schema, 0, len(einoTools))
+	for _, current := range einoTools {
+		name := current.name
+		info, err := current.info()
 		if err != nil {
 			panic(err)
 		}
@@ -390,139 +357,16 @@ func init() {
 }
 
 func (e *Execution) Tools() ([]tool.BaseTool, error) {
-	makers := []func() (tool.InvokableTool, error){
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("exec_commands", einoDescriptions["exec_commands"], func(ctx context.Context, input ExecCommandsArgs) (Output, error) {
-				return e.run(ctx, "exec_commands", input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("read_file", einoDescriptions["read_file"], func(ctx context.Context, input ReadFileArgs) (Output, error) { return e.run(ctx, "read_file", input) })
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("write_file", einoDescriptions["write_file"], func(ctx context.Context, input WriteFileArgs) (Output, error) { return e.run(ctx, "write_file", input) })
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("list_dir", einoDescriptions["list_dir"], func(ctx context.Context, input ListDirArgs) (Output, error) { return e.run(ctx, "list_dir", input) })
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool(FindFilesTool, einoDescriptions[FindFilesTool], func(ctx context.Context, input FindFilesArgs) (Output, error) {
-				return e.run(ctx, FindFilesTool, input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool(GrepFilesTool, einoDescriptions[GrepFilesTool], func(ctx context.Context, input GrepFilesArgs) (Output, error) {
-				return e.run(ctx, GrepFilesTool, input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("read_screen", einoDescriptions["read_screen"], func(ctx context.Context, input ReadScreenArgs) (Output, error) {
-				return e.run(ctx, "read_screen", input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("send_keys", einoDescriptions["send_keys"], func(ctx context.Context, input SendKeysArgs) (Output, error) { return e.run(ctx, "send_keys", input) })
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("wait_for", einoDescriptions["wait_for"], func(ctx context.Context, input WaitForArgs) (Output, error) { return e.run(ctx, "wait_for", input) })
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("shell_history", einoDescriptions["shell_history"], func(ctx context.Context, input ShellHistoryArgs) (Output, error) {
-				return e.run(ctx, "shell_history", input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("docker_ps", einoDescriptions["docker_ps"], func(ctx context.Context, input EmptyArgs) (Output, error) { return e.run(ctx, "docker_ps", input) })
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("docker_logs", einoDescriptions["docker_logs"], func(ctx context.Context, input DockerLogsArgs) (Output, error) {
-				return e.run(ctx, "docker_logs", input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("docker_exec", einoDescriptions["docker_exec"], func(ctx context.Context, input DockerExecArgs) (Output, error) {
-				return e.run(ctx, "docker_exec", input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("docker_control", einoDescriptions["docker_control"], func(ctx context.Context, input DockerControlArgs) (Output, error) {
-				return e.run(ctx, "docker_control", input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("db_list_tables", einoDescriptions["db_list_tables"], func(ctx context.Context, input DBListTablesArgs) (Output, error) {
-				return e.run(ctx, "db_list_tables", input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("db_describe", einoDescriptions["db_describe"], func(ctx context.Context, input DBDescribeArgs) (Output, error) {
-				return e.run(ctx, "db_describe", input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("db_query", einoDescriptions["db_query"], func(ctx context.Context, input DBQueryArgs) (Output, error) { return e.run(ctx, "db_query", input) })
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("redis_scan", einoDescriptions["redis_scan"], func(ctx context.Context, input RedisScanArgs) (Output, error) { return e.run(ctx, "redis_scan", input) })
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("list_assets", einoDescriptions["list_assets"], func(ctx context.Context, input EmptyArgs) (Output, error) { return e.run(ctx, "list_assets", input) })
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("ask_user", einoDescriptions["ask_user"], func(ctx context.Context, input AskUserArgs) (Output, error) { return e.run(ctx, "ask_user", input) })
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("edit_file", einoDescriptions["edit_file"], func(ctx context.Context, input EditFileArgs) (Output, error) { return e.run(ctx, "edit_file", input) })
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("todo_write", einoDescriptions["todo_write"], func(ctx context.Context, input TodoWriteArgs) (Output, error) { return e.run(ctx, "todo_write", input) })
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("exit_plan_mode", einoDescriptions["exit_plan_mode"], func(ctx context.Context, input ExitPlanModeArgs) (Output, error) {
-				return e.run(ctx, "exit_plan_mode", input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool(ReminderTool, einoDescriptions[ReminderTool], func(ctx context.Context, input SendReminderArgs) (Output, error) {
-				return e.run(ctx, ReminderTool, input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool(NotifyTool, einoDescriptions[NotifyTool], func(ctx context.Context, input NotifyArgs) (Output, error) {
-				return e.run(ctx, NotifyTool, input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("terminal_create", einoDescriptions["terminal_create"], func(ctx context.Context, input TerminalCreateArgs) (Output, error) {
-				return e.run(ctx, "terminal_create", input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("terminal_rename", einoDescriptions["terminal_rename"], func(ctx context.Context, input TerminalRenameArgs) (Output, error) {
-				return e.run(ctx, "terminal_rename", input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("terminal_list", einoDescriptions["terminal_list"], func(ctx context.Context, input TerminalListArgs) (Output, error) {
-				return e.run(ctx, "terminal_list", input)
-			})
-		},
-		func() (tool.InvokableTool, error) {
-			return utils.InferTool("operation_result", einoDescriptions["operation_result"], func(ctx context.Context, input OperationResultArgs) (Output, error) {
-				return e.run(ctx, "operation_result", input)
-			})
-		},
-	}
-	result := make([]tool.BaseTool, 0, len(makers)+2)
-	for index, makeTool := range makers {
-		if !e.enabled(einoNames[index]) {
+	result := make([]tool.BaseTool, 0, len(einoTools)+2)
+	for _, current := range einoTools {
+		if !e.enabled(current.name) {
 			continue
 		}
-		current, err := makeTool()
+		built, err := current.make(e)
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, current)
+		result = append(result, built)
 	}
 	// load_skill is not in einoNames: the registry only advertises it when a
 	// skills backend is configured, and the description comes from that

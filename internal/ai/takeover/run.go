@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
+	aicontext "github.com/Hello-CTF/NexTerm/internal/ai/context"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
@@ -287,7 +288,7 @@ func (m *Manager) initializeEino(state *runState) error {
 	}
 	runtime := &takeoverRuntime{
 		input: []*schema.Message{
-			schema.SystemMessage("You are the terminal takeover assistant of NexTerm. Complete the user's instruction step by step based on the current screen. You may only use read_screen, send_keys, wait_for, and done. Commands are really written into the terminal; when the task is complete or cannot continue, you must call done and report success truthfully. The user can pause you or take the terminal back at any time; after a resume, act on the fresh screen. Answer in Chinese."),
+			schema.SystemMessage("You are the terminal takeover assistant of NexTerm. Complete the user's instruction step by step based on the current screen. You may only use read_screen, send_keys, wait_for, and done. Commands are really written into the terminal; when the task is complete or cannot continue, you must call done and report success truthfully. The user can pause you or take the terminal back at any time; after a resume, act on the fresh screen. " + aicontext.ReplyLanguageRule(state.args.Locale)),
 			schema.UserMessage(state.args.Instruction),
 		},
 		permission: permission, allowWrite: state.args.AllowWrite == nil || *state.args.AllowWrite,

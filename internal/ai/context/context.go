@@ -165,10 +165,10 @@ func (b *Builder) Build(ctx context.Context, scope tools.Scope, selection string
 		bundle.Recon = b.cachedRecon(ctx, scope.SessionID)
 	}
 	TrimToBudget(&bundle)
-	return Prompt{Stable: SystemPrompt(), Volatile: Render(bundle), Bundle: bundle}
+	return Prompt{Stable: SystemPrompt(""), Volatile: Render(bundle), Bundle: bundle}
 }
 
-func SystemPrompt() string {
+func SystemPrompt(locale string) string {
 	return "You are the ops assistant built into NexTerm, running inside the user's development and operations terminal.\n" +
 		"Rules:\n" +
 		"1. Every command you run is recorded in a tool card in the conversation panel on the right; the user can open it to see the full output. Commands are not written into the user's terminal area, so do not assume \"the terminal shows it\" - anything the user needs to know must be stated clearly in your reply.\n" +
@@ -176,9 +176,34 @@ func SystemPrompt() string {
 		"3. Commands are checked by the system: whether write operations, sudo and risky commands need user confirmation depends on the user's permission mode; commands like rm -rf / are always rejected.\n" +
 		"4. Conclusions must be evidence-based: cite the commands you actually ran and the key output lines.\n" +
 		"5. When a long task completes or something needs the user's immediate attention, send an in-app notification with the notify tool; the notification content must also be written into the current reply body, because the popup may be missed.\n" +
-		"6. Answer in Chinese."
+		"6. " + ReplyLanguageRule(locale)
 }
 
-func PlanPrompt() string {
-	return SystemPrompt() + "\n7. Plan mode is active: use only read-only tools to gather information; do not perform any operation with side effects; when the investigation is complete, submit a clear, reviewable implementation plan with exit_plan_mode, and do not execute the plan automatically."
+func PlanPrompt(locale string) string {
+	return SystemPrompt(locale) + "\n7. Plan mode is active: use only read-only tools to gather information; do not perform any operation with side effects; when the investigation is complete, submit a clear, reviewable implementation plan with exit_plan_mode, and do not execute the plan automatically."
+}
+
+// replyLanguages names each interface locale in English for the reply rule.
+var replyLanguages = map[string]string{
+	"zh-CN": "Simplified Chinese",
+	"zh-TW": "Traditional Chinese",
+	"en":    "English",
+	"ja":    "Japanese",
+	"ko":    "Korean",
+	"de":    "German",
+	"fr":    "French",
+	"es":    "Spanish",
+	"ru":    "Russian",
+}
+
+// ReplyLanguageRule tells the model to answer in the user's language. The
+// interface locale decides when the latest message carries no clear language
+// (a bare command, a path, pasted logs); without a known locale, as in a
+// scheduled run, Simplified Chinese stays the default.
+func ReplyLanguageRule(locale string) string {
+	language, ok := replyLanguages[locale]
+	if !ok {
+		language = replyLanguages["zh-CN"]
+	}
+	return "Reply in the language of the user's latest message. When that message has no clear language (for example a bare command, a path or pasted logs), reply in " + language + "."
 }

@@ -72,7 +72,7 @@ func TestRunnerEvidenceNoOutputShutdown(t *testing.T) {
 		cancelSync:  newCancelSync(),
 		doneCh:      make(chan struct{}),
 	}
-	current.capture = runner.newJobCapture(current.id, "conv-1")
+	current.capture = runner.newJobCapture(context.Background(), current.id, "conv-1")
 	runner.wg.Add(1)
 	runner.parkForShutdown(current)
 
@@ -101,7 +101,7 @@ func TestRunnerEvidenceNoOutputShutdown(t *testing.T) {
 	if _, _, err := verifier.Sanitize(ctx, capture); !errors.Is(err, ErrCaptureTampered) {
 		t.Fatalf("tampered shutdown sanitize err=%v", err)
 	}
-	unsealed := runner.newJobCapture("job-unsealed", "conv-1")
+	unsealed := runner.newJobCapture(context.Background(), "job-unsealed", "conv-1")
 	runner.rememberCapture("job-unsealed", unsealed)
 	if _, _, err := runner.SanitizeRunCapture(ctx, "job-unsealed"); !errors.Is(err, ErrCaptureNotSealed) {
 		t.Fatalf("unsealed sanitize err=%v", err)

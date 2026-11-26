@@ -334,7 +334,7 @@ func (r *Runner) setupEino(current *job, assembleInput bool) error {
 	}
 	einoTools = append(einoTools, memoryTools...)
 	runtime.input = messages
-	instruction := systemPromptFor(current.ctx, current.args.PlanMode)
+	instruction := systemPromptFor(current.ctx, current.args.PlanMode, current.args.Locale)
 	returnDirectly := map[string]bool{}
 	if current.args.PlanMode {
 		returnDirectly["exit_plan_mode"] = true

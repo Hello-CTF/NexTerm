@@ -157,6 +157,9 @@ type ChatArgs struct {
 	// Privacy is the conversation's temporary redaction choice ("on", "off");
 	// empty follows the model profile and the owner's switch.
 	Privacy provider.PrivacyOverride `json:"privacy,omitempty"`
+	// Locale is the sender's interface language; the reply follows the
+	// user's own language and falls back to it when that is unclear.
+	Locale string `json:"locale,omitempty"`
 }
 
 type RefArg struct {

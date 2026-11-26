@@ -259,6 +259,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "layout-templates", section: "settings-layout-templates", label: t("布局模板"), description: t("保存工作区分屏布局，按模板打开主机终端并运行启动片段"), keywords: ["layout", "template", "arrangement", "split", t("布局"), t("模板"), t("分屏")] },
   { id: "quick-commands", section: "settings-quick-commands", label: t("快捷命令"), description: t("在终端按键条中发送的常用命令"), keywords: ["quick command", "snippet", "macro", t("命令"), t("常用命令"), t("片段"), t("按键条")] },
   { id: "ai-max-turns", section: "settings-ai-run", label: t("单轮最大步数"), description: t("AI 助手每轮回答最多执行的步数，1-999"), keywords: ["step", "steps", "limit", "max turns", t("步数"), t("最大步数"), t("上限")] },
+  { id: "ai-record-evidence", section: "settings-ai-run", label: t("记录运行证据"), description: t("把每轮运行的工具输出和最终回答封存为证据记录"), keywords: ["evidence", "audit", "record", "capture", t("证据"), t("审计"), t("记录")] },
   { id: "memory-mode", section: "settings-memory", label: t("AI 使用记忆"), description: t("引用记忆、允许记忆工具或关闭"), keywords: ["memory", "inject", "tool", t("记忆"), t("记忆工具"), t("引用")] },
   { id: "vault-password", section: "settings-vault", label: t("用密码保护凭据"), keywords: ["password", "credential", "vault", t("密码"), t("凭据")] },
   { id: "vault-auto-lock", section: "settings-vault", label: t("闲置自动锁定"), keywords: ["lock", "idle", "timeout", t("锁定"), t("凭据")] },

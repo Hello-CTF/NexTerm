@@ -284,7 +284,7 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 	downstream := newSwitchableStream(stream)
 	stream = r.wrapStream(downstream, jobID)
 	current := &job{id: jobID, ownerID: ownerID, args: args, ctx: jobContext, cancel: cancel, deliveryCtx: deliveryContext, forceCancel: forceCancel, stream: stream, downstream: downstream, memory: r.conversationMemory(ownerID, conversationID, args.Scope), steer: steer.NewQueue(r.config.MaxPendingSteers), running: true, cancelSync: newCancelSync(), doneCh: make(chan struct{})}
-	current.capture = r.newJobCapture(jobID, conversationID)
+	current.capture = r.newJobCapture(jobContext, jobID, conversationID)
 	r.mu.Lock()
 	if r.closed || r.jobs[jobID] != nil {
 		r.mu.Unlock()

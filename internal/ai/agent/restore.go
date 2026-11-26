@@ -384,7 +384,7 @@ func (r *Runner) restoreJob(ctx context.Context, jobID string, factory StreamFac
 		cancelSync:  newCancelSync(),
 		doneCh:      make(chan struct{}),
 	}
-	current.capture = r.newJobCapture(jobID, row.ConversationID)
+	current.capture = r.newJobCapture(ctx, jobID, row.ConversationID)
 	r.restoreCallHandles(ctx, current)
 	for _, pending := range snapshot.Pending {
 		current.addPendingCall(pending.CallID)

@@ -19,7 +19,7 @@ func TestRenderIncludesScreenAndStablePrompt(t *testing.T) {
 			t.Errorf("missing %q in %q", expected, rendered)
 		}
 	}
-	first, second := SystemPrompt(), SystemPrompt()
+	first, second := SystemPrompt("en"), SystemPrompt("en")
 	if first != second || first == "" {
 		t.Fatal("stable prompt changed or empty")
 	}
@@ -45,12 +45,9 @@ func TestBudgetTrimmingDropsLowPriorityAndStaysValid(t *testing.T) {
 }
 
 func TestDisconnectedTriggerMatchesActualToolResult(t *testing.T) {
-	prompt := SystemPrompt()
+	prompt := SystemPrompt("")
 	if !strings.Contains(prompt, `if a result says "disconnected"`) {
 		t.Fatalf("system prompt lacks the disconnected trigger: %s", prompt)
-	}
-	if !strings.Contains(prompt, "Answer in Chinese.") {
-		t.Fatalf("system prompt no longer requires Chinese answers: %s", prompt)
 	}
 	message := schema.ToolMessage(`{"ok":false,"text":"连接已断开：数据库服务已关闭，请重新连接","exitCode":1,"truncated":false}`, "call-1")
 	message.ToolName = "db_query"
@@ -67,5 +64,21 @@ func TestDisconnectedTriggerMatchesActualToolResult(t *testing.T) {
 	}
 	if !strings.Contains(message.Content, "连接已断开：数据库服务已关闭，请重新连接") {
 		t.Fatalf("source disconnect text changed: %s", message.Content)
+	}
+}
+
+func TestReplyLanguageFollowsUserWithLocaleFallback(t *testing.T) {
+	t.Parallel()
+	for locale, language := range map[string]string{"en": "English", "ja": "Japanese", "zh-TW": "Traditional Chinese", "": "Simplified Chinese", "xx": "Simplified Chinese"} {
+		prompt := SystemPrompt(locale)
+		if !strings.Contains(prompt, "Reply in the language of the user's latest message") {
+			t.Fatalf("locale %q: prompt does not follow the user's language: %s", locale, prompt)
+		}
+		if !strings.Contains(prompt, "reply in "+language+".") {
+			t.Errorf("locale %q: fallback is not %s: %s", locale, language, prompt)
+		}
+		if !strings.Contains(PlanPrompt(locale), "reply in "+language+".") {
+			t.Errorf("locale %q: plan prompt lost the fallback", locale)
+		}
 	}
 }

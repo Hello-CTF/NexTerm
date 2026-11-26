@@ -22,6 +22,7 @@ export function AiRunSettingsCard() {
   const [draft, setDraft] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [recordEvidence, setRecordEvidence] = useState<boolean | null>(null);
 
   const load = useCallback(() => {
     let cancelled = false;
@@ -32,6 +33,7 @@ export function AiRunSettingsCard() {
         if (cancelled) return;
         setSaved(settings.maxTurns);
         setDraft(String(settings.maxTurns));
+        setRecordEvidence(settings.recordEvidence);
       })
       .catch((e: unknown) => {
         if (!cancelled) setLoadError(describeError(e));
@@ -42,6 +44,7 @@ export function AiRunSettingsCard() {
   }, []);
   useEffect(() => {
     setSaved(null);
+    setRecordEvidence(null);
     return load();
   }, [accountEpoch, load]);
 
@@ -58,6 +61,19 @@ export function AiRunSettingsCard() {
         pushToast("success", t("已保存单轮最大步数"));
       })
       .catch((e: unknown) => pushToast("error", t("保存单轮最大步数失败：{value}", { value: describeError(e) })))
+      .finally(() => setSaving(false));
+  };
+
+  const saveRecordEvidence = (next: boolean) => {
+    if (saved === null || saving) return;
+    setSaving(true);
+    aiRunSettingsApi
+      .set({ maxTurns: saved, recordEvidence: next })
+      .then((settings) => {
+        setRecordEvidence(settings.recordEvidence);
+        pushToast("success", settings.recordEvidence ? t("已开启运行证据记录") : t("已关闭运行证据记录"));
+      })
+      .catch((e: unknown) => pushToast("error", t("保存运行证据记录设置失败：{value}", { value: describeError(e) })))
       .finally(() => setSaving(false));
   };
 
@@ -113,6 +129,24 @@ export function AiRunSettingsCard() {
           {saving ? t("正在保存…") : t("保存")}
         </button>
       </div>
+      <label className="mt-3.5 flex cursor-pointer items-center gap-3 border-t border-neutral-800/60 pt-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[12.5px] text-neutral-200" data-setting="ai-record-evidence">
+            {t("记录运行证据")}
+          </div>
+          <p className="nx-hint mt-0.5">
+            {t("每轮运行把工具输出和最终回答封存为防篡改的证据记录。关闭后新的运行不再记录，已有记录不受影响。")}
+          </p>
+        </div>
+        <input
+          type="checkbox"
+          className="h-4 w-4 shrink-0"
+          aria-label={t("记录运行证据")}
+          checked={recordEvidence ?? true}
+          disabled={recordEvidence === null || saved === null || saving}
+          onChange={(event) => saveRecordEvidence(event.target.checked)}
+        />
+      </label>
     </section>
   );
 }

@@ -81,11 +81,11 @@ func TestExecutionToolsUnattendedExcludeTerminalCreate(t *testing.T) {
 		t.Fatalf("unattended subagent tools = %v", unattended.Subagents.AllowedTools)
 	}
 
-	prompt := systemPromptFor(unattendedCtx, false)
+	prompt := systemPromptFor(unattendedCtx, false, "")
 	if !strings.Contains(prompt, "do not call terminal_create") || !strings.Contains(prompt, "use exec_commands") {
 		t.Fatalf("unattended prompt lacks terminal guidance: %q", prompt)
 	}
-	if strings.Contains(systemPromptFor(context.Background(), false), "Unattended execution") {
+	if strings.Contains(systemPromptFor(context.Background(), false, ""), "Unattended execution") {
 		t.Fatal("interactive prompt gained unattended guidance")
 	}
 }

@@ -327,6 +327,18 @@ describe("desktop command envelopes", () => {
     });
   });
 
+  it("sends the interface locale with each chat message as the reply fallback", async () => {
+    runtime.Call.ByName.mockResolvedValue({ ok: true, data: { jobId: "job-1", conversationId: "conv-1" } });
+    const { aiApi } = await import("../ipc/commands");
+
+    await aiApi.chat({ conversationId: "conv-1", scope: {}, message: "ls -la", channel: { toJSON: () => "ai-1" } });
+    expect(JSON.parse(JSON.stringify(requestAt()))).toEqual({
+      cmd: "ai_chat",
+      args: { args: { conversationId: "conv-1", scope: {}, message: "ls -la", locale: "zh-CN" } },
+      channel: "ai-1",
+    });
+  });
+
   it("keeps the takeover payload flat and channel at the top level", async () => {
     runtime.Call.ByName.mockResolvedValue({ ok: true, data: { jobId: "job-1", token: "token-1" } });
     const { aiApi } = await import("../ipc/commands");
@@ -340,7 +352,7 @@ describe("desktop command envelopes", () => {
     });
     expect(JSON.parse(JSON.stringify(requestAt()))).toEqual({
       cmd: "ai_takeover_run",
-      args: { tabId: "tab-1", token: "token-1", instruction: "Check load", allowWrite: false },
+      args: { tabId: "tab-1", token: "token-1", instruction: "Check load", allowWrite: false, locale: "zh-CN" },
       channel: "ai-1",
     });
   });
@@ -366,7 +378,7 @@ describe("desktop command envelopes", () => {
     ).resolves.toEqual({ jobId: "job-1", token: "token-1" });
     expect(JSON.parse(JSON.stringify(requestAt(3)))).toEqual({
       cmd: "ai_takeover_resume",
-      args: { tabId: "tab-1", token: "token-1", jobId: "job-1" },
+      args: { tabId: "tab-1", token: "token-1", jobId: "job-1", locale: "zh-CN" },
       channel: "ai-resume-1",
     });
   });
@@ -1066,7 +1078,7 @@ describe("web command behavior compatibility", () => {
     const [, init] = fetchMock.mock.calls[0] as [string, { body: string }];
     expect(JSON.parse(init.body)).toEqual({
       cmd: "ai_takeover_run",
-      args: { tabId: "tab-1", token: "token-1", instruction: "Check load", allowWrite: false },
+      args: { tabId: "tab-1", token: "token-1", instruction: "Check load", allowWrite: false, locale: "zh-CN" },
       channel: "ai-1",
     });
   });
