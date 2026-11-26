@@ -75,7 +75,7 @@ func relayServerError(err error) error {
 // device streams the server opens on it. It reconnects with its own backoff, independent of the control
 // channel; bridges requested over the control channel keep working whether or not a link is up. A revocation
 // stops the agent as on the control channel, owner_unavailable waits until the control channel recovers, and a
-// version mismatch leaves the relay off for this run (the control channel drives any upgrade).
+// version mismatch leaves the relay off until a later attempt (the control channel drives any upgrade).
 func (r *Runtime) relayLoop(ctx context.Context) {
 	backoff := retrySleep
 	for ctx.Err() == nil {
@@ -104,31 +104,55 @@ func (r *Runtime) relayLoop(ctx context.Context) {
 			return
 		}
 		delay := r.jittered(backoff)
-		err = relayServerError(err)
-		var serverError *ServerError
-		switch {
-		case errors.Is(err, errRelayUnavailable):
-			r.logger.Debug("server offers no relay; device streams use bridges", "url", client.BaseURL(), "error", err)
+		switch outcome, cause := classifyRelayEnd(err); outcome {
+		case relayNotOffered:
+			r.logger.Debug("server offers no usable relay; device streams use bridges", "url", client.BaseURL(), "error", cause)
 			delay = r.jittered(relayUnavailableRetry)
-		case isOwnerUnavailable(err):
+		case relayOwnerUnavailable:
 			if !r.ownerActive() {
 				r.enterOwnerWait()
 			}
 			continue
-		case isForbidden(err):
+		case relayRevoked:
 			r.revoke()
 			return
-		case errors.As(err, &serverError) && serverError.Code == "version_mismatch":
-			r.logger.Warn("relay protocol mismatch; device streams use bridges", "url", client.BaseURL(), "server_version", serverError.ServerVersion)
-			return
 		default:
-			r.logger.Debug("relay link lost; reconnecting", "url", client.BaseURL(), "error", err)
+			r.logger.Debug("relay link lost; reconnecting", "url", client.BaseURL(), "error", cause)
 			backoff = nextBackoff(backoff)
 		}
 		if !sleepContext(ctx, delay) {
 			return
 		}
 	}
+}
+
+// Outcomes of a relay dial or link that ended.
+const (
+	relayRetry = iota
+	relayNotOffered
+	relayOwnerUnavailable
+	relayRevoked
+)
+
+// classifyRelayEnd says how the relay loop reacts to err, the failed dial or the end of a link. Only a refusal by
+// the relay itself (its Hello reply or a goaway) can revoke or pause the agent, as the control channel's frames
+// do. A version mismatch is left to the control channel, which meets the same agent protocol check and drives any
+// upgrade, while the relay waits for a server whose relay version matches.
+func classifyRelayEnd(err error) (int, error) {
+	if errors.Is(err, errRelayUnavailable) {
+		return relayNotOffered, err
+	}
+	err = relayServerError(err)
+	var serverError *ServerError
+	switch {
+	case isOwnerUnavailable(err):
+		return relayOwnerUnavailable, err
+	case isForbidden(err):
+		return relayRevoked, err
+	case errors.As(err, &serverError) && serverError.Code == "version_mismatch":
+		return relayNotOffered, err
+	}
+	return relayRetry, err
 }
 
 // ownerActive reports whether the agent waits for its owner account to become usable again.
@@ -145,9 +169,11 @@ func (r *Runtime) dialRelay(ctx context.Context, client *EndpointClient) (*relay
 	defer cancel()
 	config, err := client.RelayConfig(ctx, r.deviceID, r.secret)
 	if err != nil {
+		// Any answer but the config (404 from an older server, or a proxy rejecting the new path) only means no
+		// relay: revocations are acted on when the relay itself refuses, as on the control channel.
 		var serverError *ServerError
-		if errors.As(err, &serverError) && serverError.Status == http.StatusNotFound {
-			return nil, errRelayUnavailable
+		if errors.As(err, &serverError) {
+			return nil, errors.Join(errRelayUnavailable, err)
 		}
 		return nil, err
 	}
