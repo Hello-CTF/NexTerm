@@ -23,6 +23,7 @@ type directSession struct {
 	localNAT  natprobe.Mapping
 	remoteNAT natprobe.Mapping
 	stunOK    bool
+	probed    bool
 
 	mu          sync.Mutex
 	grant       *Grant
@@ -133,7 +134,7 @@ func (d *device) connect() (*directSession, string) {
 		return nil, grantReason(err)
 	}
 	d.mu.Lock()
-	d.serverOn = config.Enabled
+	d.serverPolicy = serverPolicy(config)
 	d.mu.Unlock()
 	if !config.Enabled {
 		return nil, ReasonServerDisabled
@@ -143,7 +144,7 @@ func (d *device) connect() (*directSession, string) {
 		return nil, grantReason(err)
 	}
 	d.mu.Lock()
-	d.deviceOn = state == agent.P2PKeyStateBound
+	d.devicePolicy, d.deviceKey = devicePolicy(state), state
 	d.mu.Unlock()
 	switch state {
 	case agent.P2PKeyStateBound:
@@ -169,9 +170,10 @@ func (d *device) connect() (*directSession, string) {
 	}
 	stun := agent.STUNServers(config, endpoint.URL, false)
 	local := m.opts.Probe(ctx, stun)
-	stunOK := len(stun) > 0 && local != natprobe.Blocked
+	probed := len(stun) > 0
+	stunOK := probed && local != natprobe.Blocked
 	d.mu.Lock()
-	d.localNAT, d.stunOK = string(local), stunOK
+	d.localNAT, d.stunOK, d.probed = string(local), stunOK, probed
 	d.mu.Unlock()
 
 	conn, err := m.backend.DialSignal(ctx, d.id)
@@ -179,7 +181,7 @@ func (d *device) connect() (*directSession, string) {
 		return nil, grantReason(err)
 	}
 	sc := signal.NewConn(conn)
-	sess := &directSession{agentPub: agentPub, localNAT: local, stunOK: stunOK, grant: g, sig: sc, closed: make(chan struct{})}
+	sess := &directSession{agentPub: agentPub, localNAT: local, stunOK: stunOK, probed: probed, grant: g, sig: sc, closed: make(chan struct{})}
 	creds := leg.NewCredentials()
 	if err := sc.Write(ctx, signal.Frame{Type: signal.TypeOffer, Grant: g.Grant, ClientPub: clientPubText(m.key), Ufrag: creds.Ufrag, Pwd: creds.Pwd, NAT: string(local)}); err != nil {
 		_ = sc.Close()

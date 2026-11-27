@@ -37,12 +37,18 @@ export type DevicePathStatus = Omit<GeneratedStatus, "mode" | "path" | "reason">
 
 export type DevicePathSwitch = Omit<GeneratedSwitch, "from" | "to"> & { from: DevicePath; to: DevicePath };
 
-export type DeviceP2PDiagnostics = Omit<GeneratedDiagnostics, "status" | "recentSwitches"> & {
+// A policy layer the core could not read is "unknown", never "off"; callers treat any other value as unknown too.
+export type P2PPolicyState = "on" | "off" | "unknown";
+
+export type DeviceP2PPolicy = Omit<P2PPolicy, "server" | "device"> & { server: P2PPolicyState; device: P2PPolicyState };
+
+export type DeviceP2PDiagnostics = Omit<GeneratedDiagnostics, "status" | "recentSwitches" | "policy"> & {
   status: DevicePathStatus;
   recentSwitches: DevicePathSwitch[];
+  policy: DeviceP2PPolicy;
 };
 
-export type { P2PPolicy, P2PSelectedPair };
+export type { P2PSelectedPair };
 
 export const DEVICE_PATH_EVENT = EVENTS.devicePath;
 

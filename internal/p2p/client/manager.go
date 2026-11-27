@@ -263,16 +263,33 @@ func (m *Manager) Diagnostics(ctx context.Context, deviceID string) DeviceP2PDia
 	} else {
 		status := m.Status(ctx, deviceID)
 		diag = DeviceP2PDiagnostics{Status: status, LocalNAT: string(natprobe.Unknown), RemoteNAT: string(natprobe.Unknown), RecentSwitches: []PathSwitch{}}
-		diag.Policy.Mode = status.Mode
+		diag.Policy = P2PPolicy{Server: PolicyUnknown, Device: PolicyUnknown, Mode: status.Mode}
 	}
-	// The policy layers are read now, so a device that never tried (relay mode, proxy, background) reports them.
+	// The policy layers are read now, so a device that never tried (relay mode, proxy, background) reports them;
+	// a failed read keeps the last value an attempt saw.
 	if config, err := m.loadConfig(ctx); err == nil {
-		diag.Policy.Server = config.Enabled
+		diag.Policy.Server = serverPolicy(config)
 	}
 	if state, err := m.backend.DeviceKeyState(ctx, deviceID); err == nil {
-		diag.Policy.Device = state == agent.P2PKeyStateBound
+		diag.Policy.Device, diag.Policy.DeviceKey = devicePolicy(state), state
+	}
+	if diag.Status.Path == PathRelay && diag.Status.Reason == ReasonNone {
+		diag.Status.Reason = blockingReason(diag.Policy)
 	}
 	return diag
+}
+
+// blockingReason is the status reason of a policy layer that rules out a direct connection, mirroring connect.
+func blockingReason(policy P2PPolicy) string {
+	switch {
+	case policy.Server == PolicyOff:
+		return ReasonServerDisabled
+	case policy.Device == PolicyOff && policy.DeviceKey == agent.P2PKeyStatePending:
+		return ReasonKeyPending
+	case policy.Device == PolicyOff:
+		return ReasonDeviceUnsupported
+	}
+	return ReasonNone
 }
 
 // ModeChanged applies a newly stored mode of deviceID to its live streams at once.

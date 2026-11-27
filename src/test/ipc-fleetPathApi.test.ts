@@ -30,7 +30,7 @@ describe("device path IPC adapter", () => {
     await expect(fleetPathApi.status("dev-1")).resolves.toEqual(status);
     expect(mocks.call).toHaveBeenLastCalledWith("fleet_device_path_status", { deviceId: "dev-1" });
 
-    const diagnostics = { status, localNat: "independent", remoteNat: "dependent", stunReachable: true, recentSwitches: [], policy: { server: true, device: true, mode: "auto" } };
+    const diagnostics = { status, localNat: "independent", remoteNat: "dependent", probed: true, stunReachable: true, recentSwitches: [], policy: { server: "on", device: "on", deviceKey: "bound", mode: "auto" } };
     mocks.call.mockResolvedValueOnce(diagnostics);
     await expect(fleetPathApi.diagnostics("dev-1")).resolves.toEqual(diagnostics);
     expect(mocks.call).toHaveBeenLastCalledWith("fleet_device_p2p_diagnostics", { deviceId: "dev-1" });

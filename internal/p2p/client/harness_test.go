@@ -51,6 +51,8 @@ type harness struct {
 	insecure   bool
 	enabled    bool
 	keyState   string
+	configErr  error
+	keyErr     error
 	scope      []string
 	grantErr   error
 	relayDials int
@@ -162,6 +164,9 @@ func (h *harness) DialSignal(_ context.Context, _ string) (net.Conn, error) {
 func (h *harness) Config(context.Context) (*agent.P2PConfig, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.configErr != nil {
+		return nil, h.configErr
+	}
 	return &agent.P2PConfig{Enabled: h.enabled, STUN: h.stun, GrantKeys: []grant.PublicKey{h.signing.Public()}}, nil
 }
 
@@ -189,7 +194,7 @@ func (h *harness) Grant(_ context.Context, deviceID string, clientPub ed25519.Pu
 func (h *harness) DeviceKeyState(context.Context, string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.keyState, nil
+	return h.keyState, h.keyErr
 }
 
 func (h *harness) Mode(context.Context, string) (selector.Mode, error) {

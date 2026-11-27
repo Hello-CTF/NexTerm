@@ -1,5 +1,7 @@
 package client
 
+import "github.com/Hello-CTF/NexTerm/internal/fleet/agent"
+
 // DevicePathStatus is where the device's live streams run and why not directly (wave 2 contract).
 type DevicePathStatus struct {
 	DeviceID string `json:"deviceId"`
@@ -25,19 +27,47 @@ type P2PSelectedPair struct {
 	Type   string `json:"type"`
 }
 
+// Policy layer states. Unknown means the layer could not be read, which is not the same as off.
+const (
+	PolicyOn      = "on"
+	PolicyOff     = "off"
+	PolicyUnknown = "unknown"
+)
+
 // P2PPolicy reports each policy layer: the server switch, whether the device accepts direct connections (its
-// key is bound) and the stored mode.
+// key is bound), the device key state behind that and the stored mode.
 type P2PPolicy struct {
-	Server bool   `json:"server"`
-	Device bool   `json:"device"`
-	Mode   string `json:"mode"`
+	Server string `json:"server"`
+	Device string `json:"device"`
+	// DeviceKey is the key state the server reports ("bound", "pending", "none"); "" when the device has no
+	// registered key or the state could not be read.
+	DeviceKey string `json:"deviceKey"`
+	Mode      string `json:"mode"`
+}
+
+func serverPolicy(config *agent.P2PConfig) string {
+	if config.Enabled {
+		return PolicyOn
+	}
+	return PolicyOff
+}
+
+// devicePolicy maps a key state the server reported; a device without a reported key has none bound.
+func devicePolicy(state string) string {
+	if state == agent.P2PKeyStateBound {
+		return PolicyOn
+	}
+	return PolicyOff
 }
 
 // DeviceP2PDiagnostics is the device's direct-connection diagnostics (wave 2 contract).
 type DeviceP2PDiagnostics struct {
-	Status         DevicePathStatus `json:"status"`
-	LocalNAT       string           `json:"localNat"`
-	RemoteNAT      string           `json:"remoteNat"`
+	Status    DevicePathStatus `json:"status"`
+	LocalNAT  string           `json:"localNat"`
+	RemoteNAT string           `json:"remoteNat"`
+	// Probed reports a NAT probe against at least one STUN server; until then the NAT and STUN fields hold no
+	// measurement.
+	Probed         bool             `json:"probed"`
 	STUNReachable  bool             `json:"stunReachable"`
 	SelectedPair   *P2PSelectedPair `json:"selectedPair,omitempty"`
 	DirectRTTMS    *float64         `json:"directRttMs,omitempty"`

@@ -90,11 +90,12 @@ type device struct {
 	st                  DevicePathStatus
 	switches            []PathSwitch
 	localNAT, remoteNAT string
-	stunOK              bool
+	stunOK, probed      bool
 	directRTT, relayRTT time.Duration
 	loss                float64
 	hasLoss             bool
-	serverOn, deviceOn  bool
+	// The policy layers last read by an attempt; see P2PPolicy.
+	serverPolicy, devicePolicy, deviceKey string
 
 	// Loop-owned state.
 	sel          selector.Selector
@@ -123,6 +124,7 @@ func newDevice(m *Manager, id string, ctx context.Context) *device {
 		streams: make(map[*rstream.Stream]*liveStream), timers: make(map[eventKind]clock.Timer), pingSent: make(map[uint64]time.Time),
 		st:       DevicePathStatus{DeviceID: id, Mode: string(selector.ModeAuto), Path: PathRelay, Since: m.clock.Now().UnixMilli()},
 		localNAT: string(natprobe.Unknown), remoteNAT: string(natprobe.Unknown),
+		serverPolicy: PolicyUnknown, devicePolicy: PolicyUnknown,
 	}
 	m.wg.Add(1)
 	go d.run()
@@ -192,9 +194,9 @@ func (d *device) diagnostics() DeviceP2PDiagnostics {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	diag := DeviceP2PDiagnostics{
-		Status: d.st, LocalNAT: d.localNAT, RemoteNAT: d.remoteNAT, STUNReachable: d.stunOK,
+		Status: d.st, LocalNAT: d.localNAT, RemoteNAT: d.remoteNAT, Probed: d.probed, STUNReachable: d.stunOK,
 		RecentSwitches: append([]PathSwitch{}, d.switches...),
-		Policy:         P2PPolicy{Server: d.serverOn, Device: d.deviceOn, Mode: d.st.Mode},
+		Policy:         P2PPolicy{Server: d.serverPolicy, Device: d.devicePolicy, DeviceKey: d.deviceKey, Mode: d.st.Mode},
 	}
 	ms := func(value time.Duration) *float64 {
 		if value <= 0 {
@@ -480,7 +482,7 @@ func (d *device) connected(sess *directSession) {
 	d.sel.Reset()
 	d.mu.Lock()
 	d.session = sess
-	d.localNAT, d.remoteNAT, d.stunOK = string(sess.localNAT), string(sess.remoteNAT), sess.stunOK
+	d.localNAT, d.remoteNAT, d.stunOK, d.probed = string(sess.localNAT), string(sess.remoteNAT), sess.stunOK, sess.probed
 	d.mu.Unlock()
 	d.m.wg.Add(1)
 	go func() {

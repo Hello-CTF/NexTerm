@@ -374,6 +374,7 @@ describe("连接诊断", () => {
     status: pathStatus({ path: "direct", mode: "auto" }),
     localNat: "independent",
     remoteNat: "dependent",
+    probed: true,
     stunReachable: true,
     selectedPair: { local: "192.0.2.10:50000", remote: "198.51.100.7:41000", type: "srflx" },
     directRttMs: 12.4,
@@ -383,16 +384,17 @@ describe("连接诊断", () => {
       { at: NOW - 60_000, from: "relay", to: "direct", reason: "" },
       { at: NOW - 30_000, from: "direct", to: "relay", reason: "unstable" },
     ],
-    policy: { server: true, device: true, mode: "auto" },
+    policy: { server: "on", device: "on", deviceKey: "bound", mode: "auto" },
   };
 
   const MINIMAL: DeviceP2PDiagnostics = {
     status: pathStatus({ reason: "server_disabled" }),
     localNat: "unknown",
     remoteNat: "unknown",
+    probed: false,
     stunReachable: false,
     recentSwitches: [],
-    policy: { server: false, device: true, mode: "auto" },
+    policy: { server: "off", device: "on", deviceKey: "bound", mode: "auto" },
   };
 
   function card(): HTMLElement {
@@ -406,13 +408,27 @@ describe("连接诊断", () => {
     return term?.nextElementSibling?.textContent ?? undefined;
   }
 
-  it("renders every field of a full report", async () => {
-    mocks.diagnostics.mockResolvedValue(FULL);
+  function verdict(): string | undefined {
+    return card().querySelector("[data-testid='host-path-verdict']")?.textContent ?? undefined;
+  }
+
+  async function show(report: DeviceP2PDiagnostics): Promise<void> {
+    mocks.diagnostics.mockResolvedValue(report);
     mounted = mount(createElement(DeviceDiagnosticsSection, { deviceId: "d-1", visible: true }));
-    await flushUntil(() => value("当前路径") !== undefined);
+    await flushUntil(() => verdict() !== undefined);
+  }
+
+  it("leads with the path and keeps the measurements in a collapsed details block", async () => {
+    await show(FULL);
     expect(mocks.diagnostics).toHaveBeenCalledWith("d-1");
-    expect(value("当前路径")).toBe("直连");
+    expect(verdict()).toBe("当前：直连");
     expect(value("连接方式")).toBe("自动");
+    expect(card().textContent).toContain("中转经服务器转发，始终可用");
+    const details = card().querySelector("details");
+    expect(details?.open).toBe(false);
+    expect(details?.querySelector("summary")?.textContent).toBe("详细信息");
+    expect(value("服务器直连")).toBe("已开启");
+    expect(value("设备直连")).toBe("已启用");
     expect(value("本机 NAT")).toBe("端点无关映射");
     expect(value("设备 NAT")).toBe("端点相关映射");
     expect(value("STUN")).toBe("可达");
@@ -420,7 +436,6 @@ describe("连接诊断", () => {
     expect(value("中转 RTT")).toBe("48 ms");
     expect(value("丢包")).toBe("0.5%");
     expect(value("选中的候选对")).toBe("192.0.2.10:50000 ↔ 198.51.100.7:41000 · srflx");
-    expect(value("策略")).toBe("服务器允许直连 · 设备允许直连 · 连接方式：自动");
     const switches = [...card().querySelectorAll("li")].map((item) => item.textContent ?? "");
     expect(switches).toHaveLength(2);
     expect(switches[0]).toContain("直连 → 中转");
@@ -428,32 +443,81 @@ describe("连接诊断", () => {
     expect(switches[1]).toContain("中转 → 直连");
   });
 
-  it("renders a minimal report with placeholders and refreshes on demand", async () => {
-    mocks.diagnostics.mockResolvedValue(MINIMAL);
-    mounted = mount(createElement(DeviceDiagnosticsSection, { deviceId: "d-1", visible: true }));
-    await flushUntil(() => value("当前路径") !== undefined);
-    expect(value("当前路径")).toBe("中转（管理员已禁用直连）");
-    expect(value("本机 NAT")).toBe("未知");
-    expect(value("STUN")).toBe("不可达");
+  it("names the server switch as the cause and notes that it overrides the mode", async () => {
+    await show(MINIMAL);
+    expect(verdict()).toBe("当前：中转 — 服务器已关闭直连");
+    expect(value("连接方式")).toBe("自动（服务器未开启直连，暂用中转）");
+    expect(value("服务器直连")).toBe("已关闭");
+    expect([...card().querySelectorAll("dt")].filter((dt) => dt.textContent === "连接方式")).toHaveLength(1);
+  });
+
+  it("shows 未检测 for the NAT and STUN fields when no probe ran", async () => {
+    await show(MINIMAL);
+    expect(value("本机 NAT")).toBe("未检测");
+    expect(value("设备 NAT")).toBe("未检测");
+    expect(value("STUN")).toBe("未检测");
     expect(value("直连 RTT")).toBe("—");
     expect(value("中转 RTT")).toBe("—");
     expect(value("丢包")).toBe("—");
     expect(value("选中的候选对")).toBe("—");
-    expect(value("策略")).toContain("服务器已禁用直连");
     expect(card().textContent).toContain("暂无切换记录");
+  });
 
+  it("reports a probe that found no reachable STUN server", async () => {
+    await show({ ...MINIMAL, probed: true, localNat: "blocked", status: pathStatus({ reason: "connect_failed" }), policy: FULL.policy });
+    expect(verdict()).toBe("当前：中转 — 直连建立失败");
+    expect(value("本机 NAT")).toBe("UDP 受阻");
+    expect(value("设备 NAT")).toBe("未知");
+    expect(value("STUN")).toBe("不可达");
+  });
+
+  it("shows a policy it could not read as unknown, not disabled", async () => {
+    await show({ ...MINIMAL, status: pathStatus({ reason: "" }), policy: { server: "unknown", device: "unknown", deviceKey: "", mode: "auto" } });
+    expect(verdict()).toBe("当前：中转");
+    expect(value("连接方式")).toBe("自动");
+    expect(value("服务器直连")).toBe("未知");
+    expect(value("设备直连")).toBe("未知");
+    expect(card().textContent).not.toContain("已关闭");
+  });
+
+  it("names the device key state when the device does not accept direct connections", async () => {
+    await show({ ...MINIMAL, status: pathStatus({ reason: "device_unsupported" }), policy: { server: "on", device: "off", deviceKey: "none", mode: "auto" } });
+    expect(verdict()).toBe("当前：中转 — 设备未启用直连（代理未注册直连密钥）");
+    expect(value("连接方式")).toBe("自动（设备未启用直连，暂用中转）");
+    expect(value("设备直连")).toBe("未注册直连密钥");
+    mounted?.unmount();
+    mounted = undefined;
+    await show({ ...MINIMAL, status: pathStatus({ reason: "key_pending" }), policy: { server: "on", device: "off", deviceKey: "pending", mode: "auto" } });
+    expect(verdict()).toBe("当前：中转 — 设备直连密钥待确认");
+    expect(value("设备直连")).toBe("密钥待确认");
+  });
+
+  it("names a refused grant, not the switch, when the server switch is on", async () => {
+    await show({ ...MINIMAL, status: pathStatus({ reason: "server_disabled" }), policy: FULL.policy });
+    expect(verdict()).toBe("当前：中转 — 服务器拒绝了直连授权");
+    expect(value("服务器直连")).toBe("已开启");
+  });
+
+  it("names the relay mode as the cause once both layers allow a direct connection", async () => {
+    await show({ ...MINIMAL, status: pathStatus({ mode: "relay", reason: "mode_relay" }), policy: { ...FULL.policy, mode: "relay" } });
+    expect(verdict()).toBe("当前：中转 — 连接方式为中转");
+    expect(value("连接方式")).toBe("中转");
+  });
+
+  it("refreshes on demand", async () => {
+    await show(MINIMAL);
     mocks.diagnostics.mockResolvedValue(FULL);
     const refresh = [...card().querySelectorAll("button")].find((button) => button.textContent?.includes("刷新"));
     if (!refresh) throw new Error("refresh missing");
     click(refresh);
-    await flushUntil(() => value("当前路径") === "直连");
+    await flushUntil(() => verdict() === "当前：直连");
     expect(mocks.diagnostics).toHaveBeenCalledTimes(2);
   });
 
   it("reads again when the device's path changes and shows a failed read inline", async () => {
     mocks.diagnostics.mockResolvedValue(MINIMAL);
     mounted = mount(createElement(DeviceDiagnosticsSection, { deviceId: "d-1", visible: true }));
-    await flushUntil(() => value("当前路径") !== undefined && mocks.pathHandlers.length > 0);
+    await flushUntil(() => verdict() !== undefined && mocks.pathHandlers.length > 0);
 
     mocks.diagnostics.mockRejectedValue({ code: "internal", message: "设备未响应" });
     act(() => {

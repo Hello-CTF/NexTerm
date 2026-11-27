@@ -938,6 +938,7 @@ export type DeviceP2PDiagnostics = {
   status: DevicePathStatus;
   localNat: string;
   remoteNat: string;
+  probed: boolean;
   stunReachable: boolean;
   selectedPair?: P2PSelectedPair | null;
   directRttMs?: number | null;
@@ -2302,8 +2303,9 @@ export type Overview = {
 };
 
 export type P2PPolicy = {
-  server: boolean;
-  device: boolean;
+  server: string;
+  device: string;
+  deviceKey: string;
   mode: string;
 };
 

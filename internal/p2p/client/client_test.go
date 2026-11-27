@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/p2p/agentside"
 	"github.com/Hello-CTF/NexTerm/internal/p2p/legtest"
 	"github.com/Hello-CTF/NexTerm/internal/p2p/natprobe"
@@ -303,7 +304,7 @@ func TestUnreachableSTUNIsHostOnly(t *testing.T) {
 	}
 	h.waitPath(PathRelay, ReasonConnectFailed)
 	diag := h.mgr.Diagnostics(context.Background(), testDevice)
-	if diag.LocalNAT != string(natprobe.Blocked) || diag.STUNReachable {
+	if !diag.Probed || diag.LocalNAT != string(natprobe.Blocked) || diag.STUNReachable {
 		t.Fatalf("diagnostics = %+v", diag)
 	}
 	_ = stream.Close()
@@ -344,11 +345,59 @@ func TestDiagnostics(t *testing.T) {
 	stream := h.dial("terminal")
 	h.waitDirect(1)
 	diag := h.mgr.Diagnostics(context.Background(), testDevice)
-	if diag.Status.Path != PathDirect || diag.SelectedPair == nil || diag.DirectRTTMS == nil || !diag.Policy.Server || !diag.Policy.Device || diag.Policy.Mode != "auto" {
+	if diag.Status.Path != PathDirect || diag.SelectedPair == nil || diag.DirectRTTMS == nil || diag.Policy != (P2PPolicy{Server: PolicyOn, Device: PolicyOn, DeviceKey: agent.P2PKeyStateBound, Mode: "auto"}) {
 		t.Fatalf("diagnostics = %+v", diag)
 	}
 	if len(diag.RecentSwitches) == 0 || diag.RecentSwitches[len(diag.RecentSwitches)-1].To != PathDirect {
 		t.Fatalf("switches = %+v", diag.RecentSwitches)
+	}
+	_ = stream.Close()
+}
+
+// A device that never dialed reports each policy layer as read now, and the layer that rules out a direct
+// connection as its reason; nothing was probed.
+func TestDiagnosticsPolicyLayers(t *testing.T) {
+	readErr := ipc.NewError(ipc.CodeInternal, "server unreachable")
+	cases := []struct {
+		name      string
+		configure func(*harness)
+		want      P2PPolicy
+		reason    string
+	}{
+		{"bound", func(*harness) {}, P2PPolicy{Server: PolicyOn, Device: PolicyOn, DeviceKey: agent.P2PKeyStateBound}, ReasonNone},
+		{"server disabled", func(h *harness) { h.enabled = false }, P2PPolicy{Server: PolicyOff, Device: PolicyOn, DeviceKey: agent.P2PKeyStateBound}, ReasonServerDisabled},
+		{"key pending", func(h *harness) { h.keyState = agent.P2PKeyStatePending }, P2PPolicy{Server: PolicyOn, Device: PolicyOff, DeviceKey: agent.P2PKeyStatePending}, ReasonKeyPending},
+		{"key none", func(h *harness) { h.keyState = agent.P2PKeyStateNone }, P2PPolicy{Server: PolicyOn, Device: PolicyOff, DeviceKey: agent.P2PKeyStateNone}, ReasonDeviceUnsupported},
+		{"no key reported", func(h *harness) { h.keyState = "" }, P2PPolicy{Server: PolicyOn, Device: PolicyOff}, ReasonDeviceUnsupported},
+		{"unreadable", func(h *harness) { h.configErr, h.keyErr = readErr, readErr }, P2PPolicy{Server: PolicyUnknown, Device: PolicyUnknown}, ReasonNone},
+		{"relay mode", func(h *harness) { h.mode, h.enabled = selector.ModeRelay, false }, P2PPolicy{Server: PolicyOff, Device: PolicyOn, DeviceKey: agent.P2PKeyStateBound, Mode: "relay"}, ReasonModeRelay},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, tc.configure)
+			diag := h.mgr.Diagnostics(context.Background(), testDevice)
+			want := tc.want
+			if want.Mode == "" {
+				want.Mode = "auto"
+			}
+			if diag.Policy != want || diag.Status.Path != PathRelay || diag.Status.Reason != tc.reason || diag.Probed {
+				t.Fatalf("diagnostics = %+v, want policy %+v and reason %q", diag, want, tc.reason)
+			}
+		})
+	}
+}
+
+// A dialed device whose policy can no longer be read keeps the layers its attempt saw instead of reporting off.
+func TestDiagnosticsKeepPolicyOnReadError(t *testing.T) {
+	h := newHarness(t)
+	stream := h.dial("terminal")
+	h.waitDirect(1)
+	readErr := ipc.NewError(ipc.CodeInternal, "server unreachable")
+	h.mgr.forgetConfig()
+	h.set(func(h *harness) { h.configErr, h.keyErr = readErr, readErr })
+	diag := h.mgr.Diagnostics(context.Background(), testDevice)
+	if diag.Policy.Server != PolicyOn || diag.Policy.Device != PolicyOn || diag.Policy.DeviceKey != agent.P2PKeyStateBound {
+		t.Fatalf("policy = %+v", diag.Policy)
 	}
 	_ = stream.Close()
 }
