@@ -1,7 +1,8 @@
 // Per-metric trend chart for the device metrics panel: hand-written SVG with a labelled y scale, round-number time
 // ticks and a hover readout. Gaps beyond the freshness threshold break the line instead of inventing continuity.
 
-import { useRef, useState, type MouseEvent } from "react";
+import { useLayoutEffect, useRef, useState, type MouseEvent } from "react";
+import { uiTextFactor, useAppearancePrefs } from "../../app/preferences";
 import type { FleetMetricsSample } from "../../ipc/fleetApi";
 import { formatBytes } from "./format";
 import { t as tr } from "../../i18n";
@@ -25,12 +26,15 @@ export const DEFAULT_METRIC_RANGE: MetricRangeId = "24h";
 
 export type MetricKind = "cpu" | "mem" | "disk";
 
-const WIDTH = 240;
-const HEIGHT = 100;
-const LEFT = 40;
+// The chart is drawn in CSS pixels: the viewBox follows the measured width so text and strokes keep their size at any
+// card width, and only the plot stretches.
+const FALLBACK_WIDTH = 400;
+const HEIGHT = 120;
 const RIGHT = 8;
-const TOP = 8;
-const BOTTOM = 18;
+const TOP = 6;
+// Chart text size in pixels before the UI text factor, which scales it like the rest of the interface text.
+const FONT_PX = 10;
+const MIN_TICK_SPACING = 70;
 
 const TICK_STEPS_MS = [15, 30, 60, 120, 180, 360, 720, 1440].map((m) => m * 60_000);
 
@@ -38,11 +42,12 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-// Round tick times aligned to local-clock multiples of a step, at most five of them inside [start, end].
-export function timeTicks(start: number, end: number): number[] {
+// Round tick times aligned to local-clock multiples of a step, at most maxTicks of them inside [start, end].
+export function timeTicks(start: number, end: number, maxTicks = 5): number[] {
   const span = end - start;
   if (!(span > 0)) return [];
-  const step = TICK_STEPS_MS.find((s) => span / s <= 5) ?? TICK_STEPS_MS[TICK_STEPS_MS.length - 1];
+  const limit = Math.max(2, Math.floor(maxTicks));
+  const step = TICK_STEPS_MS.find((s) => span / s <= limit) ?? TICK_STEPS_MS[TICK_STEPS_MS.length - 1];
   const offset = new Date(start).getTimezoneOffset() * 60_000;
   const ticks: number[] = [];
   for (let t = Math.ceil((start - offset) / step) * step + offset; t <= end; t += step) ticks.push(t);
@@ -61,6 +66,34 @@ export function formatAge(ms: number): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 48) return tr("{hours} 小时", { hours });
   return tr("{floor} 天", { floor: Math.floor(hours / 24) });
+}
+
+// Approximate rendered width of a label: CJK glyphs are about one em wide, Latin digits and letters about 0.6 em.
+function textWidth(text: string, fontPx: number): number {
+  let em = 0;
+  for (const ch of text) em += ch.charCodeAt(0) > 0x2e7f ? 1 : 0.6;
+  return em * fontPx;
+}
+
+// Tracks an element's width, falling back to a default where layout is unavailable (jsdom, hidden panels).
+function useMeasuredWidth<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [width, setWidth] = useState(FALLBACK_WIDTH);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const apply = (w: number) => {
+      if (w > 0) setWidth(Math.round(w));
+    };
+    apply(el.getBoundingClientRect().width);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) apply(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width] as const;
 }
 
 function metricPct(kind: MetricKind, s: FleetMetricsSample): number {
@@ -88,13 +121,24 @@ interface Props {
 export function MetricTrendChart({ kind, samples, latest, windowStart, windowEnd, sampleIntervalMs }: Props) {
   const [hover, setHover] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const [wrapRef, width] = useMeasuredWidth<HTMLDivElement>();
+  const fontPx = FONT_PX * uiTextFactor(useAppearancePrefs());
   const meta = KIND_META[kind];
   const start = windowStart ?? samples[0].ts;
   const end = windowEnd ?? samples[samples.length - 1].ts;
   const span = Math.max(1, end - start);
-  const plotW = WIDTH - LEFT - RIGHT;
-  const plotH = HEIGHT - TOP - BOTTOM;
-  const x = (ts: number) => LEFT + ((Math.min(end, Math.max(start, ts)) - start) / span) * plotW;
+
+  const total = kind === "mem" ? latest.mem_total : kind === "disk" ? latest.disk_total : 0;
+  const yLabel = (pct: number) => {
+    if (kind === "cpu" || total <= 0) return `${pct}%`;
+    return pct === 0 ? "0" : formatBytes((total * pct) / 100);
+  };
+  const yLabels = [0, 50, 100].map((pct) => ({ pct, text: yLabel(pct) }));
+  const left = Math.ceil(Math.max(...yLabels.map((l) => textWidth(l.text, fontPx)))) + 8;
+  const bottom = Math.ceil(fontPx * 1.6) + 2;
+  const plotW = Math.max(1, width - left - RIGHT);
+  const plotH = HEIGHT - TOP - bottom;
+  const x = (ts: number) => left + ((Math.min(end, Math.max(start, ts)) - start) / span) * plotW;
   const y = (pct: number) => TOP + plotH - (Math.min(100, Math.max(0, pct)) / 100) * plotH;
   const gap = metricsGapThreshold(sampleIntervalMs);
   const segments: FleetMetricsSample[][] = [[]];
@@ -105,18 +149,13 @@ export function MetricTrendChart({ kind, samples, latest, windowStart, windowEnd
     segments[segments.length - 1].push(sample);
   }
 
-  const total = kind === "mem" ? latest.mem_total : kind === "disk" ? latest.disk_total : 0;
-  const yLabel = (pct: number) => {
-    if (kind === "cpu" || total <= 0) return `${pct}%`;
-    return pct === 0 ? "0" : formatBytes((total * pct) / 100);
-  };
-  const ticks = timeTicks(start, end);
+  const tickSpacing = Math.max(MIN_TICK_SPACING, textWidth(formatTick(start, span), fontPx) + 12);
+  const ticks = timeTicks(start, end, Math.floor(plotW / tickSpacing));
 
   const onMove = (event: MouseEvent<SVGRectElement>) => {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0) return;
-    const vx = ((event.clientX - rect.left) / rect.width) * WIDTH;
-    const ts = start + ((vx - LEFT) / plotW) * span;
+    const ts = start + ((event.clientX - rect.left - left) / plotW) * span;
     let best = 0;
     for (let i = 1; i < samples.length; i++) {
       if (Math.abs(samples[i].ts - ts) < Math.abs(samples[best].ts - ts)) best = i;
@@ -136,73 +175,80 @@ export function MetricTrendChart({ kind, samples, latest, windowStart, windowEnd
         : `${formatBytes(kind === "mem" ? point.mem_used : point.disk_used)} (${pct.toFixed(1)}%)`;
     tip = { px: x(point.ts), lines: [when, `${meta.name} ${value}`] };
   }
-  const tipW = 104;
-  const tipX = tip ? Math.min(WIDTH - RIGHT - tipW, Math.max(LEFT, tip.px - tipW / 2)) : 0;
+  const lineH = Math.ceil(fontPx * 1.3);
+  const tipW = tip ? Math.min(plotW, Math.ceil(Math.max(...tip.lines.map((l) => textWidth(l, fontPx)))) + 12) : 0;
+  const tipH = 2 * lineH + 6;
+  const tipX = tip ? Math.min(left + plotW - tipW, Math.max(left, tip.px - tipW / 2)) : 0;
 
   return (
-    <svg
-      ref={svgRef}
-      role="img"
-      aria-label={tr("{name} 趋势，最新 {toFixed}%", { name: meta.name, toFixed: metricPct(kind, latest).toFixed(1) })}
-      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-      className="mt-1 h-auto w-full"
-      onMouseLeave={() => setHover(null)}
-    >
-      {[0, 50, 100].map((pct) => (
-        <g key={pct}>
-          <line
-            x1={LEFT}
-            x2={WIDTH - RIGHT}
-            y1={y(pct)}
-            y2={y(pct)}
-            className="stroke-neutral-800"
-            strokeWidth="1"
-            strokeDasharray={pct === 0 ? undefined : "3 3"}
-          />
-          <text x={LEFT - 4} y={y(pct) + 3} textAnchor="end" fontSize="8" className="fill-neutral-500" data-axis="y">
-            {yLabel(pct)}
+    // The SVG is positioned out of flow so its pixel width never props the card open; the wrapper's width drives it.
+    <div ref={wrapRef} className="relative mt-1 w-full min-w-0 overflow-hidden" style={{ height: HEIGHT }}>
+      <svg
+        ref={svgRef}
+        role="img"
+        aria-label={tr("{name} 趋势，最新 {toFixed}%", { name: meta.name, toFixed: metricPct(kind, latest).toFixed(1) })}
+        width={width}
+        height={HEIGHT}
+        viewBox={`0 0 ${width} ${HEIGHT}`}
+        className="absolute inset-0 block"
+        onMouseLeave={() => setHover(null)}
+      >
+        {yLabels.map(({ pct, text }) => (
+          <g key={pct}>
+            <line
+              x1={left}
+              x2={left + plotW}
+              y1={y(pct)}
+              y2={y(pct)}
+              className="stroke-neutral-800"
+              strokeWidth="1"
+              strokeDasharray={pct === 0 ? undefined : "3 3"}
+            />
+            <text x={left - 4} y={y(pct)} dy="0.35em" textAnchor="end" className="fill-neutral-500" fontSize={fontPx} data-axis="y">
+              {text}
+            </text>
+          </g>
+        ))}
+        {ticks.map((t) => (
+          <text key={t} x={x(t)} y={HEIGHT - 4} textAnchor="middle" className="fill-neutral-500" fontSize={fontPx} data-axis="x">
+            {formatTick(t, span)}
           </text>
-        </g>
-      ))}
-      {ticks.map((t) => (
-        <text key={t} x={x(t)} y={HEIGHT - 5} textAnchor="middle" fontSize="8" className="fill-neutral-500" data-axis="x">
-          {formatTick(t, span)}
-        </text>
-      ))}
-      {segments.map((seg) => {
-        const first = seg[0];
-        if (seg.length === 1) {
-          return <circle key={first.ts} cx={x(first.ts)} cy={y(metricPct(kind, first))} r="2" className={meta.fill} />;
-        }
-        const pts = seg.map((s) => `${x(s.ts).toFixed(1)},${y(metricPct(kind, s)).toFixed(1)}`).join(" ");
-        return (
-          <polyline
-            key={first.ts}
-            points={pts}
-            fill="none"
-            className={meta.stroke}
-            strokeWidth="1.5"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            vectorEffect="non-scaling-stroke"
-          />
-        );
-      })}
-      {point && tip && (
-        <g pointerEvents="none" data-testid="metric-tooltip">
-          <line x1={tip.px} x2={tip.px} y1={TOP} y2={TOP + plotH} className="stroke-neutral-600" strokeWidth="1" />
-          <circle cx={tip.px} cy={y(metricPct(kind, point))} r="3" className={meta.fill} />
-          <rect x={tipX} y={TOP} width={tipW} height={24} rx="3" className="fill-neutral-900 stroke-neutral-700" />
-          <text x={tipX + 5} y={TOP + 9} fontSize="8" className="fill-neutral-400">
-            {tip.lines[0]}
-          </text>
-          <text x={tipX + 5} y={TOP + 19} fontSize="8" className="fill-neutral-100">
-            {tip.lines[1]}
-          </text>
-        </g>
-      )}
-      <rect x={LEFT} y={TOP} width={plotW} height={plotH} fill="transparent" onMouseMove={onMove} />
-    </svg>
+        ))}
+        {segments.map((seg) => {
+          const first = seg[0];
+          if (seg.length === 1) {
+            return <circle key={first.ts} cx={x(first.ts)} cy={y(metricPct(kind, first))} r="2" className={meta.fill} />;
+          }
+          const pts = seg.map((s) => `${x(s.ts).toFixed(1)},${y(metricPct(kind, s)).toFixed(1)}`).join(" ");
+          return (
+            <polyline
+              key={first.ts}
+              points={pts}
+              fill="none"
+              className={meta.stroke}
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        })}
+        {point && tip && (
+          <g pointerEvents="none" data-testid="metric-tooltip">
+            <line x1={tip.px} x2={tip.px} y1={TOP} y2={TOP + plotH} className="stroke-neutral-600" strokeWidth="1" />
+            <circle cx={tip.px} cy={y(metricPct(kind, point))} r="3" className={meta.fill} />
+            <rect x={tipX} y={TOP} width={tipW} height={tipH} rx="3" className="fill-neutral-900 stroke-neutral-700" />
+            <text x={tipX + 6} y={TOP + 3 + lineH} dy="-0.25em" className="fill-neutral-400" fontSize={fontPx}>
+              {tip.lines[0]}
+            </text>
+            <text x={tipX + 6} y={TOP + 3 + 2 * lineH} dy="-0.25em" className="fill-neutral-100" fontSize={fontPx}>
+              {tip.lines[1]}
+            </text>
+          </g>
+        )}
+        <rect x={left} y={TOP} width={plotW} height={plotH} fill="transparent" onMouseMove={onMove} />
+      </svg>
+    </div>
   );
 }
 

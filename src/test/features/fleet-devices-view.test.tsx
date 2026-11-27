@@ -563,13 +563,76 @@ describe("Device management view - device list and metrics", () => {
     const container = mountMetrics();
     await flushUntil(() => container.querySelector("polyline") !== null);
     const svg = container.querySelector('svg[role="img"]') as SVGSVGElement;
-    svg.getBoundingClientRect = () => ({ left: 0, top: 0, width: 240, height: 100, right: 240, bottom: 100, x: 0, y: 0, toJSON: () => ({}) });
+    const width = Number(svg.getAttribute("width"));
+    const height = Number(svg.getAttribute("height"));
+    svg.getBoundingClientRect = () => ({ left: 0, top: 0, width, height, right: width, bottom: height, x: 0, y: 0, toJSON: () => ({}) });
     expect(svg.querySelector('[data-testid="metric-tooltip"]')).toBeNull();
     const hit = svg.querySelector("rect") as SVGRectElement;
+    // The chart is drawn 1:1 in pixels, so the right edge of the hit area is the newest point.
+    const plotRight = Number(hit.getAttribute("x")) + Number(hit.getAttribute("width"));
     act(() => {
-      hit.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 225 }));
+      hit.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: plotRight - 1 }));
     });
-    expect(svg.querySelector('[data-testid="metric-tooltip"]')?.textContent).toContain("CPU 42.5%");
+    const tooltip = svg.querySelector('[data-testid="metric-tooltip"]');
+    expect(tooltip?.textContent).toContain("CPU 42.5%");
+    const box = tooltip?.querySelector("rect") as SVGRectElement;
+    expect(Number(box.getAttribute("x"))).toBeGreaterThanOrEqual(Number(hit.getAttribute("x")));
+    expect(Number(box.getAttribute("x")) + Number(box.getAttribute("width"))).toBeLessThanOrEqual(plotRight);
+  });
+
+  it("draws the charts in pixels so text and height stay fixed as the card width changes", async () => {
+    const observers: { callback: ResizeObserverCallback; targets: Element[] }[] = [];
+    vi.stubGlobal("ResizeObserver", class {
+      targets: Element[] = [];
+      constructor(callback: ResizeObserverCallback) {
+        observers.push({ callback, targets: this.targets });
+      }
+      observe(target: Element) { this.targets.push(target); }
+      unobserve() {}
+      disconnect() {}
+    });
+    route(() => ({
+      payload: {
+        samples: [metricAt(NOW - 120_000, 1), metricAt(NOW - 60_000, 2)],
+        latest: metricAt(NOW - 60_000, 2),
+        windowStart: NOW - 24 * 3600_000,
+        windowEnd: NOW,
+        sampleIntervalMs: 60_000,
+      },
+    }));
+    const container = mountMetrics();
+    await flushUntil(() => container.querySelector("polyline") !== null);
+    const resize = (width: number) => act(() => {
+      for (const o of observers) {
+        o.callback(o.targets.map((target) => ({ target, contentRect: { width } }) as unknown as ResizeObserverEntry), {} as ResizeObserver);
+      }
+    });
+    const measure = () => {
+      const svg = container.querySelector('svg[role="img"]') as SVGSVGElement;
+      const axisText = svg.querySelector('text[data-axis="y"]') as SVGTextElement;
+      return {
+        viewBox: svg.getAttribute("viewBox"),
+        width: svg.getAttribute("width"),
+        height: svg.getAttribute("height"),
+        fontSize: axisText.getAttribute("font-size"),
+        xTicks: svg.querySelectorAll('text[data-axis="x"]').length,
+      };
+    };
+
+    resize(260);
+    const narrow = measure();
+    resize(880);
+    const wide = measure();
+    expect(narrow.viewBox).toBe(`0 0 260 ${narrow.height}`);
+    expect(wide.viewBox).toBe(`0 0 880 ${wide.height}`);
+    // One viewBox unit is one CSS pixel at every width, so the text is drawn at its font size.
+    expect(narrow.width).toBe("260");
+    expect(wide.width).toBe("880");
+    expect(wide.height).toBe(narrow.height);
+    expect(Number(narrow.fontSize)).toBeGreaterThan(0);
+    expect(wide.fontSize).toBe(narrow.fontSize);
+    expect(narrow.xTicks).toBeGreaterThanOrEqual(2);
+    expect(wide.xTicks).toBeGreaterThan(narrow.xTicks);
   });
 
   it("reports a valid empty window with an independent latest outside it as zero samples", async () => {
@@ -638,7 +701,10 @@ describe("Device management view - device list and metrics", () => {
     const container = mountMetrics();
     await flushUntil(() => container.querySelector("circle") !== null);
 
-    expect(container.querySelector("circle")?.getAttribute("cx")).toBe("136");
+    // The sample sits halfway through the requested two-hour window, so it is drawn at the middle of the plot.
+    const hit = container.querySelector('svg[role="img"] rect') as SVGRectElement;
+    const middle = Number(hit.getAttribute("x")) + Number(hit.getAttribute("width")) / 2;
+    expect(Number(container.querySelector("circle")?.getAttribute("cx"))).toBeCloseTo(middle, 5);
   });
 
   it("breaks the trend line across missing intervals", async () => {

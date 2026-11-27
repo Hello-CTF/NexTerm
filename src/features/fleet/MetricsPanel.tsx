@@ -133,7 +133,7 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
   ];
 
   return (
-    <div className="@container flex flex-col gap-2">
+    <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-1" role="group" aria-label={t("时间范围")}>
         {METRIC_RANGES.map((r) => (
           <button
@@ -152,10 +152,14 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
       ) : !hasTrend ? (
         <div className="nx-hint text-[11.5px]">{t("所选时间范围内暂无数据。")}</div>
       ) : null}
-      {/* Columns follow the panel's own width, not the window: a narrow card stacks the charts so their axis text stays legible. */}
-      <div className={`grid grid-cols-1 gap-x-4 gap-y-3 text-[12px] @4xl:grid-cols-3 ${loading ? "opacity-60" : ""}`} aria-busy={loading} data-testid="metric-blocks">
+      {/* Columns follow the panel's own width, not the window: as many charts per row as fit at a legible width. */}
+      <div
+        className={`grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-x-4 gap-y-3 text-[12px] ${loading ? "opacity-60" : ""}`}
+        aria-busy={loading}
+        data-testid="metric-blocks"
+      >
         {metricBlocks.map((m) => (
-          <div key={m.kind}>
+          <div key={m.kind} className="min-w-0">
             <div className="nx-hint text-[11px]">{m.label}</div>
             <div className="font-mono text-neutral-100">{m.value}</div>
             {hasTrend && (
@@ -171,11 +175,11 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
           </div>
         ))}
       </div>
-      <div className="text-[12px]">
-        <span className="nx-hint text-[11px]">{t("运行时长")} </span>
-        <span className="font-mono text-neutral-100">{formatUptime(latest.uptime_s)}</span>
-      </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <div className="text-[12px]">
+          <span className="nx-hint text-[11px]">{t("运行时长")} </span>
+          <span className="font-mono text-neutral-100">{formatUptime(latest.uptime_s)}</span>
+        </div>
         <div className="nx-hint text-[11px]">
           {t("最新 {value}", { value: formatTime(latest.ts) })}
           {stale ? <span className="text-amber-300"> · {staleText}</span> : null}
