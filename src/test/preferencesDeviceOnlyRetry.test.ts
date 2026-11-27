@@ -20,6 +20,7 @@ import {
   type AccountPreferenceStore,
   type AccountPreferenceView,
 } from "../app/preferences";
+import { getKeywordHighlights } from "../features/terminal/keywordHighlightRules";
 import { flushMacrotask } from "./features/reactTestUtils";
 
 describe("desktop account preferences before the sync session exists", () => {
@@ -44,5 +45,31 @@ describe("desktop account preferences before the sync session exists", () => {
     for (const handler of mocks.handlers) handler();
     await flushMacrotask();
     expect(getAppearancePrefs().terminalFontSize).toBe(before + 3);
+  });
+});
+
+describe("desktop account preference view ordering", () => {
+  beforeEach(() => {
+    // The sync status listener is registered once per module, so the handlers stay.
+    registerAccountPreferenceStore(null);
+  });
+
+  it("keeps the account highlights when the startup device-only reply arrives after it", async () => {
+    let resolveStartup!: (view: AccountPreferenceView) => void;
+    const replies: Promise<AccountPreferenceView>[] = [new Promise((resolve) => (resolveStartup = resolve))];
+    const highlights = { presets: ["errors", "warnings", "success", "ipv4", "uuid"], rules: [] };
+    const store: AccountPreferenceStore = {
+      getView: () => replies.shift() ?? Promise.resolve({ defaults: {}, overrides: { "terminal.keywordHighlights": highlights } }),
+      putOverrides: () => Promise.resolve(),
+      deleteOverrides: () => Promise.resolve(),
+    };
+    registerAccountPreferenceStore(store);
+    for (const handler of mocks.handlers) handler();
+    await flushMacrotask();
+    expect(getKeywordHighlights()).toEqual(highlights);
+
+    resolveStartup({ defaults: {}, overrides: {}, deviceOnly: true });
+    await flushMacrotask();
+    expect(getKeywordHighlights()).toEqual(highlights);
   });
 });

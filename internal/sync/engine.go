@@ -396,6 +396,7 @@ func (e *Engine) establishSession(ctx context.Context, config RemoteConfig, clie
 	session := e.session
 	e.sessionMu.Unlock()
 	e.persistSession(ctx, config, session)
+	e.rememberAccount(ctx, session.key, session.userID)
 	return session, nil
 }
 
@@ -490,6 +491,7 @@ func (e *Engine) restoreSession(ctx context.Context, config RemoteConfig, persis
 		envelopeHash: persisted.EnvelopeHash, credentialHash: persisted.CredentialHash}
 	session := e.session
 	e.sessionMu.Unlock()
+	e.rememberAccount(ctx, session.key, session.userID)
 	return session, nil
 }
 

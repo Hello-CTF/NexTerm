@@ -943,11 +943,20 @@ func (s *Service) preferenceUserID(ctx context.Context) (string, error) {
 		return userID, nil
 	}
 	s.engine.sessionMu.Lock()
-	defer s.engine.sessionMu.Unlock()
-	if s.engine.session != nil && s.engine.session.userID != "" {
-		return s.engine.session.userID, nil
+	var userID string
+	if s.engine.session != nil {
+		userID = s.engine.session.userID
 	}
-	return "", ipc.NewError(ipc.CodeBadParam, "同步账号未登录")
+	s.engine.sessionMu.Unlock()
+	// Before the session is restored (startup, offline) the preferences of the linked account stay in use, so
+	// a change made then is saved to the account and synced instead of landing on a device-only copy.
+	if userID == "" {
+		userID = s.rememberedAccount(ctx)
+	}
+	if userID == "" {
+		return "", ipc.NewError(ipc.CodeBadParam, "同步账号未登录")
+	}
+	return userID, nil
 }
 
 func (s *Service) preferenceView(ctx context.Context) (PreferenceScopeView, error) {

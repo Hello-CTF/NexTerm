@@ -38,8 +38,11 @@ export function createHttpPreferenceStore(): AccountPreferenceStore {
     async getView() {
       if (DESKTOP) {
         const status = await syncApi.status();
-        if (!status.userId) return { defaults: {}, overrides: {}, deviceOnly: true };
-        return syncApi.preferencesGet();
+        if (status.userId) return syncApi.preferencesGet();
+        // Before the session is restored the backend still serves the linked account's preferences; without a
+        // linked account (or with the vault locked) the read fails and the device copy stays in use.
+        if (!status.configured) return { defaults: {}, overrides: {}, deviceOnly: true };
+        return syncApi.preferencesGet().catch(() => ({ defaults: {}, overrides: {}, deviceOnly: true }));
       }
       const { preferencesApi } = await import("../ipc/authApi");
       const view = await preferencesApi.get();
@@ -71,6 +74,10 @@ let deviceOnlyPreferences = false;
 let accountViewLoaded = false;
 let accountViewLoading: Promise<void> | null = null;
 let registerGeneration = 0;
+// Orders view reads: a reply applies only when no later-started read was applied, so a slow device-only reply
+// from startup cannot hide the account view a sync event already loaded.
+let viewRequestSeq = 0;
+let appliedViewSeq = 0;
 const accountListeners = new Set<() => void>();
 
 function syncThemePreferenceLayers(): void {
@@ -99,11 +106,12 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
     accountViewLoading = null;
     return;
   }
+  const seq = ++viewRequestSeq;
   const loading = store
     .getView()
     .then((view) => {
       if (generation !== registerGeneration || store !== accountStore) return;
-      applyAccountView(view);
+      applyAccountView(view, seq);
     })
     .catch(() => undefined)
     .finally(() => {
@@ -113,7 +121,9 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
   watchDeviceOnlyView();
 }
 
-function applyAccountView(view: AccountPreferenceView): void {
+function applyAccountView(view: AccountPreferenceView, seq: number): void {
+  if (seq < appliedViewSeq) return;
+  appliedViewSeq = seq;
   accountDefaults = view.defaults;
   accountOverrides = view.overrides;
   deviceOnlyPreferences = view.deviceOnly === true;
@@ -136,11 +146,12 @@ function watchDeviceOnlyView(): void {
     const store = accountStore;
     if (!store || (accountViewLoaded && !deviceOnlyPreferences)) return;
     const generation = registerGeneration;
+    const seq = ++viewRequestSeq;
     void store
       .getView()
       .then((view) => {
         if (generation !== registerGeneration || store !== accountStore || view.deviceOnly === true) return;
-        applyAccountView(view);
+        applyAccountView(view, seq);
       })
       .catch(() => undefined);
   }).catch(() => {
